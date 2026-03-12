@@ -19,6 +19,7 @@ dev = [
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+ignore = ["E501"]
 
 [dependency-groups]
 dev = [
