@@ -1,13 +1,11 @@
 from catalog_client.models.governance import GovernanceMetadata
-from catalog_client.models.quality import DataQualityChecks
 from catalog_client.models.metadata import (
     DatasetMetadata,
     ExperimentMetadata,
     OntologyEntry,
     SampleMetadata,
-    DataSummaryMetadata,
-    TissueEntry,
 )
+from catalog_client.models.quality import DataQualityChecks
 
 
 def test_ontology_entry():

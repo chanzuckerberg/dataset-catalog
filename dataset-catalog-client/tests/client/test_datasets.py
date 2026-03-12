@@ -1,18 +1,15 @@
 import re
 
-import pytest
 import httpx
+import pytest
 from pytest_httpx import HTTPXMock
-from catalog_client.client.datasets import DatasetClient, AsyncDatasetClient
-from catalog_client.models.dataset import (
-    DatasetCreate, DatasetModality, DatasetRef, DatasetResponse,
-    DatasetUpdate, DatasetWithRelationsResponse,
-)
-from catalog_client.models.asset import AssetType, DataAssetRequest
-from catalog_client.models.governance import GovernanceMetadata
-from catalog_client.models.metadata import DatasetMetadata
-from catalog_client.models.pagination import PaginatedResponse
+
+from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.exceptions import NotFoundError
+from catalog_client.models.dataset import (
+    DatasetRef,
+)
+from catalog_client.models.pagination import PaginatedResponse
 
 BASE = "http://test.local/api/"
 TOKEN = "tok"

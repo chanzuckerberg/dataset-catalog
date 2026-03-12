@@ -1,8 +1,6 @@
 """Dataset sub-client (sync and async)."""
 from __future__ import annotations
 
-import httpx
-
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import NotFoundError
 from catalog_client.models.dataset import (
@@ -10,7 +8,6 @@ from catalog_client.models.dataset import (
     DatasetModality,
     DatasetRef,
     DatasetResponse,
-    DatasetUpdate,
     DatasetWithRelationsResponse,
 )
 from catalog_client.models.pagination import PaginatedResponse
@@ -93,7 +90,7 @@ class DatasetClient(_SyncBase):
         response = self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
-    def update(self, ref: str | DatasetRef, dataset: DatasetUpdate) -> DatasetResponse:
+    def update(self, ref: str | DatasetRef, dataset: DatasetCreate) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
         response = self._patch(
             f"{_PREFIX}/{dataset_id}",
@@ -155,7 +152,7 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
-    async def update(self, ref: str | DatasetRef, dataset: DatasetUpdate) -> DatasetResponse:
+    async def update(self, ref: str | DatasetRef, dataset: DatasetCreate) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
         response = await self._patch(
             f"{_PREFIX}/{dataset_id}",

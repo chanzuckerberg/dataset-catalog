@@ -12,10 +12,8 @@ class OntologyEntry(BaseModel):
     ontology_id: str
 
 
-class TissueEntry(BaseModel):
+class TissueEntry(OntologyEntry):
     """Extends OntologyEntry with optional tissue type."""
-    label: str
-    ontology_id: str
     type: str | None = None
 
 

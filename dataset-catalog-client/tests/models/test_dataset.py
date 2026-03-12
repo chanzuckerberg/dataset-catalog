@@ -1,13 +1,11 @@
+from catalog_client.models.asset import AssetType, DataAssetRequest
 from catalog_client.models.dataset import (
     DatasetCreate,
     DatasetModality,
     DatasetRef,
     DatasetResponse,
     DatasetType,
-    DatasetUpdate,
-    DatasetWithRelationsResponse,
 )
-from catalog_client.models.asset import DataAssetRequest, AssetType
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.metadata import DatasetMetadata
 
@@ -78,7 +76,6 @@ def test_dataset_type_enum():
 
 
 def test_dataset_response_parses_json():
-    import datetime
     data = {
         "id": "uuid-1",
         "tombstoned": False,

@@ -13,8 +13,8 @@ from catalog_client.models.metadata import DatasetMetadata
 from catalog_client.models.quality import DataQualityChecks
 
 if TYPE_CHECKING:
-    from catalog_client.models.lineage import LineageEdgeResponse
     from catalog_client.models.collection import CollectionResponse
+    from catalog_client.models.lineage import LineageEdgeResponse
 
 
 class DatasetModality(str, enum.Enum):
@@ -37,25 +37,6 @@ class DatasetRef(NamedTuple):
 
 
 class DatasetCreate(BaseModel):
-    canonical_id: str
-    name: str
-    version: str
-    project: str
-    modality: DatasetModality
-    locations: list[DataAssetRequest] = Field(min_length=1)
-    governance: GovernanceMetadata
-    metadata: DatasetMetadata
-    description: str | None = None
-    doi: str | None = None
-    cross_db_references: str | None = None
-    dataset_type: DatasetType | None = None
-    is_latest: bool = False
-    record_schema_version: str | None = None
-    metadata_schema: str | None = None
-    data_quality: DataQualityChecks | None = None
-
-
-class DatasetUpdate(BaseModel):
     canonical_id: str
     name: str
     version: str

@@ -11,9 +11,7 @@ from catalog_client.models.metadata import (
     DatasetMetadata,
     DataSummaryMetadata,
     ExperimentMetadata,
-    OntologyEntry,
     SampleMetadata,
-    TissueEntry,
 )
 from catalog_client.models.quality import DataQualityChecks
 from catalog_client.registration.request import LineageSpec, RegistrationRequest

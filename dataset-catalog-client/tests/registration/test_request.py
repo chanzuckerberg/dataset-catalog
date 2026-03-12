@@ -1,10 +1,11 @@
 import pytest
-from catalog_client.registration.request import LineageSpec, RegistrationRequest
-from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetType
-from catalog_client.models.asset import DataAssetRequest, AssetType
+
+from catalog_client.models.asset import AssetType, DataAssetRequest
+from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import DatasetMetadata
+from catalog_client.registration.request import LineageSpec, RegistrationRequest
 
 
 def _minimal_request(**kwargs) -> RegistrationRequest:

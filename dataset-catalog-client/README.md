@@ -1,6 +1,6 @@
 # catalog-client
 
-Python client library for the MetaHub Catalog API.
+Python client library for the Scientific Dataset Catalog API.
 
 ## Installation
 
@@ -72,9 +72,9 @@ new_ds = client.datasets.create(DatasetCreate(
 ### Update a dataset
 
 ```python
-from catalog_client import DatasetUpdate
+from catalog_client import DatasetCreate
 
-updated = client.datasets.update(dataset.id, DatasetUpdate(name="Renamed Dataset"))
+updated = client.datasets.update(dataset.id, DatasetCreate(name="Renamed Dataset"))
 ```
 
 ### Delete a dataset

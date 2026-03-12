@@ -15,7 +15,7 @@ from catalog_client.registration.request import RegistrationRequest
 
 
 class CatalogClient:
-    """Sync client for the MetaHub Catalog API.
+    """Sync client for the Scientific Dataset Catalog API.
 
     Usage:
         with CatalogClient(base_url="https://catalog.example.com", api_token="...") as client:
@@ -106,7 +106,7 @@ class CatalogClient:
 
 
 class AsyncCatalogClient:
-    """Async client for the MetaHub Catalog API.
+    """Async client for the Scientific Dataset Catalog API.
 
     Usage:
         async with AsyncCatalogClient(base_url="https://catalog.example.com", api_token="...") as client:

@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
-from catalog_client.models.lineage import LineageEdgeCreate, LineageEdgeResponse, LineageType
+from catalog_client.models.lineage import (
+    LineageEdgeCreate,
+    LineageEdgeResponse,
+    LineageType,
+)
 from catalog_client.models.pagination import PaginatedResponse
 
 _PREFIX = "lineage"

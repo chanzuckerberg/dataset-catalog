@@ -1,10 +1,13 @@
 import re
 
 import httpx
-import pytest
 from pytest_httpx import HTTPXMock
+
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
-from catalog_client.models.lineage import LineageEdgeCreate, LineageEdgeResponse, LineageType
+from catalog_client.models.lineage import (
+    LineageEdgeCreate,
+    LineageType,
+)
 from catalog_client.models.pagination import PaginatedResponse
 
 BASE = "http://test.local/api/"

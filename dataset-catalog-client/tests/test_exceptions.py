@@ -1,5 +1,6 @@
 import httpx
 import pytest
+
 from catalog_client.exceptions import (
     AuthenticationError,
     CatalogConnectionError,

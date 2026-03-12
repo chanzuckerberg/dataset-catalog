@@ -1,5 +1,5 @@
 """
-catalog_client — Python client for the MetaHub Catalog API.
+catalog_client — Python client for the Scientific Dataset Catalog API.
 
 Quick start (sync):
     from catalog_client import CatalogClient, DatasetModality, AssetType, OntologyEntry

@@ -1,11 +1,11 @@
-import pytest
 from unittest.mock import MagicMock
-from catalog_client.registration.builder import RegistrationBuilder
-from catalog_client.registration.request import RegistrationRequest, LineageSpec
-from catalog_client.models.dataset import DatasetModality, DatasetRef
+
 from catalog_client.models.asset import AssetType
+from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import OntologyEntry
+from catalog_client.registration.builder import RegistrationBuilder
+from catalog_client.registration.request import RegistrationRequest
 
 
 def _builder(**kwargs):

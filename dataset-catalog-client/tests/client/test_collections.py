@@ -1,10 +1,12 @@
 import re
 
 import httpx
-import pytest
 from pytest_httpx import HTTPXMock
+
 from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
-from catalog_client.models.collection import CollectionCreate, CollectionResponse, CollectionUpdate
+from catalog_client.models.collection import (
+    CollectionCreate,
+)
 from catalog_client.models.pagination import PaginatedResponse
 
 BASE = "http://test.local/api/"
