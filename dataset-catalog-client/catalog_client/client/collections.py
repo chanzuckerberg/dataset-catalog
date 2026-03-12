@@ -1,47 +1,78 @@
-"""
-Collections API client.
-"""
-from catalog_client.client.base import BaseClient
-from catalog_client.exceptions import raise_for_status
-from catalog_client.models import CollectionCreate, CollectionResponse, CollectionUpdate, PaginatedResponse
+"""Collection sub-client (sync and async)."""
+from __future__ import annotations
+
+from catalog_client.client._base import _AsyncBase, _SyncBase
+from catalog_client.models.collection import (
+    CollectionCreate,
+    CollectionResponse,
+    CollectionUpdate,
+)
+from catalog_client.models.pagination import PaginatedResponse
+
+_PREFIX = "collections"
 
 
-class CollectionClient(BaseClient):
-    prefix = "collections"
-
-    def list_(self, *, skip: int = 0, limit: int = 100) -> PaginatedResponse[CollectionResponse]:
-        response = self._http.get(f"{self.prefix}/", params={"skip": skip, "limit": limit})
-        raise_for_status(response)
+class CollectionClient(_SyncBase):
+    def list(self, *, offset: int = 0, limit: int = 100) -> PaginatedResponse[CollectionResponse]:
+        response = self._get(f"{_PREFIX}/", params={"offset": offset, "limit": limit})
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
     def get(self, collection_id: str) -> CollectionResponse:
-        response = self._http.get(f"{self.prefix}/{collection_id}")
-        raise_for_status(response)
+        response = self._get(f"{_PREFIX}/{collection_id}")
         return CollectionResponse.model_validate(response.json())
 
     def create(self, collection: CollectionCreate) -> CollectionResponse:
-        response = self._http.post(f"{self.prefix}/", json=collection.model_dump(mode="json"))
-        raise_for_status(response)
+        response = self._post(f"{_PREFIX}/", json=collection.model_dump(mode="json"))
         return CollectionResponse.model_validate(response.json())
 
     def update(self, collection_id: str, collection: CollectionUpdate) -> CollectionResponse:
-        response = self._http.patch(
-            f"{self.prefix}/{collection_id}",
+        response = self._patch(
+            f"{_PREFIX}/{collection_id}",
             json=collection.model_dump(mode="json", exclude_unset=True),
         )
-        raise_for_status(response)
         return CollectionResponse.model_validate(response.json())
 
     def delete(self, collection_id: str) -> None:
-        response = self._http.delete(f"{self.prefix}/{collection_id}")
-        raise_for_status(response)
+        self._delete(f"{_PREFIX}/{collection_id}")
 
     def add_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
-        response = self._http.put(f"{self.prefix}/{collection_id}/datasets/{dataset_id}")
-        raise_for_status(response)
+        response = self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
         return CollectionResponse.model_validate(response.json())
 
     def remove_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
-        response = self._http.delete(f"{self.prefix}/{collection_id}/datasets/{dataset_id}")
-        raise_for_status(response)
+        response = self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
+        return CollectionResponse.model_validate(response.json())
+
+
+class AsyncCollectionClient(_AsyncBase):
+    async def list(
+        self, *, offset: int = 0, limit: int = 100
+    ) -> PaginatedResponse[CollectionResponse]:
+        response = await self._get(f"{_PREFIX}/", params={"offset": offset, "limit": limit})
+        return PaginatedResponse[CollectionResponse].model_validate(response.json())
+
+    async def get(self, collection_id: str) -> CollectionResponse:
+        response = await self._get(f"{_PREFIX}/{collection_id}")
+        return CollectionResponse.model_validate(response.json())
+
+    async def create(self, collection: CollectionCreate) -> CollectionResponse:
+        response = await self._post(f"{_PREFIX}/", json=collection.model_dump(mode="json"))
+        return CollectionResponse.model_validate(response.json())
+
+    async def update(self, collection_id: str, collection: CollectionUpdate) -> CollectionResponse:
+        response = await self._patch(
+            f"{_PREFIX}/{collection_id}",
+            json=collection.model_dump(mode="json", exclude_unset=True),
+        )
+        return CollectionResponse.model_validate(response.json())
+
+    async def delete(self, collection_id: str) -> None:
+        await self._delete(f"{_PREFIX}/{collection_id}")
+
+    async def add_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
+        response = await self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
+        return CollectionResponse.model_validate(response.json())
+
+    async def remove_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
+        response = await self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
         return CollectionResponse.model_validate(response.json())
