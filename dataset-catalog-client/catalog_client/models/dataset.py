@@ -1,0 +1,111 @@
+"""Dataset models and DatasetRef identifier."""
+from __future__ import annotations
+
+import datetime
+import enum
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+from pydantic import BaseModel, Field
+
+from catalog_client.models.asset import DataAssetRequest, DataAssetResponse
+from catalog_client.models.governance import GovernanceMetadata
+from catalog_client.models.metadata import DatasetMetadata
+from catalog_client.models.quality import DataQualityChecks
+
+if TYPE_CHECKING:
+    from catalog_client.models.lineage import LineageEdgeResponse
+    from catalog_client.models.collection import CollectionResponse
+
+
+class DatasetModality(str, enum.Enum):
+    imaging = "imaging"
+    sequencing = "sequencing"
+    mass_spec = "mass spec"
+    unknown = "unknown"
+
+
+class DatasetType(str, enum.Enum):
+    raw = "raw"
+    processed = "processed"
+
+
+class DatasetRef(NamedTuple):
+    """Identifies a dataset by its human-readable coordinates."""
+    canonical_id: str
+    version: str
+    project: str
+
+
+class DatasetCreate(BaseModel):
+    canonical_id: str
+    name: str
+    version: str
+    project: str
+    modality: DatasetModality
+    locations: list[DataAssetRequest] = Field(min_length=1)
+    governance: GovernanceMetadata
+    metadata: DatasetMetadata
+    description: str | None = None
+    doi: str | None = None
+    cross_db_references: str | None = None
+    dataset_type: DatasetType | None = None
+    is_latest: bool = False
+    record_schema_version: str | None = None
+    metadata_schema: str | None = None
+    data_quality: DataQualityChecks | None = None
+
+
+class DatasetUpdate(BaseModel):
+    canonical_id: str
+    name: str
+    version: str
+    project: str
+    modality: DatasetModality
+    locations: list[DataAssetRequest] = Field(min_length=1)
+    governance: GovernanceMetadata
+    metadata: DatasetMetadata
+    description: str | None = None
+    doi: str | None = None
+    cross_db_references: str | None = None
+    dataset_type: DatasetType | None = None
+    is_latest: bool = False
+    record_schema_version: str | None = None
+    metadata_schema: str | None = None
+    data_quality: DataQualityChecks | None = None
+
+
+class DatasetResponse(BaseModel):
+    id: str
+    tombstoned: bool
+    created_at: datetime.datetime
+    created_by: str | None
+    last_modified_at: datetime.datetime
+    modified_by: str | None
+    canonical_id: str
+    version: str
+    project: str | None = None
+    locations: list[DataAssetResponse] = Field(default_factory=list)
+    name: str
+    description: str | None = None
+    modality: str
+    doi: str | None = None
+    cross_db_references: str | None = None
+    dataset_type: str | None
+    is_latest: bool = False
+    record_schema_version: str | None = None
+    metadata_schema: str | None = None
+    governance: dict[str, Any]
+    data_quality: dict[str, Any] | None = None
+    dataset_metadata: dict[str, Any]
+    record_version: int
+
+
+class DatasetWithRelationsResponse(DatasetResponse):
+    """DatasetResponse extended with optional sideloaded relations.
+
+    Note: incoming_lineage, outgoing_lineage, collections use list[Any] until
+    Task 6 adds proper types after lineage.py and collection.py are created.
+    """
+    incoming_lineage: list[Any] | None = None
+    outgoing_lineage: list[Any] | None = None
+    collections: list[Any] | None = None

@@ -48,7 +48,6 @@ def test_raise_for_status_200_does_not_raise():
     raise_for_status(_mock_response(200, {}))
 
 
-@pytest.mark.skip(reason="catalog_client.models.dataset.DatasetRef not yet implemented (Task 5)")
 def test_lineage_resolution_error_carries_ref():
     from catalog_client.models.dataset import DatasetRef
     ref = DatasetRef(canonical_id="ds-1", version="1.0.0", project="proj")
