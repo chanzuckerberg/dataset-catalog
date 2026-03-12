@@ -101,11 +101,19 @@ class DatasetResponse(BaseModel):
 
 
 class DatasetWithRelationsResponse(DatasetResponse):
-    """DatasetResponse extended with optional sideloaded relations.
+    """DatasetResponse extended with optional sideloaded relations."""
+    incoming_lineage: list[LineageEdgeResponse] | None = None
+    outgoing_lineage: list[LineageEdgeResponse] | None = None
+    collections: list[CollectionResponse] | None = None
 
-    Note: incoming_lineage, outgoing_lineage, collections use list[Any] until
-    Task 6 adds proper types after lineage.py and collection.py are created.
-    """
-    incoming_lineage: list[Any] | None = None
-    outgoing_lineage: list[Any] | None = None
-    collections: list[Any] | None = None
+
+DatasetWithRelationsResponse.model_rebuild(
+    _types_namespace={
+        "LineageEdgeResponse": __import__(
+            "catalog_client.models.lineage", fromlist=["LineageEdgeResponse"]
+        ).LineageEdgeResponse,
+        "CollectionResponse": __import__(
+            "catalog_client.models.collection", fromlist=["CollectionResponse"]
+        ).CollectionResponse,
+    }
+)
