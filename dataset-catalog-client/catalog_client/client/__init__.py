@@ -1,2 +1,3 @@
-# Sub-clients will be imported here after full rewrite (Task 14)
+from catalog_client.client.catalog import AsyncCatalogClient, CatalogClient
 
+__all__ = ["AsyncCatalogClient", "CatalogClient"]
