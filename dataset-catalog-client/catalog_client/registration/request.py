@@ -46,5 +46,5 @@ class RegistrationRequest:
     description: str | None = None
     dataset_type: DatasetType | None = None
     data_quality: DataQualityChecks | None = None
-    is_latest: bool = False
+    is_latest: bool = True
     lineage: list[LineageSpec] = field(default_factory=list)

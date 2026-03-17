@@ -41,9 +41,7 @@ class DataAssetResponse(BaseModel):
     id: str
     tombstoned: bool
     created_at: datetime.datetime
-    created_by: str | None
     last_modified_at: datetime.datetime
-    modified_by: str | None
     location_uri: str
     asset_type: AssetType
     encoding: str | None = None

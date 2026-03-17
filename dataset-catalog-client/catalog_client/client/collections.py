@@ -14,7 +14,7 @@ _PREFIX = "collections"
 
 class CollectionClient(_SyncBase):
     def list(self, *, offset: int = 0, limit: int = 100) -> PaginatedResponse[CollectionResponse]:
-        response = self._get(f"{_PREFIX}/", params={"offset": offset, "limit": limit})
+        response = self._get(f"{_PREFIX}/", params={"skip": offset, "limit": limit})
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
     def get(self, collection_id: str) -> CollectionResponse:
@@ -48,7 +48,7 @@ class AsyncCollectionClient(_AsyncBase):
     async def list(
         self, *, offset: int = 0, limit: int = 100
     ) -> PaginatedResponse[CollectionResponse]:
-        response = await self._get(f"{_PREFIX}/", params={"offset": offset, "limit": limit})
+        response = await self._get(f"{_PREFIX}/", params={"skip": offset, "limit": limit})
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
     async def get(self, collection_id: str) -> CollectionResponse:

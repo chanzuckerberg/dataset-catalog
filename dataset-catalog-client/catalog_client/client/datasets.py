@@ -17,6 +17,7 @@ _PREFIX = "datasets"
 
 def _build_list_params(
     canonical_id: str | None,
+    version: str | None,
     modality: DatasetModality | None,
     project: str | None,
     is_latest: bool | None,
@@ -28,6 +29,8 @@ def _build_list_params(
     params: dict = {"offset": offset, "limit": limit}
     if canonical_id is not None:
         params["canonical_id"] = canonical_id
+    if version is not None:
+        params["version"] = version
     if modality is not None:
         params["modality"] = modality.value
     if project is not None:
@@ -46,6 +49,7 @@ class DatasetClient(_SyncBase):
         self,
         *,
         canonical_id: str | None = None,
+        version: str | None = None,
         modality: DatasetModality | None = None,
         project: str | None = None,
         is_latest: bool | None = None,
@@ -55,7 +59,7 @@ class DatasetClient(_SyncBase):
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
         params = _build_list_params(
-            canonical_id, modality, project, is_latest,
+            canonical_id, version, modality, project, is_latest,
             include_lineage, include_collections, offset, limit,
         )
         response = self._get(f"{_PREFIX}/", params=params)
@@ -108,6 +112,7 @@ class AsyncDatasetClient(_AsyncBase):
         self,
         *,
         canonical_id: str | None = None,
+        version: str | None = None,
         modality: DatasetModality | None = None,
         project: str | None = None,
         is_latest: bool | None = None,
@@ -117,7 +122,7 @@ class AsyncDatasetClient(_AsyncBase):
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
         params = _build_list_params(
-            canonical_id, modality, project, is_latest,
+            canonical_id, version, modality, project, is_latest,
             include_lineage, include_collections, offset, limit,
         )
         response = await self._get(f"{_PREFIX}/", params=params)

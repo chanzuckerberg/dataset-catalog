@@ -41,9 +41,7 @@ class CollectionResponse(BaseModel):
     id: str
     tombstoned: bool
     created_at: datetime.datetime
-    created_by: str | None
     last_modified_at: datetime.datetime
-    modified_by: str | None
     canonical_id: str
     version: str
     name: str
