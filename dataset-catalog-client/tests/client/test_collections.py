@@ -56,9 +56,14 @@ def test_get_collection(httpx_mock: HTTPXMock):
 
 
 def test_create_collection(httpx_mock: HTTPXMock):
-    httpx_mock.add_response(url=COLLECTIONS_URL, status_code=201, json=COLLECTION_RESPONSE)
+    httpx_mock.add_response(
+        url=COLLECTIONS_URL, status_code=201, json=COLLECTION_RESPONSE
+    )
     coll = CollectionCreate(
-        canonical_id="col-001", version="1.0.0", name="My Collection", collection_owner="team-x"
+        canonical_id="col-001",
+        version="1.0.0",
+        name="My Collection",
+        collection_owner="team-x",
     )
     result = _sync_client().create(coll)
     assert result.id == "col-1"

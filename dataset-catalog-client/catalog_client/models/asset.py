@@ -1,4 +1,5 @@
 """Data asset models."""
+
 from __future__ import annotations
 
 import datetime
@@ -23,6 +24,7 @@ class StoragePlatform(str, enum.Enum):
 
 class DataAssetRequest(BaseModel):
     """Asset fields supplied when creating or updating a dataset."""
+
     location_uri: str
     asset_type: AssetType
     encoding: str | None = None
@@ -41,9 +43,7 @@ class DataAssetResponse(BaseModel):
     id: str
     tombstoned: bool
     created_at: datetime.datetime
-    created_by: str | None
     last_modified_at: datetime.datetime
-    modified_by: str | None
     location_uri: str
     asset_type: AssetType
     encoding: str | None = None

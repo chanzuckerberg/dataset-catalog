@@ -63,6 +63,7 @@ def _async_client():
 
 # --- Sync tests ---
 
+
 def test_list_datasets(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=DATASETS_URL, json=PAGINATED_RESPONSE)
     client = _sync_client()
@@ -90,8 +91,7 @@ def test_get_dataset_by_ref_resolves_uuid(httpx_mock: HTTPXMock):
 
 def test_get_dataset_ref_not_found_raises(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
-        url=DATASETS_URL,
-        json={"total": 0, "limit": 100, "offset": 0, "results": []}
+        url=DATASETS_URL, json={"total": 0, "limit": 100, "offset": 0, "results": []}
     )
     client = _sync_client()
     ref = DatasetRef("missing", "1.0.0", "proj")
@@ -107,6 +107,7 @@ def test_delete_dataset(httpx_mock: HTTPXMock):
 
 
 # --- Async tests ---
+
 
 async def test_list_datasets_async(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=DATASETS_URL, json=PAGINATED_RESPONSE)

@@ -24,6 +24,7 @@ Quick start (async):
     async with AsyncCatalogClient(base_url="...", api_token="...") as client:
         dataset_id = await client.register(request)
 """
+
 from catalog_client.client.catalog import AsyncCatalogClient, CatalogClient
 from catalog_client.exceptions import (
     AuthenticationError,
@@ -50,7 +51,6 @@ from catalog_client.models import (
     DatasetRef,
     DatasetResponse,
     DatasetType,
-    DatasetUpdate,
     DatasetWithRelationsResponse,
     ExperimentMetadata,
     GovernanceMetadata,
@@ -92,7 +92,6 @@ __all__ = [
     "DatasetRef",
     "DatasetResponse",
     "DatasetType",
-    "DatasetUpdate",
     "DatasetWithRelationsResponse",
     "ExperimentMetadata",
     "GovernanceMetadata",

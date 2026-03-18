@@ -1,4 +1,5 @@
 """Top-level CatalogClient and AsyncCatalogClient."""
+
 from __future__ import annotations
 
 import httpx
@@ -61,11 +62,13 @@ class CatalogClient:
             else:
                 continue
 
-            self.lineages.create(LineageEdgeCreate(
-                source_dataset_id=source_id,
-                destination_dataset_id=dataset_id,
-                lineage_type=spec.lineage_type,
-            ))
+            self.lineages.create(
+                LineageEdgeCreate(
+                    source_dataset_id=source_id,
+                    destination_dataset_id=dataset_id,
+                    lineage_type=spec.lineage_type,
+                )
+            )
 
         return dataset_id
 
@@ -151,11 +154,13 @@ class AsyncCatalogClient:
             else:
                 continue
 
-            await self.lineages.create(LineageEdgeCreate(
-                source_dataset_id=source_id,
-                destination_dataset_id=dataset_id,
-                lineage_type=spec.lineage_type,
-            ))
+            await self.lineages.create(
+                LineageEdgeCreate(
+                    source_dataset_id=source_id,
+                    destination_dataset_id=dataset_id,
+                    lineage_type=spec.lineage_type,
+                )
+            )
 
         return dataset_id
 

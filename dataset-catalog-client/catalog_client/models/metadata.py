@@ -1,4 +1,5 @@
 """Biological metadata models: sample, experiment, data summary."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,12 +9,14 @@ from pydantic import BaseModel, ConfigDict
 
 class OntologyEntry(BaseModel):
     """{ label, ontology_id } — used for organism, disease, development_stage."""
+
     label: str
     ontology_id: str
 
 
 class TissueEntry(OntologyEntry):
     """Extends OntologyEntry with optional tissue type."""
+
     type: str | None = None
 
 

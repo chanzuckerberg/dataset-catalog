@@ -1,4 +1,5 @@
 """RegistrationBuilder — fluent interface for constructing RegistrationRequest."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -84,19 +85,21 @@ class RegistrationBuilder:
         includes_pattern: str | None = None,
         excludes_pattern: str | None = None,
     ) -> RegistrationBuilder:
-        self._locations.append(DataAssetRequest(
-            location_uri=location_uri,
-            asset_type=asset_type,
-            storage_platform=storage_platform,
-            file_format=file_format,
-            description=description,
-            size_bytes=size_bytes,
-            checksum=checksum,
-            checksum_alg=checksum_alg,
-            file_count=file_count,
-            includes_pattern=includes_pattern,
-            excludes_pattern=excludes_pattern,
-        ))
+        self._locations.append(
+            DataAssetRequest(
+                location_uri=location_uri,
+                asset_type=asset_type,
+                storage_platform=storage_platform,
+                file_format=file_format,
+                description=description,
+                size_bytes=size_bytes,
+                checksum=checksum,
+                checksum_alg=checksum_alg,
+                file_count=file_count,
+                includes_pattern=includes_pattern,
+                excludes_pattern=excludes_pattern,
+            )
+        )
         return self
 
     def with_governance(self, **kwargs: Any) -> RegistrationBuilder:
@@ -126,15 +129,19 @@ class RegistrationBuilder:
         lineage_type: LineageType,
     ) -> RegistrationBuilder:
         if isinstance(source, str):
-            self._lineage.append(LineageSpec(
-                lineage_type=lineage_type,
-                source_dataset_id=source,
-            ))
+            self._lineage.append(
+                LineageSpec(
+                    lineage_type=lineage_type,
+                    source_dataset_id=source,
+                )
+            )
         else:
-            self._lineage.append(LineageSpec(
-                lineage_type=lineage_type,
-                source_ref=source,
-            ))
+            self._lineage.append(
+                LineageSpec(
+                    lineage_type=lineage_type,
+                    source_ref=source,
+                )
+            )
         return self
 
     def build(self) -> RegistrationRequest:
