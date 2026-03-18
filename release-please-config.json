@@ -1,0 +1,8 @@
+{
+  "packages": {
+    "dataset-catalog-client": {
+      "package-name": "catalog-client",
+      "release-type": "python"
+    }
+  }
+}
