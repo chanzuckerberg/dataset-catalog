@@ -45,7 +45,7 @@ class RegistrationBuilder:
         self._name: str | None = None
         self._description: str | None = None
         self._dataset_type: DatasetType | None = None
-        self._is_latest: bool = True
+        self._is_latest: bool = False
         self._locations: list[DataAssetRequest] = []
         self._governance: GovernanceMetadata = GovernanceMetadata()
         self._sample: SampleMetadata = SampleMetadata()

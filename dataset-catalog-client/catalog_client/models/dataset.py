@@ -51,7 +51,7 @@ class DatasetCreate(BaseModel):
     doi: str | None = None
     cross_db_references: str | None = None
     dataset_type: DatasetType | None = None
-    is_latest: bool = True
+    is_latest: bool = False
     metadata_schema: str | None = None
     data_quality: DataQualityChecks | None = None
 
@@ -75,7 +75,7 @@ class DatasetResponse(BaseModel):
     metadata_schema: str | None = None
     governance: dict[str, Any]
     data_quality: dict[str, Any] | None = None
-    metadata: dict[str, Any]
+    metadata: dict[str, Any] = Field(validation_alias="dataset_metadata")
     record_version: int
 
 
