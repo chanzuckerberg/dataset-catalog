@@ -283,7 +283,8 @@ client.lineages.delete("edge-uuid")  # soft-delete, status 204
 
 ---
 
-## Async usage
+## Async usage 
+### The async implementation might still have critical bugs. It is currently recommended to use the synchronous path.
 
 `AsyncCatalogClient` mirrors the sync API with `await`:
 
