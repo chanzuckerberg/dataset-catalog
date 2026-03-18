@@ -7,7 +7,9 @@ if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
 _UNSET: object = object()
-_catalog_client_var: ContextVar[object] = ContextVar("catalog_client_var", default=_UNSET)
+_catalog_client_var: ContextVar[object] = ContextVar(
+    "catalog_client_var", default=_UNSET
+)
 
 
 def set_client(client: CatalogClient) -> Token:

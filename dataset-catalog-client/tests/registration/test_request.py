@@ -15,7 +15,9 @@ def _minimal_request(**kwargs) -> RegistrationRequest:
         version="1.0.0",
         project="atlas",
         modality=DatasetModality.sequencing,
-        locations=[DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)],
+        locations=[
+            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+        ],
         governance=GovernanceMetadata(),
         metadata=DatasetMetadata(),
     )
@@ -39,7 +41,9 @@ def test_registration_request_missing_canonical_id_raises():
             version="1.0.0",
             project="p",
             modality=DatasetModality.sequencing,
-            locations=[DataAssetRequest(location_uri="s3://x", asset_type=AssetType.file)],
+            locations=[
+                DataAssetRequest(location_uri="s3://x", asset_type=AssetType.file)
+            ],
             governance=GovernanceMetadata(),
             metadata=DatasetMetadata(),
         )

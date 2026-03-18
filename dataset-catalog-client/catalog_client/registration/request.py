@@ -1,4 +1,5 @@
 """RegistrationRequest dataclass and LineageSpec."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ class LineageSpec:
     - source_ref: a DatasetRef that will be resolved to a UUID (option B)
     Leave both None to create a dataset with no lineage (option C).
     """
+
     lineage_type: LineageType
     source_dataset_id: str | None = None
     source_ref: DatasetRef | None = None
@@ -32,6 +34,7 @@ class RegistrationRequest:
     Pass directly to CatalogClient.register() or construct with
     CatalogClient.new_registration() builder.
     """
+
     # Required
     canonical_id: str
     name: str

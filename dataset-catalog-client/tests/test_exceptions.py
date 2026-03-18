@@ -15,7 +15,9 @@ from catalog_client.exceptions import (
 
 
 def _mock_response(status_code: int, body: dict) -> httpx.Response:
-    return httpx.Response(status_code, json=body, request=httpx.Request("GET", "http://x"))
+    return httpx.Response(
+        status_code, json=body, request=httpx.Request("GET", "http://x")
+    )
 
 
 def test_raise_for_status_401():
@@ -51,6 +53,7 @@ def test_raise_for_status_200_does_not_raise():
 
 def test_lineage_resolution_error_carries_ref():
     from catalog_client.models.dataset import DatasetRef
+
     ref = DatasetRef(canonical_id="ds-1", version="1.0.0", project="proj")
     err = LineageResolutionError(ref=ref, reason="no results")
     assert err.ref == ref

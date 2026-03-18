@@ -24,7 +24,9 @@ def test_builder_build_returns_registration_request():
         _builder()
         .with_location("s3://bucket/key", asset_type=AssetType.file)
         .with_governance(data_owner="team-x", is_phi=False)
-        .with_sample(organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")])
+        .with_sample(
+            organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
+        )
         .with_experiment(assay=["10x Chromium"], assay_ontology_id=["EFO:0009922"])
         .build()
     )

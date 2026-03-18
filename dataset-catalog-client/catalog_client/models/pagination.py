@@ -1,4 +1,5 @@
 """Generic paginated response wrapper."""
+
 from __future__ import annotations
 
 from typing import Generic, TypeVar

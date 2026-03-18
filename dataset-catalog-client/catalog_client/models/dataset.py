@@ -1,4 +1,5 @@
 """Dataset models and DatasetRef identifier."""
+
 from __future__ import annotations
 
 import datetime
@@ -31,6 +32,7 @@ class DatasetType(str, enum.Enum):
 
 class DatasetRef(NamedTuple):
     """Identifies a dataset by its human-readable coordinates."""
+
     canonical_id: str
     version: str
     project: str
@@ -79,6 +81,7 @@ class DatasetResponse(BaseModel):
 
 class DatasetWithRelationsResponse(DatasetResponse):
     """DatasetResponse extended with optional sideloaded relations."""
+
     incoming_lineage: list[LineageEdgeResponse] | None = None
     outgoing_lineage: list[LineageEdgeResponse] | None = None
     collections: list[CollectionResponse] | None = None

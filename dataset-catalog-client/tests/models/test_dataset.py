@@ -17,7 +17,9 @@ def _minimal_create(**kwargs) -> DatasetCreate:
         version="1.0.0",
         project="atlas",
         modality=DatasetModality.sequencing,
-        locations=[DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)],
+        locations=[
+            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+        ],
         governance=GovernanceMetadata(),
         metadata=DatasetMetadata(),
     )
@@ -41,13 +43,16 @@ def test_dataset_ref_unpacks():
 def test_dataset_create_requires_canonical_id():
     import pytest
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         DatasetCreate(
             name="x",
             version="1.0.0",
             project="p",
             modality=DatasetModality.sequencing,
-            locations=[DataAssetRequest(location_uri="s3://x", asset_type=AssetType.file)],
+            locations=[
+                DataAssetRequest(location_uri="s3://x", asset_type=AssetType.file)
+            ],
             governance=GovernanceMetadata(),
             metadata=DatasetMetadata(),
         )
@@ -56,6 +61,7 @@ def test_dataset_create_requires_canonical_id():
 def test_dataset_create_locations_min_length():
     import pytest
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         _minimal_create(locations=[])
 
