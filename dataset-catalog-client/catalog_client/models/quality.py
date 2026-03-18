@@ -1,4 +1,5 @@
 """Data quality check results."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict

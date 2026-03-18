@@ -1,4 +1,5 @@
 """Dataset models and DatasetRef identifier."""
+
 from __future__ import annotations
 
 import datetime
@@ -31,6 +32,7 @@ class DatasetType(str, enum.Enum):
 
 class DatasetRef(NamedTuple):
     """Identifies a dataset by its human-readable coordinates."""
+
     canonical_id: str
     version: str
     project: str
@@ -49,7 +51,7 @@ class DatasetCreate(BaseModel):
     doi: str | None = None
     cross_db_references: str | None = None
     dataset_type: DatasetType | None = None
-    is_latest: bool = True
+    is_latest: bool = False
     metadata_schema: str | None = None
     data_quality: DataQualityChecks | None = None
 
@@ -73,12 +75,13 @@ class DatasetResponse(BaseModel):
     metadata_schema: str | None = None
     governance: dict[str, Any]
     data_quality: dict[str, Any] | None = None
-    metadata: dict[str, Any]
+    metadata: dict[str, Any] = Field(validation_alias="dataset_metadata")
     record_version: int
 
 
 class DatasetWithRelationsResponse(DatasetResponse):
     """DatasetResponse extended with optional sideloaded relations."""
+
     incoming_lineage: list[LineageEdgeResponse] | None = None
     outgoing_lineage: list[LineageEdgeResponse] | None = None
     collections: list[CollectionResponse] | None = None

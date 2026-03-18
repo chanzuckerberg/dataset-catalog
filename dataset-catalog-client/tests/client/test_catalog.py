@@ -56,7 +56,9 @@ EDGE_RESPONSE = {
 }
 
 PARENT_PAGINATED = {
-    "total": 1, "limit": 1000, "offset": 0,
+    "total": 1,
+    "limit": 1000,
+    "offset": 0,
     "results": [{**DATASET_RESPONSE, "id": "parent-uuid", "canonical_id": "parent-ds"}],
 }
 
@@ -68,7 +70,9 @@ def _minimal_request(lineage=None) -> RegistrationRequest:
         version="1.0.0",
         project="atlas",
         modality=DatasetModality.sequencing,
-        locations=[DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)],
+        locations=[
+            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+        ],
         governance=GovernanceMetadata(),
         metadata=DatasetMetadata(),
         lineage=lineage or [],
@@ -76,6 +80,7 @@ def _minimal_request(lineage=None) -> RegistrationRequest:
 
 
 # --- CatalogClient ---
+
 
 def test_catalog_client_has_sub_clients():
     client = CatalogClient(base_url=BASE, api_token=TOKEN)
@@ -100,9 +105,14 @@ def test_register_no_lineage(httpx_mock: HTTPXMock):
 def test_register_with_lineage_by_uuid(httpx_mock: HTTPXMock):
     httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
     httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
-    req = _minimal_request(lineage=[
-        LineageSpec(lineage_type=LineageType.transformed_from, source_dataset_id="parent-uuid")
-    ])
+    req = _minimal_request(
+        lineage=[
+            LineageSpec(
+                lineage_type=LineageType.transformed_from,
+                source_dataset_id="parent-uuid",
+            )
+        ]
+    )
     with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
         dataset_id = client.register(req)
     assert dataset_id == "new-uuid"
@@ -113,9 +123,9 @@ def test_register_with_lineage_by_ref(httpx_mock: HTTPXMock):
     httpx_mock.add_response(method="GET", json=PARENT_PAGINATED)
     httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
     ref = DatasetRef("parent-ds", "1.0.0", "atlas")
-    req = _minimal_request(lineage=[
-        LineageSpec(lineage_type=LineageType.transformed_from, source_ref=ref)
-    ])
+    req = _minimal_request(
+        lineage=[LineageSpec(lineage_type=LineageType.transformed_from, source_ref=ref)]
+    )
     with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
         dataset_id = client.register(req)
     assert dataset_id == "new-uuid"
@@ -123,11 +133,13 @@ def test_register_with_lineage_by_ref(httpx_mock: HTTPXMock):
 
 def test_register_ref_not_found_raises(httpx_mock: HTTPXMock):
     httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
-    httpx_mock.add_response(method="GET", json={"total": 0, "limit": 1000, "offset": 0, "results": []})
+    httpx_mock.add_response(
+        method="GET", json={"total": 0, "limit": 1000, "offset": 0, "results": []}
+    )
     ref = DatasetRef("missing-ds", "1.0.0", "atlas")
-    req = _minimal_request(lineage=[
-        LineageSpec(lineage_type=LineageType.transformed_from, source_ref=ref)
-    ])
+    req = _minimal_request(
+        lineage=[LineageSpec(lineage_type=LineageType.transformed_from, source_ref=ref)]
+    )
     with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
         with pytest.raises(LineageResolutionError) as exc_info:
             client.register(req)
@@ -146,6 +158,7 @@ def test_new_registration_returns_builder():
 
 
 # --- AsyncCatalogClient ---
+
 
 async def test_async_catalog_client_has_sub_clients():
     async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:

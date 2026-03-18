@@ -12,6 +12,14 @@ dependencies = [
     "pydantic>=2.10.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "jupyter>=1.1.1",
+]
+
+[tool.ruff]
+exclude = ["*.ipynb"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
@@ -19,6 +27,7 @@ ignore = ["E501"]
 [dependency-groups]
 dev = [
     "jupyter>=1.1.1",
+    "pre-commit>=4.5.1",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-httpx>=0.30.0",

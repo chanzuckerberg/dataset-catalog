@@ -1,4 +1,5 @@
 """Dataset sub-client (sync and async)."""
+
 from __future__ import annotations
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
@@ -59,14 +60,25 @@ class DatasetClient(_SyncBase):
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
         params = _build_list_params(
-            canonical_id, version, modality, project, is_latest,
-            include_lineage, include_collections, offset, limit,
+            canonical_id,
+            version,
+            modality,
+            project,
+            is_latest,
+            include_lineage,
+            include_collections,
+            offset,
+            limit,
         )
         response = self._get(f"{_PREFIX}/", params=params)
-        return PaginatedResponse[DatasetWithRelationsResponse].model_validate(response.json())
+        return PaginatedResponse[DatasetWithRelationsResponse].model_validate(
+            response.json()
+        )
 
     def _resolve(self, ref: DatasetRef) -> str:
-        results = self.list(canonical_id=ref.canonical_id, project=ref.project, limit=1000)
+        results = self.list(
+            canonical_id=ref.canonical_id, project=ref.project, limit=1000
+        )
         matches = [d for d in results.results if d.version == ref.version]
         if len(matches) == 0:
             raise NotFoundError(404, f"No dataset found for {ref}")
@@ -122,14 +134,25 @@ class AsyncDatasetClient(_AsyncBase):
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
         params = _build_list_params(
-            canonical_id, version, modality, project, is_latest,
-            include_lineage, include_collections, offset, limit,
+            canonical_id,
+            version,
+            modality,
+            project,
+            is_latest,
+            include_lineage,
+            include_collections,
+            offset,
+            limit,
         )
         response = await self._get(f"{_PREFIX}/", params=params)
-        return PaginatedResponse[DatasetWithRelationsResponse].model_validate(response.json())
+        return PaginatedResponse[DatasetWithRelationsResponse].model_validate(
+            response.json()
+        )
 
     async def _resolve(self, ref: DatasetRef) -> str:
-        results = await self.list(canonical_id=ref.canonical_id, project=ref.project, limit=1000)
+        results = await self.list(
+            canonical_id=ref.canonical_id, project=ref.project, limit=1000
+        )
         matches = [d for d in results.results if d.version == ref.version]
         if len(matches) == 0:
             raise NotFoundError(404, f"No dataset found for {ref}")
@@ -157,7 +180,9 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
-    async def update(self, ref: str | DatasetRef, dataset: DatasetCreate) -> DatasetResponse:
+    async def update(
+        self, ref: str | DatasetRef, dataset: DatasetCreate
+    ) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
         response = await self._patch(
             f"{_PREFIX}/{dataset_id}",
