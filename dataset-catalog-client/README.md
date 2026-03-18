@@ -35,4 +35,8 @@ with CatalogClient(base_url="https://your-catalog.example.com", api_token="your-
 See [USAGE.md](USAGE.md) for the full usage guide covering datasets, collections, lineage,
 async usage, and error handling.
 
-An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb).
+An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). You can start up the jupyter notebook with the following command:
+
+```commandline
+uv run jupyter notebook examples/quickstart.ipynb
+```
