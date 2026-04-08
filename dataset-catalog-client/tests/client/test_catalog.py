@@ -150,6 +150,7 @@ def test_new_registration_returns_builder():
     with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
         builder = client.new_registration(
             canonical_id="ds-001",
+            name="Test Dataset",
             version="1.0.0",
             project="atlas",
             modality=DatasetModality.sequencing,

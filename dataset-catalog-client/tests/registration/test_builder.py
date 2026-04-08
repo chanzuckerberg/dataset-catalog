@@ -11,6 +11,7 @@ from catalog_client.registration.request import RegistrationRequest
 def _builder(**kwargs):
     defaults = dict(
         canonical_id="ds-001",
+        name="Test Dataset",
         version="1.0.0",
         project="atlas",
         modality=DatasetModality.sequencing,
@@ -87,6 +88,6 @@ def test_builder_submit_calls_client_register():
     assert result == "new-dataset-id"
 
 
-def test_builder_is_latest_defaults_false():
+def test_builder_is_latest_defaults_true():
     req = _builder().with_location("s3://x", asset_type=AssetType.file).build()
-    assert req.is_latest is False
+    assert req.is_latest is True

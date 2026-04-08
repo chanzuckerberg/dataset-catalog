@@ -30,44 +30,45 @@ class RegistrationBuilder:
     def __init__(
         self,
         canonical_id: str,
+        name: str,
         version: str,
         project: str,
         modality: DatasetModality,
         *,
         client: CatalogClient | None = None,
     ) -> None:
-        self._canonical_id = canonical_id
-        self._version = version
-        self._project = project
-        self._modality = modality
         self._client = client
 
-        self._name: str | None = None
-        self._description: str | None = None
-        self._dataset_type: DatasetType | None = None
-        self._is_latest: bool = False
-        self._locations: list[DataAssetRequest] = []
-        self._governance: GovernanceMetadata = GovernanceMetadata()
-        self._sample: SampleMetadata = SampleMetadata()
-        self._experiment: ExperimentMetadata = ExperimentMetadata()
-        self._data_summary: DataSummaryMetadata = DataSummaryMetadata()
-        self._data_quality: DataQualityChecks | None = None
-        self._lineage: list[LineageSpec] = []
+        # Initialize with RegistrationRequest containing all required fields
+        self._request = RegistrationRequest(
+            canonical_id=canonical_id,
+            name=name,
+            version=version,
+            project=project,
+            modality=modality,
+            locations=[],
+            governance=GovernanceMetadata(),
+            metadata=DatasetMetadata(
+                sample=None,
+                experiment=None,
+                data_summary=None,
+            ),
+        )
 
     def named(self, name: str) -> RegistrationBuilder:
-        self._name = name
+        self._request.name = name
         return self
 
     def described(self, description: str) -> RegistrationBuilder:
-        self._description = description
+        self._request.description = description
         return self
 
     def as_latest(self, value: bool = True) -> RegistrationBuilder:
-        self._is_latest = value
+        self._request.is_latest = value
         return self
 
     def of_type(self, dataset_type: DatasetType) -> RegistrationBuilder:
-        self._dataset_type = dataset_type
+        self._request.dataset_type = dataset_type
         return self
 
     def with_location(
@@ -85,7 +86,7 @@ class RegistrationBuilder:
         includes_pattern: str | None = None,
         excludes_pattern: str | None = None,
     ) -> RegistrationBuilder:
-        self._locations.append(
+        self._request.locations.append(
             DataAssetRequest(
                 location_uri=location_uri,
                 asset_type=asset_type,
@@ -103,23 +104,38 @@ class RegistrationBuilder:
         return self
 
     def with_governance(self, **kwargs: Any) -> RegistrationBuilder:
-        self._governance = GovernanceMetadata(**kwargs)
+        self._request.governance = GovernanceMetadata(**kwargs)
         return self
 
     def with_sample(self, **kwargs: Any) -> RegistrationBuilder:
-        self._sample = SampleMetadata(**kwargs)
+        sample = SampleMetadata(**kwargs)
+        self._request.metadata = DatasetMetadata(
+            sample=sample,
+            experiment=self._request.metadata.experiment,
+            data_summary=self._request.metadata.data_summary,
+        )
         return self
 
     def with_experiment(self, **kwargs: Any) -> RegistrationBuilder:
-        self._experiment = ExperimentMetadata(**kwargs)
+        experiment = ExperimentMetadata(**kwargs)
+        self._request.metadata = DatasetMetadata(
+            sample=self._request.metadata.sample,
+            experiment=experiment,
+            data_summary=self._request.metadata.data_summary,
+        )
         return self
 
     def with_data_summary(self, **kwargs: Any) -> RegistrationBuilder:
-        self._data_summary = DataSummaryMetadata(**kwargs)
+        data_summary = DataSummaryMetadata(**kwargs)
+        self._request.metadata = DatasetMetadata(
+            sample=self._request.metadata.sample,
+            experiment=self._request.metadata.experiment,
+            data_summary=data_summary,
+        )
         return self
 
     def with_data_quality(self, **kwargs: Any) -> RegistrationBuilder:
-        self._data_quality = DataQualityChecks(**kwargs)
+        self._request.data_quality = DataQualityChecks(**kwargs)
         return self
 
     def derived_from(
@@ -129,14 +145,14 @@ class RegistrationBuilder:
         lineage_type: LineageType,
     ) -> RegistrationBuilder:
         if isinstance(source, str):
-            self._lineage.append(
+            self._request.lineage.append(
                 LineageSpec(
                     lineage_type=lineage_type,
                     source_dataset_id=source,
                 )
             )
         else:
-            self._lineage.append(
+            self._request.lineage.append(
                 LineageSpec(
                     lineage_type=lineage_type,
                     source_ref=source,
@@ -145,26 +161,7 @@ class RegistrationBuilder:
         return self
 
     def build(self) -> RegistrationRequest:
-        name = self._name or self._canonical_id
-        return RegistrationRequest(
-            canonical_id=self._canonical_id,
-            name=name,
-            version=self._version,
-            project=self._project,
-            modality=self._modality,
-            locations=self._locations,
-            governance=self._governance,
-            metadata=DatasetMetadata(
-                sample=self._sample,
-                experiment=self._experiment,
-                data_summary=self._data_summary,
-            ),
-            description=self._description,
-            dataset_type=self._dataset_type,
-            data_quality=self._data_quality,
-            is_latest=self._is_latest,
-            lineage=self._lineage,
-        )
+        return self._request
 
     def submit(self) -> str:
         """Build the request and register it. Returns the new dataset_id."""

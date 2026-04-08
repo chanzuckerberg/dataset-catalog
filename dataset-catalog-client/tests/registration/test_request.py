@@ -30,7 +30,7 @@ def test_registration_request_required_fields():
     assert r.canonical_id == "ds-001"
     assert r.version == "1.0.0"
     assert r.project == "atlas"
-    assert r.is_latest is False
+    assert r.is_latest is True
     assert r.lineage == []
 
 

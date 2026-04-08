@@ -87,11 +87,11 @@ with CatalogClient(base_url="...", api_token="...") as client:
     dataset_id = (
         client.new_registration(
             canonical_id="my-rna-seq-dataset",
+            name="RNA-seq batch 42",
             version="1.0.0",
             project="atlas",
             modality=DatasetModality.sequencing,
         )
-        .named("RNA-seq batch 42")
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
         .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder)
         .with_governance(data_owner="genomics-team", is_pii=False)
@@ -110,11 +110,11 @@ To record lineage at registration time:
     dataset_id = (
         client.new_registration(
             canonical_id="processed-rna-seq",
+            name="Processed RNA-seq batch 42",
             version="1.0.0",
             project="atlas",
             modality=DatasetModality.sequencing,
         )
-        .named("Processed RNA-seq batch 42")
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder)
         .with_governance(data_owner="genomics-team", is_pii=False)
         .derived_from("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)

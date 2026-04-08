@@ -8,6 +8,7 @@ Quick start (sync):
         dataset_id = (
             client.new_registration(
                 canonical_id="my-dataset",
+                name="My Dataset",
                 version="1.0.0",
                 project="atlas",
                 modality=DatasetModality.sequencing,
