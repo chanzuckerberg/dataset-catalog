@@ -98,7 +98,7 @@ def test_dataset_response_parses_json():
         "dataset_type": "raw",
         "governance": {},
         "data_quality": None,
-        "dataset_metadata": {},
+        "metadata": {},
         "record_version": 1,
         "description": None,
         "doi": None,
