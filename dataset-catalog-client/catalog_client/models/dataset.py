@@ -75,7 +75,7 @@ class DatasetResponse(BaseModel):
     metadata_schema: str | None = None
     governance: dict[str, Any]
     data_quality: dict[str, Any] | None = None
-    metadata: dict[str, Any] = Field(validation_alias="dataset_metadata")
+    metadata: dict[str, Any]
     record_version: int
 
 
