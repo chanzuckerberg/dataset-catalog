@@ -52,11 +52,11 @@ def test_builder_multiple_locations():
     assert len(req.locations) == 2
 
 
-def test_builder_derived_from_uuid():
+def test_builder_with_lineage_uuid():
     req = (
         _builder()
         .with_location("s3://x", asset_type=AssetType.file)
-        .derived_from("uuid-parent", lineage_type=LineageType.transformed_from)
+        .with_lineage("uuid-parent", lineage_type=LineageType.transformed_from)
         .build()
     )
     assert len(req.lineage) == 1
@@ -64,12 +64,12 @@ def test_builder_derived_from_uuid():
     assert req.lineage[0].source_ref is None
 
 
-def test_builder_derived_from_ref():
+def test_builder_with_lineage_ref():
     ref = DatasetRef("parent", "1.0.0", "atlas")
     req = (
         _builder()
         .with_location("s3://x", asset_type=AssetType.file)
-        .derived_from(ref, lineage_type=LineageType.version_of)
+        .with_lineage(ref, lineage_type=LineageType.version_of)
         .build()
     )
     assert req.lineage[0].source_ref == ref

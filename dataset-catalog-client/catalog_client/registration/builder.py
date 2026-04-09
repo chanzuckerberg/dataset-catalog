@@ -162,7 +162,7 @@ class RegistrationBuilder:
         self._request.data_quality = DataQualityChecks(**kwargs)
         return self
 
-    def derived_from(
+    def with_lineage(
         self,
         source: str | DatasetRef,
         *,

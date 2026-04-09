@@ -123,7 +123,7 @@ To record lineage at registration time:
         )
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder)
         .with_governance(data_owner="genomics-team", is_pii=False)
-        .derived_from("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
+        .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
     )
 ```
