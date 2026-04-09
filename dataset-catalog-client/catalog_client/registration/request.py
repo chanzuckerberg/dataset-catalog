@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from catalog_client.models.asset import DataAssetRequest
-from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetType, DatasetCreate
+from catalog_client.models.dataset import (
+    DatasetModality,
+    DatasetRef,
+    DatasetType,
+    DatasetCreate,
+)
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import DatasetMetadata

@@ -101,7 +101,9 @@ def test_builder_custom_metadata_updates():
         .with_location("s3://bucket/key", asset_type=AssetType.file)
         # Set initial sample metadata with custom field
         .with_sample(
-            tissue=[TissueEntry(label="brain", ontology_id="UBERON:0000955", type=None)],
+            tissue=[
+                TissueEntry(label="brain", ontology_id="UBERON:0000955", type=None)
+            ],
             new_sample_field="added_later",
         )
         # Set initial experiment metadata with custom field
