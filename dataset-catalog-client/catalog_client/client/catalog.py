@@ -37,20 +37,7 @@ class CatalogClient:
 
     def register(self, request: RegistrationRequest) -> str:
         """Register a new dataset and any lineage edges. Returns the new dataset_id."""
-        dataset = DatasetCreate(
-            canonical_id=request.canonical_id,
-            name=request.name,
-            version=request.version,
-            project=request.project,
-            modality=request.modality,
-            locations=request.locations,
-            governance=request.governance,
-            metadata=request.metadata,
-            description=request.description,
-            dataset_type=request.dataset_type,
-            data_quality=request.data_quality,
-            is_latest=request.is_latest,
-        )
+        dataset = request.to_dataset_create()
         response = self.datasets.create(dataset)
         dataset_id = response.id
 
@@ -81,6 +68,7 @@ class CatalogClient:
     def new_registration(
         self,
         canonical_id: str,
+        name: str,
         version: str,
         project: str,
         modality: DatasetModality,
@@ -88,6 +76,7 @@ class CatalogClient:
         """Return a fluent builder bound to this client."""
         return RegistrationBuilder(
             canonical_id=canonical_id,
+            name=name,
             version=version,
             project=project,
             modality=modality,
@@ -173,12 +162,14 @@ class AsyncCatalogClient:
     def new_registration(
         self,
         canonical_id: str,
+        name: str,
         version: str,
         project: str,
         modality: DatasetModality,
     ) -> RegistrationBuilder:
         return RegistrationBuilder(
             canonical_id=canonical_id,
+            name=name,
             version=version,
             project=project,
             modality=modality,

@@ -87,18 +87,24 @@ with CatalogClient(base_url="...", api_token="...") as client:
     dataset_id = (
         client.new_registration(
             canonical_id="my-rna-seq-dataset",
+            name="RNA-seq batch 42",
             version="1.0.0",
             project="atlas",
             modality=DatasetModality.sequencing,
         )
-        .named("RNA-seq batch 42")
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
         .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder)
         .with_governance(data_owner="genomics-team", is_pii=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
-        .with_experiment(sub_modality="bulk")
+        .with_experiment(sub_modality="bulk", equipment={"sequencer": "NovaSeq 6000", "chemistry": "v4"})
+        # Add dataset-level custom metadata (not tied to sample/experiment/data_summary)
+        .with_custom_metadata(
+            project_phase="discovery",
+            funding_source="NIH Grant R01-123456",
+            collaboration=["Lab A", "Lab B"]
+        )
         .submit()
     )
     print(dataset_id)
@@ -110,14 +116,14 @@ To record lineage at registration time:
     dataset_id = (
         client.new_registration(
             canonical_id="processed-rna-seq",
+            name="Processed RNA-seq batch 42",
             version="1.0.0",
             project="atlas",
             modality=DatasetModality.sequencing,
         )
-        .named("Processed RNA-seq batch 42")
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder)
         .with_governance(data_owner="genomics-team", is_pii=False)
-        .derived_from("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
+        .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
     )
 ```
