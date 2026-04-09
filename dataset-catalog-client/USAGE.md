@@ -98,7 +98,13 @@ with CatalogClient(base_url="...", api_token="...") as client:
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
-        .with_experiment(sub_modality="bulk")
+        .with_experiment(sub_modality="bulk", equipment={"sequencer": "NovaSeq 6000", "chemistry": "v4"})
+        # Add dataset-level custom metadata (not tied to sample/experiment/data_summary)
+        .with_custom_metadata(
+            project_phase="discovery",
+            funding_source="NIH Grant R01-123456",
+            collaboration=["Lab A", "Lab B"]
+        )
         .submit()
     )
     print(dataset_id)

@@ -48,11 +48,7 @@ class RegistrationBuilder:
             modality=modality,
             locations=[],
             governance=GovernanceMetadata(),
-            metadata=DatasetMetadata(
-                sample=None,
-                experiment=None,
-                data_summary=None,
-            ),
+            metadata=DatasetMetadata(),
         )
 
     def named(self, name: str) -> RegistrationBuilder:
@@ -108,30 +104,58 @@ class RegistrationBuilder:
         return self
 
     def with_sample(self, **kwargs: Any) -> RegistrationBuilder:
+        # Create new sample metadata, completely replacing any existing sample metadata
         sample = SampleMetadata(**kwargs)
-        self._request.metadata = DatasetMetadata(
-            sample=sample,
-            experiment=self._request.metadata.experiment,
-            data_summary=self._request.metadata.data_summary,
-        )
+
+        # Preserve existing dataset-level custom metadata
+        existing_dataset_data = self._request.metadata.model_dump()
+        # Update with new sample while preserving other fields
+        dataset_data = {
+            **existing_dataset_data,
+            "sample": sample,
+        }
+        self._request.metadata = DatasetMetadata(**dataset_data)
         return self
 
     def with_experiment(self, **kwargs: Any) -> RegistrationBuilder:
+        # Create new experiment metadata, completely replacing any existing experiment metadata
         experiment = ExperimentMetadata(**kwargs)
-        self._request.metadata = DatasetMetadata(
-            sample=self._request.metadata.sample,
-            experiment=experiment,
-            data_summary=self._request.metadata.data_summary,
-        )
+
+        # Preserve existing dataset-level custom metadata
+        existing_dataset_data = self._request.metadata.model_dump()
+        # Update with new experiment while preserving other fields
+        dataset_data = {
+            **existing_dataset_data,
+            "experiment": experiment,
+        }
+        self._request.metadata = DatasetMetadata(**dataset_data)
         return self
 
     def with_data_summary(self, **kwargs: Any) -> RegistrationBuilder:
+        # Create new data_summary metadata, completely replacing any existing data_summary metadata
         data_summary = DataSummaryMetadata(**kwargs)
-        self._request.metadata = DatasetMetadata(
-            sample=self._request.metadata.sample,
-            experiment=self._request.metadata.experiment,
-            data_summary=data_summary,
-        )
+
+        # Preserve existing dataset-level custom metadata
+        existing_dataset_data = self._request.metadata.model_dump()
+        # Update with new data_summary while preserving other fields
+        dataset_data = {
+            **existing_dataset_data,
+            "data_summary": data_summary,
+        }
+        self._request.metadata = DatasetMetadata(**dataset_data)
+        return self
+
+    def with_custom_metadata(self, **kwargs: Any) -> RegistrationBuilder:
+        """Add custom key-value pairs to dataset-level metadata.
+
+        For metadata that doesn't belong to sample, experiment, or data_summary categories.
+        """
+        # Get existing custom fields (extra fields beyond the model definition)
+        existing_data = self._request.metadata.model_dump()
+        # Merge existing data with new kwargs, with new kwargs taking precedence
+        merged_data = {**existing_data, **kwargs}
+
+        self._request.metadata = DatasetMetadata(**merged_data)
         return self
 
     def with_data_quality(self, **kwargs: Any) -> RegistrationBuilder:
