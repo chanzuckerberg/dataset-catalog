@@ -2,14 +2,6 @@
 
 Python client library for the Scientific Dataset Catalog API.
 
-## Installation
-
-```bash
-pip install catalog-client
-# or with uv
-uv add catalog-client
-```
-
 ## Setup
 
 All `/api/` endpoints require an `X-catalog-api-token` header. Obtain a token from your
