@@ -30,5 +30,8 @@ htmlcov/
 .vscode/
 *.iml
 
+# Git worktrees
+.worktrees/
+
 # OS
 .DS_Store
