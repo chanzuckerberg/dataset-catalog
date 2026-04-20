@@ -289,6 +289,97 @@ client.lineages.delete("edge-uuid")  # soft-delete, status 204
 
 ---
 
+## Checksum Generation
+
+The client provides utilities to automatically generate checksums for dataset assets on supported storage platforms.
+
+### Basic usage
+
+```python
+from catalog_client import DataAssetRequest, AssetType
+from catalog_client.utils.checksums import generate_for_assets
+
+# Create assets without checksums
+assets = [
+    DataAssetRequest(
+        location_uri="s3://my-bucket/file1.txt",
+        asset_type=AssetType.file,
+    ),
+    DataAssetRequest(
+        location_uri="/hpc/shared/data/file2.txt",
+        asset_type=AssetType.file,
+    ),
+]
+
+# Generate checksums
+assets_with_checksums = generate_for_assets(assets)
+
+# Use in dataset creation
+dataset = client.datasets.create(DatasetCreate(
+    canonical_id="my-dataset",
+    name="My Dataset",
+    modality=DatasetModality.sequencing,
+    locations=assets_with_checksums,  # Now includes checksums
+    governance=GovernanceMetadata(...),
+    metadata=DatasetMetadata(),
+))
+```
+
+### Algorithm selection
+
+```python
+# Specify algorithm (default: blake3, except S3 prefers existing CRC32)
+assets_with_checksums = generate_for_assets(assets, algorithm="blake2b")
+
+# Supported algorithms: 'blake3', 'blake2b', 'blake2s', 'crc32'
+```
+
+### S3 optimization control
+
+```python
+# Default: use existing S3 checksums when available, compute otherwise
+assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=True)
+
+# Only use existing S3 checksums, skip assets without them
+assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=False)
+```
+
+### Supported platforms
+
+| Platform | Detection | Notes |
+|----------|-----------|-------|
+| **S3** | URI starts with `s3://` or `s3a://` | Attempts to use existing CRC32 checksums when `algorithm=None` |
+| **HPC** | URI contains `/hpc/` | Local filesystem access required |
+| **Bruno HPC** | URI contains `/bruno_hpc/` | Local filesystem access required |
+| **CoreWeave** | URI contains `/coreweave/` | Local filesystem access required |
+
+**Current limitations:**
+- Only `AssetType.file` assets are supported. Folder assets (`AssetType.folder`) are skipped.
+- Assets on unsupported platforms (`external`, `other`) or unrecognized URIs will be skipped with warnings.
+
+### Error handling
+
+```python
+import warnings
+from catalog_client.utils.checksums import ChecksumWarning
+
+# Capture checksum warnings
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    assets_with_checksums = generate_for_assets(assets)
+
+    for warning in w:
+        if issubclass(warning.category, ChecksumWarning):
+            print(f"Checksum warning: {warning.message}")
+```
+
+Common warnings:
+- Unsupported storage platform
+- File not found or access denied
+- Algorithm not available (e.g., `blake3` package not installed)
+
+---
+
 ## Async usage 
 ### The async implementation might still have critical bugs. It is currently recommended to use the synchronous path.
 

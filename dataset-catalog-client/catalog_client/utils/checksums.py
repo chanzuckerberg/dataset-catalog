@@ -1,22 +1,18 @@
 """Checksum generation utilities for DataAssetRequest objects."""
 
-from __future__ import annotations
-
 import base64
+import boto3
 import hashlib
 import warnings
 import zlib
+
+from catalog_client import AssetType
 from catalog_client.models.asset import DataAssetRequest, StoragePlatform
 
 try:
     import blake3
 except ImportError:
-    blake3 = None  # Will be handled in _HashUtils.blake3
-
-try:
-    import boto3
-except ImportError:
-    boto3 = None
+    blake3 = None
 
 
 class ChecksumWarning(UserWarning):
@@ -98,12 +94,8 @@ class _ChecksumBackend:
         """
         # Primary: Check explicit storage_platform
         if asset.storage_platform:
-            if asset.storage_platform in {
-                StoragePlatform.s3,
-                StoragePlatform.hpc,
-                StoragePlatform.bruno_hpc,
-                StoragePlatform.coreweave
-            }:
+            # Exclude unsupported platforms
+            if asset.storage_platform not in {StoragePlatform.external, StoragePlatform.other}:
                 return asset.storage_platform
             return None
 
@@ -180,7 +172,7 @@ class _ChecksumBackend:
 
         return checksum_value, algorithm
 
-    def _compute_s3_checksum(self, uri: str, algorithm: str | None) -> tuple[str, str]:
+    def _compute_s3_checksum(self, uri: str, algorithm: str | None, compute_if_no_s3_checksum: bool = True) -> tuple[str, str]:
         """Compute checksum for S3 object with CRC32 optimization.
 
         When algorithm is None, attempts to use existing S3 CRC32 checksum.
@@ -189,16 +181,16 @@ class _ChecksumBackend:
         Args:
             uri: S3 URI (s3://bucket/key)
             algorithm: Hash algorithm or None for CRC32 optimization
+            compute_if_no_s3_checksum: If False, raise exception when no existing
+                                      S3 checksum is found instead of downloading
 
         Returns:
-            Tuple of (checksum_value, checksum_alg)
+            Tuple of (checksum_value, checksum_alg) or (None, None) if
+            compute_if_no_s3_checksum=False and no S3 checksum exists
 
         Raises:
-            ImportError: If boto3 not available
             Various boto3 exceptions: For S3 access errors
         """
-        if boto3 is None:
-            raise ImportError("boto3 package required for S3 operations")
 
         # Parse S3 URI
         uri_parts = uri.replace('s3://', '').replace('s3a://', '').split('/', 1)
@@ -208,7 +200,7 @@ class _ChecksumBackend:
         s3_client = boto3.client('s3')
 
         # Try CRC32 optimization when algorithm is None
-        if algorithm is None:
+        if not algorithm:
             try:
                 # Get object metadata
                 response = s3_client.head_object(Bucket=bucket, Key=key, ChecksumMode='ENABLED')
@@ -222,8 +214,16 @@ class _ChecksumBackend:
                     return crc32_hex, 'crc32'
 
             except Exception:
-                # Fall through to download method
+                # Fall through to download method if allowed
                 pass
+
+            # If no S3 checksum found and compute_if_no_s3_checksum=False, return None
+            if not compute_if_no_s3_checksum:
+                return None, None
+
+        # Don't compute if flag is False and specific algorithm requested
+        if not compute_if_no_s3_checksum and algorithm:
+            return None, None
 
         # Fallback: Download object and compute hash
         target_algorithm = algorithm or 'blake3'
@@ -251,7 +251,8 @@ def get_supported_algorithms() -> list[str]:
 
 def generate_for_assets(
     assets: list[DataAssetRequest],
-    algorithm: str | None = None
+    algorithm: str | None = None,
+    compute_if_no_s3_checksum: bool = True
 ) -> list[DataAssetRequest]:
     """Generate checksums for assets on supported storage platforms.
 
@@ -259,6 +260,9 @@ def generate_for_assets(
         assets: List of assets to process
         algorithm: Checksum algorithm ('blake3', 'blake2b', 'blake2s', 'crc32').
                   If None, defaults to blake3 except for S3 where existing CRC32 is preferred.
+        compute_if_no_s3_checksum: If True, compute checksum by downloading S3 objects
+                                  when no existing S3 checksum is available. If False,
+                                  skip S3 objects without existing checksums.
 
     Returns:
         New list with checksums populated for supported assets.
@@ -266,6 +270,9 @@ def generate_for_assets(
 
     Supported platforms: s3, hpc, coreweave
     Supported algorithms: blake3, blake2b, blake2s, crc32
+
+    TODO: Expand checksum generation to support folder assets (AssetType.folder).
+          Current implementation only handles files (AssetType.file).
     """
     if not assets:
         return []
@@ -278,7 +285,7 @@ def generate_for_assets(
         asset_copy = DataAssetRequest(**asset.model_dump())
 
         # Skip if already has checksum
-        if asset_copy.checksum is not None:
+        if asset_copy.checksum is not None or asset_copy.asset_type is AssetType.folder:
             result.append(asset_copy)
             continue
 
@@ -298,7 +305,7 @@ def generate_for_assets(
             # Generate checksum based on platform
             if platform == StoragePlatform.s3:
                 checksum_value, checksum_alg = backend._compute_s3_checksum(
-                    asset_copy.location_uri, algorithm
+                    asset_copy.location_uri, algorithm, compute_if_no_s3_checksum
                 )
             else:
                 # Filesystem platforms (hpc, bruno_hpc, coreweave)
@@ -307,9 +314,10 @@ def generate_for_assets(
                     asset_copy.location_uri, target_algorithm
                 )
 
-            # Update asset copy with checksum
-            asset_copy.checksum = checksum_value
-            asset_copy.checksum_alg = checksum_alg
+            # Update asset copy with checksum if computed
+            if checksum_value is not None:
+                asset_copy.checksum = checksum_value
+                asset_copy.checksum_alg = checksum_alg
 
         except Exception as e:
             warnings.warn(
