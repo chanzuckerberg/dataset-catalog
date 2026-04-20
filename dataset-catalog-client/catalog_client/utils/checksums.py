@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import warnings
 import zlib
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from catalog_client.models.asset import DataAssetRequest, StoragePlatform
+from catalog_client.models.asset import DataAssetRequest, StoragePlatform
 
 try:
     import blake3
@@ -98,8 +96,6 @@ class _ChecksumBackend:
         Returns:
             StoragePlatform if supported, None otherwise
         """
-        from catalog_client.models.asset import StoragePlatform
-
         # Primary: Check explicit storage_platform
         if asset.storage_platform:
             if asset.storage_platform in {
@@ -123,8 +119,6 @@ class _ChecksumBackend:
         Returns:
             StoragePlatform if recognized pattern, None otherwise
         """
-        from catalog_client.models.asset import StoragePlatform
-
         if location_uri.startswith(('s3://', 's3a://')):
             return StoragePlatform.s3
         elif '/hpc/' in location_uri:
@@ -273,5 +267,57 @@ def generate_for_assets(
     Supported platforms: s3, hpc, coreweave
     Supported algorithms: blake3, blake2b, blake2s, crc32
     """
-    # TODO: Implement in subsequent tasks
-    return assets.copy()
+    if not assets:
+        return []
+
+    backend = _ChecksumBackend()
+    result = []
+
+    for asset in assets:
+        # Create copy to avoid modifying original
+        asset_copy = DataAssetRequest(**asset.model_dump())
+
+        # Skip if already has checksum
+        if asset_copy.checksum is not None:
+            result.append(asset_copy)
+            continue
+
+        # Determine platform
+        platform = backend._determine_platform(asset_copy)
+
+        if platform is None:
+            warnings.warn(
+                f"Storage platform for '{asset_copy.location_uri}' not supported for checksum generation",
+                ChecksumWarning,
+                stacklevel=2
+            )
+            result.append(asset_copy)
+            continue
+
+        try:
+            # Generate checksum based on platform
+            if platform == StoragePlatform.s3:
+                checksum_value, checksum_alg = backend._compute_s3_checksum(
+                    asset_copy.location_uri, algorithm
+                )
+            else:
+                # Filesystem platforms (hpc, bruno_hpc, coreweave)
+                target_algorithm = algorithm or 'blake3'
+                checksum_value, checksum_alg = backend._compute_filesystem_checksum(
+                    asset_copy.location_uri, target_algorithm
+                )
+
+            # Update asset copy with checksum
+            asset_copy.checksum = checksum_value
+            asset_copy.checksum_alg = checksum_alg
+
+        except Exception as e:
+            warnings.warn(
+                f"Failed to generate checksum for '{asset_copy.location_uri}': {e}",
+                ChecksumWarning,
+                stacklevel=2
+            )
+
+        result.append(asset_copy)
+
+    return result

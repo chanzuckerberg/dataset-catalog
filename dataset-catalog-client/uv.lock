@@ -273,6 +273,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "boto3" },
     { name = "jupyter" },
     { name = "moto" },
     { name = "pre-commit" },
@@ -294,6 +295,7 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "boto3", specifier = ">=1.42.90" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "moto", specifier = ">=4.0.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },

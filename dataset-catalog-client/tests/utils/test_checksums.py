@@ -2,13 +2,15 @@
 
 import os
 import tempfile
+import warnings
 
 import boto3
 import pytest
 from moto import mock_aws
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
-from catalog_client.utils.checksums import _ChecksumBackend, _HashUtils
+from catalog_client.utils.checksums import ChecksumWarning, _ChecksumBackend, _HashUtils
+from catalog_client.utils import checksums
 
 
 class TestHashUtils:
@@ -327,3 +329,136 @@ class TestS3ChecksumOptimization:
             backend._compute_s3_checksum(
                 's3://nonexistent-bucket/nonexistent-file.txt', 'blake3'
             )
+
+
+class TestGenerateForAssets:
+    """Test main generate_for_assets function."""
+
+    def test_generate_for_assets_filesystem_success(self):
+        """Test successful checksum generation for filesystem assets."""
+        # Create temporary test file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("test content")
+            temp_path = f.name
+
+        try:
+            assets = [DataAssetRequest(
+                location_uri=temp_path,
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.hpc
+            )]
+
+            result = checksums.generate_for_assets(assets, algorithm='blake3')
+
+            # Should return new list with checksums populated
+            assert len(result) == 1
+            assert result[0].checksum is not None
+            assert result[0].checksum_alg == 'blake3'
+            assert len(result[0].checksum) == 64
+
+            # Original asset should be unchanged
+            assert assets[0].checksum is None
+            assert assets[0].checksum_alg is None
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_generate_for_assets_skip_existing_checksums(self):
+        """Test skips assets that already have checksums."""
+        assets = [DataAssetRequest(
+            location_uri="/hpc/existing.txt",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.hpc,
+            checksum="existing123",
+            checksum_alg="blake3"
+        )]
+
+        result = checksums.generate_for_assets(assets, algorithm='crc32')
+
+        # Should preserve existing checksum
+        assert result[0].checksum == "existing123"
+        assert result[0].checksum_alg == "blake3"
+
+    def test_generate_for_assets_unsupported_platform_warning(self):
+        """Test warning for unsupported platform."""
+        assets = [DataAssetRequest(
+            location_uri="http://example.com/file.txt",
+            asset_type=AssetType.file
+        )]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = checksums.generate_for_assets(assets, algorithm='blake3')
+
+            # Should issue warning
+            assert len(w) == 1
+            assert issubclass(w[0].category, ChecksumWarning)
+            assert "not supported" in str(w[0].message)
+
+            # Should return original asset unchanged
+            assert result[0].checksum is None
+            assert result[0].checksum_alg is None
+
+    def test_generate_for_assets_file_error_warning(self):
+        """Test warning for file access errors."""
+        assets = [DataAssetRequest(
+            location_uri="/nonexistent/file.txt",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.hpc
+        )]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = checksums.generate_for_assets(assets, algorithm='blake3')
+
+            # Should issue warning about access failure
+            assert len(w) == 1
+            assert issubclass(w[0].category, ChecksumWarning)
+
+            # Should return original asset unchanged
+            assert result[0].checksum is None
+
+    @mock_aws
+    def test_generate_for_assets_s3_success(self):
+        """Test successful S3 checksum generation."""
+        # Setup mock S3
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(
+            Bucket='test-bucket',
+            Key='test.txt',
+            Body=b's3 test content'
+        )
+
+        assets = [DataAssetRequest(
+            location_uri="s3://test-bucket/test.txt",
+            asset_type=AssetType.file
+        )]
+
+        result = checksums.generate_for_assets(assets, algorithm='blake3')
+
+        assert len(result) == 1
+        assert result[0].checksum is not None
+        assert result[0].checksum_alg == 'blake3'
+        assert len(result[0].checksum) == 64
+
+    def test_generate_for_assets_default_algorithm(self):
+        """Test default algorithm selection."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("test")
+            temp_path = f.name
+
+        try:
+            assets = [DataAssetRequest(
+                location_uri=temp_path,
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.hpc
+            )]
+
+            # No algorithm specified - should default to blake3
+            result = checksums.generate_for_assets(assets)
+
+            assert result[0].checksum_alg == 'blake3'
+
+        finally:
+            os.unlink(temp_path)
