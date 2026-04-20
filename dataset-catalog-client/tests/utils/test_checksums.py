@@ -1,7 +1,12 @@
 """Tests for checksum utilities module."""
 
+import os
+import tempfile
+
+import pytest
+
 from catalog_client.models.asset import DataAssetRequest, AssetType, StoragePlatform
-from catalog_client.utils.checksums import _HashUtils
+from catalog_client.utils.checksums import _ChecksumBackend, _HashUtils
 
 
 class TestHashUtils:
@@ -132,3 +137,67 @@ class TestCheckSumBackend:
         )
         platform = backend._determine_platform(asset)
         assert platform is None
+
+    def test_compute_filesystem_checksum_blake3(self):
+        """Test filesystem checksum computation with blake3."""
+        backend = _ChecksumBackend()
+
+        # Create temporary test file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("hello world")
+            temp_path = f.name
+
+        try:
+            checksum_value, checksum_alg = backend._compute_filesystem_checksum(
+                temp_path, 'blake3'
+            )
+
+            # Verify result format
+            assert isinstance(checksum_value, str)
+            assert checksum_alg == 'blake3'
+            assert len(checksum_value) == 64  # blake3 256-bit = 64 hex chars
+
+            # Verify it matches direct hash computation
+            expected = _HashUtils.blake3(b"hello world")
+            assert checksum_value == expected
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_filesystem_checksum_crc32(self):
+        """Test filesystem checksum computation with crc32."""
+        backend = _ChecksumBackend()
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("test data")
+            temp_path = f.name
+
+        try:
+            checksum_value, checksum_alg = backend._compute_filesystem_checksum(
+                temp_path, 'crc32'
+            )
+
+            assert isinstance(checksum_value, str)
+            assert checksum_alg == 'crc32'
+            assert len(checksum_value) == 8  # crc32 32-bit = 8 hex chars
+
+            expected = _HashUtils.crc32(b"test data")
+            assert checksum_value == expected
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_compute_filesystem_checksum_file_not_found(self):
+        """Test filesystem checksum with non-existent file."""
+        backend = _ChecksumBackend()
+
+        with pytest.raises(FileNotFoundError):
+            backend._compute_filesystem_checksum('/nonexistent/file', 'blake3')
+
+    def test_compute_filesystem_checksum_unsupported_algorithm(self):
+        """Test filesystem checksum with unsupported algorithm."""
+        backend = _ChecksumBackend()
+
+        with tempfile.NamedTemporaryFile() as f:
+            with pytest.raises(ValueError, match="Unsupported algorithm: md5"):
+                backend._compute_filesystem_checksum(f.name, 'md5')

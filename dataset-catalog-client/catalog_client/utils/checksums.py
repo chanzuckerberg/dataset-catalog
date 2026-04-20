@@ -130,6 +130,56 @@ class _ChecksumBackend:
         else:
             return None
 
+    def _compute_filesystem_checksum(self, path: str, algorithm: str) -> tuple[str, str]:
+        """Compute checksum for filesystem file.
+
+        Args:
+            path: Filesystem path to file
+            algorithm: Hash algorithm to use
+
+        Returns:
+            Tuple of (checksum_value, checksum_alg)
+
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            ValueError: If algorithm not supported
+        """
+        if algorithm not in get_supported_algorithms():
+            raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+        chunk_size = 8192
+
+        # Initialize hash objects directly for streaming
+        if algorithm == 'blake3':
+            if blake3 is None:
+                raise ImportError("blake3 package required for blake3 algorithm")
+            hash_obj = blake3.blake3()
+        elif algorithm == 'blake2b':
+            hash_obj = hashlib.blake2b()
+        elif algorithm == 'blake2s':
+            hash_obj = hashlib.blake2s()
+        elif algorithm == 'crc32':
+            crc_value = 0
+        else:
+            raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+        # Stream file in chunks for memory efficiency
+        with open(path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                if algorithm == 'crc32':
+                    # CRC32 needs cumulative value
+                    crc_value = zlib.crc32(chunk, crc_value)
+                else:
+                    hash_obj.update(chunk)
+
+        # Return final hash value
+        if algorithm == 'crc32':
+            checksum_value = format(crc_value & 0xffffffff, '08x')
+        else:
+            checksum_value = hash_obj.hexdigest()
+
+        return checksum_value, algorithm
+
 
 def get_supported_algorithms() -> list[str]:
     """Returns list of supported checksum algorithms.
