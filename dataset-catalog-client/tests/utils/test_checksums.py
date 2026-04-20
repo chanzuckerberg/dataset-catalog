@@ -3,9 +3,11 @@
 import os
 import tempfile
 
+import boto3
 import pytest
+from moto import mock_aws
 
-from catalog_client.models.asset import DataAssetRequest, AssetType, StoragePlatform
+from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksums import _ChecksumBackend, _HashUtils
 
 
@@ -201,3 +203,127 @@ class TestCheckSumBackend:
         with tempfile.NamedTemporaryFile() as f:
             with pytest.raises(ValueError, match="Unsupported algorithm: md5"):
                 backend._compute_filesystem_checksum(f.name, 'md5')
+
+
+@mock_aws
+class TestS3ChecksumOptimization:
+    """Test S3 checksum optimization using existing CRC32.
+
+    Note: moto 5.x automatically computes CRC32 for all uploaded objects.
+    The optimization retrieves this auto-computed CRC32 from S3 metadata
+    rather than downloading the object to compute a hash locally.
+    """
+
+    def test_s3_crc32_optimization_success(self):
+        """Test S3 uses existing CRC32 when algorithm is None.
+
+        moto 5.x auto-computes CRC32 for uploaded objects and returns it
+        via head_object with ChecksumMode=ENABLED. The optimization picks
+        this up to avoid downloading the object.
+        """
+        # Setup mock S3
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload object without explicit checksum — moto 5.x auto-computes CRC32
+        test_content = b"hello world"
+        s3_client.put_object(
+            Bucket='test-bucket',
+            Key='test-file.txt',
+            Body=test_content,
+        )
+
+        backend = _ChecksumBackend()
+        checksum_value, checksum_alg = backend._compute_s3_checksum(
+            's3://test-bucket/test-file.txt', None
+        )
+
+        # Should return CRC32 from S3 metadata (moto auto-computes this)
+        assert checksum_alg == 'crc32'
+        # Verify it's a valid 8-char hex CRC32 value
+        assert len(checksum_value) == 8
+        # Verify it matches the CRC32 of the content
+        expected_crc32 = _HashUtils.crc32(test_content)
+        assert checksum_value == expected_crc32
+
+    def test_s3_explicit_algorithm_bypasses_optimization(self):
+        """Test explicit algorithm bypasses S3 CRC32 optimization."""
+        # Setup mock S3
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        test_content = b"hello world"
+        s3_client.put_object(
+            Bucket='test-bucket',
+            Key='test-file.txt',
+            Body=test_content,
+        )
+
+        backend = _ChecksumBackend()
+        checksum_value, checksum_alg = backend._compute_s3_checksum(
+            's3://test-bucket/test-file.txt', 'blake3'
+        )
+
+        # Should compute blake3, not use S3 CRC32
+        assert checksum_alg == 'blake3'
+        assert len(checksum_value) == 64
+        expected_blake3 = _HashUtils.blake3(test_content)
+        assert checksum_value == expected_blake3
+
+    def test_s3_fallback_when_no_crc32_metadata(self):
+        """Test fallback to download when no CRC32 in S3 metadata.
+
+        Simulates an S3 response without ChecksumCRC32 (e.g., older objects
+        or S3 implementations that don't provide checksum metadata).
+        Uses unittest.mock to patch head_object to return a response without
+        checksum data, since moto 5.x always provides CRC32 for all objects.
+        """
+        from unittest.mock import MagicMock, patch
+
+        # Setup mock S3 for get_object
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        test_content = b"test data"
+        s3_client.put_object(
+            Bucket='test-bucket',
+            Key='test-file.txt',
+            Body=test_content
+        )
+
+        backend = _ChecksumBackend()
+
+        # Patch head_object to simulate a response without CRC32 metadata
+        # (real S3 objects uploaded before checksum support was added won't have CRC32)
+        head_response_without_checksum = {
+            'ContentLength': len(test_content),
+            'ContentType': 'binary/octet-stream',
+            'ETag': '"abc123"',
+        }
+
+        with patch('boto3.client') as mock_boto3_client:
+            mock_s3 = MagicMock()
+            mock_boto3_client.return_value = mock_s3
+            mock_s3.head_object.return_value = head_response_without_checksum
+            # Return actual content for get_object
+            mock_body = MagicMock()
+            mock_body.read.return_value = test_content
+            mock_s3.get_object.return_value = {'Body': mock_body}
+
+            checksum_value, checksum_alg = backend._compute_s3_checksum(
+                's3://test-bucket/test-file.txt', None
+            )
+
+        # Should fallback to blake3 computation
+        assert checksum_alg == 'blake3'
+        expected_blake3 = _HashUtils.blake3(test_content)
+        assert checksum_value == expected_blake3
+
+    def test_s3_checksum_access_error_raises(self):
+        """Test S3 access errors propagate correctly."""
+        backend = _ChecksumBackend()
+
+        with pytest.raises(Exception):  # boto3 will raise various exceptions
+            backend._compute_s3_checksum(
+                's3://nonexistent-bucket/nonexistent-file.txt', 'blake3'
+            )

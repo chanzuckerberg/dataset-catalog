@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import zlib
 from typing import TYPE_CHECKING
@@ -13,6 +14,11 @@ try:
     import blake3
 except ImportError:
     blake3 = None  # Will be handled in _HashUtils.blake3
+
+try:
+    import boto3
+except ImportError:
+    boto3 = None
 
 
 class ChecksumWarning(UserWarning):
@@ -179,6 +185,65 @@ class _ChecksumBackend:
             checksum_value = hash_obj.hexdigest()
 
         return checksum_value, algorithm
+
+    def _compute_s3_checksum(self, uri: str, algorithm: str | None) -> tuple[str, str]:
+        """Compute checksum for S3 object with CRC32 optimization.
+
+        When algorithm is None, attempts to use existing S3 CRC32 checksum.
+        Otherwise downloads object and computes requested algorithm.
+
+        Args:
+            uri: S3 URI (s3://bucket/key)
+            algorithm: Hash algorithm or None for CRC32 optimization
+
+        Returns:
+            Tuple of (checksum_value, checksum_alg)
+
+        Raises:
+            ImportError: If boto3 not available
+            Various boto3 exceptions: For S3 access errors
+        """
+        if boto3 is None:
+            raise ImportError("boto3 package required for S3 operations")
+
+        # Parse S3 URI
+        uri_parts = uri.replace('s3://', '').replace('s3a://', '').split('/', 1)
+        bucket = uri_parts[0]
+        key = uri_parts[1] if len(uri_parts) > 1 else ''
+
+        s3_client = boto3.client('s3')
+
+        # Try CRC32 optimization when algorithm is None
+        if algorithm is None:
+            try:
+                # Get object metadata
+                response = s3_client.head_object(Bucket=bucket, Key=key, ChecksumMode='ENABLED')
+
+                # Check for existing CRC32 checksum
+                if 'ChecksumCRC32' in response:
+                    # Convert base64 CRC32 to hex
+                    crc32_b64 = response['ChecksumCRC32']
+                    crc32_bytes = base64.b64decode(crc32_b64)
+                    crc32_hex = crc32_bytes.hex()
+                    return crc32_hex, 'crc32'
+
+            except Exception:
+                # Fall through to download method
+                pass
+
+        # Fallback: Download object and compute hash
+        target_algorithm = algorithm or 'blake3'
+
+        if target_algorithm not in get_supported_algorithms():
+            raise ValueError(f"Unsupported algorithm: {target_algorithm}")
+
+        hash_func = getattr(_HashUtils, target_algorithm)
+
+        # Download object
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        data = response['Body'].read()
+
+        return hash_func(data), target_algorithm
 
 
 def get_supported_algorithms() -> list[str]:
