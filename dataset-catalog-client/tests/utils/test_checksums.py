@@ -1,5 +1,6 @@
 """Tests for checksum utilities module."""
 
+from catalog_client.models.asset import DataAssetRequest, AssetType, StoragePlatform
 from catalog_client.utils.checksums import _HashUtils
 
 
@@ -49,3 +50,85 @@ class TestHashUtils:
         assert _HashUtils.blake2b(data) == _HashUtils.blake2b(data)
         assert _HashUtils.blake2s(data) == _HashUtils.blake2s(data)
         assert _HashUtils.crc32(data) == _HashUtils.crc32(data)
+
+
+class TestCheckSumBackend:
+    """Test _ChecksumBackend platform detection."""
+
+    def test_explicit_storage_platform_takes_precedence(self):
+        """Test explicit storage_platform overrides URI detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="file:///local/path",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.s3
+
+    def test_uri_pattern_detection_s3(self):
+        """Test S3 URI pattern detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="s3://bucket/key",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.s3
+
+    def test_uri_pattern_detection_s3a(self):
+        """Test S3A URI pattern detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="s3a://bucket/key",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.s3
+
+    def test_uri_pattern_detection_hpc(self):
+        """Test HPC URI pattern detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="/hpc/data/file.txt",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.hpc
+
+    def test_uri_pattern_detection_bruno_hpc(self):
+        """Test Bruno HPC URI pattern detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="/bruno_hpc/data/file.txt",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.bruno_hpc
+
+    def test_uri_pattern_detection_coreweave(self):
+        """Test CoreWeave URI pattern detection."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="/coreweave/data/file.txt",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform == StoragePlatform.coreweave
+
+    def test_unsupported_platform_returns_none(self):
+        """Test unsupported platform returns None."""
+        from catalog_client.utils.checksums import _ChecksumBackend
+        backend = _ChecksumBackend()
+        asset = DataAssetRequest(
+            location_uri="http://example.com/file.txt",
+            asset_type=AssetType.file
+        )
+        platform = backend._determine_platform(asset)
+        assert platform is None
