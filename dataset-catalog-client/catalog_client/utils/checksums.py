@@ -75,7 +75,7 @@ class _HashUtils:
         Returns:
             Hexadecimal string representation of checksum (8 chars)
         """
-        return format(zlib.crc32(data) & 0xffffffff, '08x')
+        return format(zlib.crc32(data) & 0xFFFFFFFF, "08x")
 
 
 class _ChecksumBackend:
@@ -95,7 +95,10 @@ class _ChecksumBackend:
         # Primary: Check explicit storage_platform
         if asset.storage_platform:
             # Exclude unsupported platforms
-            if asset.storage_platform not in {StoragePlatform.external, StoragePlatform.other}:
+            if asset.storage_platform not in {
+                StoragePlatform.external,
+                StoragePlatform.other,
+            }:
                 return asset.storage_platform
             return None
 
@@ -111,18 +114,20 @@ class _ChecksumBackend:
         Returns:
             StoragePlatform if recognized pattern, None otherwise
         """
-        if location_uri.startswith(('s3://', 's3a://')):
+        if location_uri.startswith(("s3://", "s3a://")):
             return StoragePlatform.s3
-        elif '/hpc/' in location_uri:
+        elif "/hpc/" in location_uri:
             return StoragePlatform.hpc
-        elif '/bruno_hpc/' in location_uri:
+        elif "/bruno_hpc/" in location_uri:
             return StoragePlatform.bruno_hpc
-        elif '/coreweave/' in location_uri:
+        elif "/coreweave/" in location_uri:
             return StoragePlatform.coreweave
         else:
             return None
 
-    def _compute_filesystem_checksum(self, path: str, algorithm: str) -> tuple[str, str]:
+    def _compute_filesystem_checksum(
+        self, path: str, algorithm: str
+    ) -> tuple[str, str]:
         """Compute checksum for filesystem file.
 
         Args:
@@ -142,37 +147,39 @@ class _ChecksumBackend:
         chunk_size = 8192
 
         # Initialize hash objects directly for streaming
-        if algorithm == 'blake3':
+        if algorithm == "blake3":
             if blake3 is None:
                 raise ImportError("blake3 package required for blake3 algorithm")
             hash_obj = blake3.blake3()
-        elif algorithm == 'blake2b':
+        elif algorithm == "blake2b":
             hash_obj = hashlib.blake2b()
-        elif algorithm == 'blake2s':
+        elif algorithm == "blake2s":
             hash_obj = hashlib.blake2s()
-        elif algorithm == 'crc32':
+        elif algorithm == "crc32":
             crc_value = 0
         else:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
 
         # Stream file in chunks for memory efficiency
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             while chunk := f.read(chunk_size):
-                if algorithm == 'crc32':
+                if algorithm == "crc32":
                     # CRC32 needs cumulative value
                     crc_value = zlib.crc32(chunk, crc_value)
                 else:
                     hash_obj.update(chunk)
 
         # Return final hash value
-        if algorithm == 'crc32':
-            checksum_value = format(crc_value & 0xffffffff, '08x')
+        if algorithm == "crc32":
+            checksum_value = format(crc_value & 0xFFFFFFFF, "08x")
         else:
             checksum_value = hash_obj.hexdigest()
 
         return checksum_value, algorithm
 
-    def _compute_s3_checksum(self, uri: str, algorithm: str | None, compute_if_no_s3_checksum: bool = True) -> tuple[str, str]:
+    def _compute_s3_checksum(
+        self, uri: str, algorithm: str | None, compute_if_no_s3_checksum: bool = True
+    ) -> tuple[str, str]:
         """Compute checksum for S3 object with CRC32 optimization.
 
         When algorithm is None, attempts to use existing S3 CRC32 checksum.
@@ -193,25 +200,27 @@ class _ChecksumBackend:
         """
 
         # Parse S3 URI
-        uri_parts = uri.replace('s3://', '').replace('s3a://', '').split('/', 1)
+        uri_parts = uri.replace("s3://", "").replace("s3a://", "").split("/", 1)
         bucket = uri_parts[0]
-        key = uri_parts[1] if len(uri_parts) > 1 else ''
+        key = uri_parts[1] if len(uri_parts) > 1 else ""
 
-        s3_client = boto3.client('s3')
+        s3_client = boto3.client("s3")
 
         # Try CRC32 optimization when algorithm is None
         if not algorithm:
             try:
                 # Get object metadata
-                response = s3_client.head_object(Bucket=bucket, Key=key, ChecksumMode='ENABLED')
+                response = s3_client.head_object(
+                    Bucket=bucket, Key=key, ChecksumMode="ENABLED"
+                )
 
                 # Check for existing CRC32 checksum
-                if 'ChecksumCRC32' in response:
+                if "ChecksumCRC32" in response:
                     # Convert base64 CRC32 to hex
-                    crc32_b64 = response['ChecksumCRC32']
+                    crc32_b64 = response["ChecksumCRC32"]
                     crc32_bytes = base64.b64decode(crc32_b64)
                     crc32_hex = crc32_bytes.hex()
-                    return crc32_hex, 'crc32'
+                    return crc32_hex, "crc32"
 
             except Exception:
                 # Fall through to download method if allowed
@@ -226,7 +235,7 @@ class _ChecksumBackend:
             return None, None
 
         # Fallback: Download object and compute hash
-        target_algorithm = algorithm or 'blake3'
+        target_algorithm = algorithm or "blake3"
 
         if target_algorithm not in get_supported_algorithms():
             raise ValueError(f"Unsupported algorithm: {target_algorithm}")
@@ -235,7 +244,7 @@ class _ChecksumBackend:
 
         # Download object
         response = s3_client.get_object(Bucket=bucket, Key=key)
-        data = response['Body'].read()
+        data = response["Body"].read()
 
         return hash_func(data), target_algorithm
 
@@ -246,13 +255,13 @@ def get_supported_algorithms() -> list[str]:
     Returns:
         List of algorithm names: ['blake3', 'blake2b', 'blake2s', 'crc32']
     """
-    return ['blake3', 'blake2b', 'blake2s', 'crc32']
+    return ["blake3", "blake2b", "blake2s", "crc32"]
 
 
 def generate_for_assets(
     assets: list[DataAssetRequest],
     algorithm: str | None = None,
-    compute_if_no_s3_checksum: bool = True
+    compute_if_no_s3_checksum: bool = True,
 ) -> list[DataAssetRequest]:
     """Generate checksums for assets on supported storage platforms.
 
@@ -296,7 +305,7 @@ def generate_for_assets(
             warnings.warn(
                 f"Storage platform for '{asset_copy.location_uri}' not supported for checksum generation",
                 ChecksumWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             result.append(asset_copy)
             continue
@@ -309,7 +318,7 @@ def generate_for_assets(
                 )
             else:
                 # Filesystem platforms (hpc, bruno_hpc, coreweave)
-                target_algorithm = algorithm or 'blake3'
+                target_algorithm = algorithm or "blake3"
                 checksum_value, checksum_alg = backend._compute_filesystem_checksum(
                     asset_copy.location_uri, target_algorithm
                 )
@@ -323,7 +332,7 @@ def generate_for_assets(
             warnings.warn(
                 f"Failed to generate checksum for '{asset_copy.location_uri}': {e}",
                 ChecksumWarning,
-                stacklevel=2
+                stacklevel=2,
             )
 
         result.append(asset_copy)
