@@ -1,10 +1,11 @@
 """Checksum generation utilities for DataAssetRequest objects."""
 
 import base64
-import boto3
 import hashlib
 import warnings
 import zlib
+
+import boto3
 
 from catalog_client import AssetType
 from catalog_client.models.asset import DataAssetRequest, StoragePlatform

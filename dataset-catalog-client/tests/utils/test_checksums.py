@@ -9,8 +9,8 @@ import pytest
 from moto import mock_aws
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
-from catalog_client.utils.checksums import ChecksumWarning, _ChecksumBackend, _HashUtils
 from catalog_client.utils import checksums
+from catalog_client.utils.checksums import ChecksumWarning, _ChecksumBackend, _HashUtils
 
 
 class TestHashUtils:
