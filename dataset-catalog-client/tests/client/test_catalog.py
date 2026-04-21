@@ -3,9 +3,9 @@ from pytest_httpx import HTTPXMock
 
 from catalog_client.client.catalog import AsyncCatalogClient, CatalogClient
 from catalog_client.exceptions import (
+    CatalogError,
     DuplicateDatasetError,
     LineageResolutionError,
-    CatalogError,
 )
 from catalog_client.models.asset import AssetType, DataAssetRequest
 from catalog_client.models.dataset import DatasetModality, DatasetRef

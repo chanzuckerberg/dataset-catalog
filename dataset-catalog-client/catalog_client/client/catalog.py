@@ -9,10 +9,10 @@ from catalog_client.client.collections import AsyncCollectionClient, CollectionC
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
 from catalog_client.exceptions import (
+    CatalogError,
     DuplicateDatasetError,
     LineageResolutionError,
     NotFoundError,
-    CatalogError,
 )
 from catalog_client.models.dataset import DatasetCreate, DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageEdgeCreate
@@ -148,7 +148,7 @@ class CatalogClient:
 
         if update_if_exists:
             existing_dataset = existing_datasets[0]
-            updated_dataset = self.datasets.update(existing_dataset.id, dataset)
+            self.datasets.update(existing_dataset.id, dataset)
             return existing_dataset.id
 
         # Default: return existing dataset ID without error
