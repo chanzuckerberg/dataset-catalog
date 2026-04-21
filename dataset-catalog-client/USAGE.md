@@ -120,6 +120,36 @@ To record lineage at registration time:
     )
 ```
 
+### Handling duplicate datasets
+
+By default, attempting to register a dataset that already exists (same `canonical_id`, `version`, and `project`) will raise a `DuplicateDatasetError`. You can control this behavior with additional parameters:
+
+```python
+from catalog_client import DuplicateDatasetError
+
+# Default behavior - raise error on duplicate
+try:
+    dataset_id = client.register(request)
+except DuplicateDatasetError as e:
+    print(f"Dataset already exists: {e}")
+
+# Update existing dataset if found
+dataset_id = client.register(
+    request,
+    update_if_exists=True,
+    error_on_duplicate=False
+)
+
+# Skip duplicates silently and return existing dataset ID
+dataset_id = client.register(request, error_on_duplicate=False)
+```
+
+**Parameters:**
+- `update_if_exists: bool = False` – Update the existing dataset if found
+- `error_on_duplicate: bool = True` – Raise `DuplicateDatasetError` if duplicate found
+
+Note: `update_if_exists=True` and `error_on_duplicate=True` cannot be used together.
+
 ### List datasets
 
 ```python
@@ -397,6 +427,7 @@ asyncio.run(main())
 ```python
 from catalog_client import (
     AuthenticationError,
+    DuplicateDatasetError,
     NotFoundError,
     ValidationError,
     CatalogServerError,
@@ -418,6 +449,13 @@ except CatalogConnectionError as e:
     print(f"Network error: {e}")
 except CatalogError as e:
     print(f"Unexpected catalog error: {e}")
+
+# For dataset registration
+try:
+    dataset_id = client.register(request)
+except DuplicateDatasetError as e:
+    print(f"Dataset already exists: {e}")
+    # Consider using update_if_exists=True or error_on_duplicate=False
 ```
 
 ---

@@ -37,6 +37,9 @@ class DatasetRef(NamedTuple):
     version: str
     project: str
 
+    def __repr__(self) -> str:
+        return f"DatasetRef<canonical_id={self.canonical_id},version={self.version},project={self.project}>"
+
 
 class DatasetCreate(BaseModel):
     canonical_id: str

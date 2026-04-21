@@ -19,10 +19,12 @@ def test_sample_metadata_defaults_to_none():
     assert s.tissue is None
 
 
-def test_experiment_metadata_assay_is_list_of_str():
-    e = ExperimentMetadata(assay=["10x Chromium"], assay_ontology_id=["EFO:0009922"])
-    assert e.assay == ["10x Chromium"]
-    assert e.assay_ontology_id == ["EFO:0009922"]
+def test_experiment_metadata_assay_is_list_of_ontology_entry():
+    e = ExperimentMetadata(
+        assay=[OntologyEntry(label="10x Chromium", ontology_id="EFO:0009922")]
+    )
+    assert e.assay[0].label == "10x Chromium"
+    assert e.assay[0].ontology_id == "EFO:0009922"
 
 
 def test_dataset_metadata_nests_sub_models():
@@ -30,10 +32,13 @@ def test_dataset_metadata_nests_sub_models():
         sample=SampleMetadata(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         ),
-        experiment=ExperimentMetadata(assay=["scRNA-seq"]),
+        experiment=ExperimentMetadata(
+            assay=[OntologyEntry(label="scRNA-seq", ontology_id="EFO:0001187")]
+        ),
     )
     assert m.sample.organism[0].label == "Homo sapiens"
-    assert m.experiment.assay == ["scRNA-seq"]
+    assert m.experiment.assay[0].label == "scRNA-seq"
+    assert m.experiment.assay[0].ontology_id == "EFO:0001187"
     assert m.data_summary is None
 
 
