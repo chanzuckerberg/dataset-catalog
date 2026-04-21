@@ -8,7 +8,7 @@ from catalog_client._context import reset_client, set_client
 from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
-from catalog_client.exceptions import LineageResolutionError, NotFoundError
+from catalog_client.exceptions import LineageResolutionError, NotFoundError, ValidationError, CatalogError
 from catalog_client.models.dataset import DatasetCreate, DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageEdgeCreate
 from catalog_client.registration.builder import RegistrationBuilder
@@ -35,11 +35,10 @@ class CatalogClient:
         self.collections = CollectionClient(self._http)
         self._context_token: object = None
 
-    def register(self, request: RegistrationRequest) -> str:
-        """Register a new dataset and any lineage edges. Returns the new dataset_id."""
+    def register(self, request: RegistrationRequest, update_if_exists: bool = False, error_on_duplicate: bool = True) -> str:
+        """Register a dataset and any lineage edges. Returns the dataset_id."""
         dataset = request.to_dataset_create()
-        response = self.datasets.create(dataset)
-        dataset_id = response.id
+        dataset_id = self._create_or_update(dataset, update_if_exists, error_on_duplicate)
 
         for spec in request.lineage:
             if spec.source_dataset_id is not None:
@@ -95,6 +94,20 @@ class CatalogClient:
             reset_client(self._context_token)  # type: ignore[arg-type]
             self._context_token = None
         self.close()
+
+    def _create_or_update(self, dataset: DatasetCreate, update_if_exists: bool, error_on_duplicate: bool):
+        scout_ref = DatasetRef(canonical_id=dataset.canonical_id, version=dataset.version, project=dataset.project)
+        existing_datasets = self.datasets.get(scout_ref)
+        if not existing_datasets:
+            response = self.datasets.create(dataset)
+            return response.id
+        if error_on_duplicate:
+            raise ValidationError(f"This key already exists {scout_ref}.")
+        if len(existing_datasets) > 1:
+            raise CatalogError(f"Unexpected outcome, {len(existing_datasets)} record exists for {scout_ref}")
+        if update_if_exists:
+            existing_dataset = existing_datasets[0]
+            self.datasets.update(existing_dataset.id, dataset)
 
 
 class AsyncCatalogClient:

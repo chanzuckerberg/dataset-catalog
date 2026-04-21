@@ -25,6 +25,7 @@ class DatasetModality(str, enum.Enum):
     unknown = "unknown"
 
 
+
 class DatasetType(str, enum.Enum):
     raw = "raw"
     processed = "processed"
@@ -32,10 +33,12 @@ class DatasetType(str, enum.Enum):
 
 class DatasetRef(NamedTuple):
     """Identifies a dataset by its human-readable coordinates."""
-
     canonical_id: str
     version: str
     project: str
+
+    def __repr__(self) -> str:
+        return f"DatasetRef<canonical_id={self.canonical_id},version={self.version},project={self.project}>"
 
 
 class DatasetCreate(BaseModel):
