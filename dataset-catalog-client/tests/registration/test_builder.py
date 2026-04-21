@@ -28,7 +28,9 @@ def test_builder_build_returns_registration_request():
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
-        .with_experiment(assay=[OntologyEntry(label="10x Chromium", ontology_id="EFO:0009922")])
+        .with_experiment(
+            assay=[OntologyEntry(label="10x Chromium", ontology_id="EFO:0009922")]
+        )
         .build()
     )
     assert isinstance(req, RegistrationRequest)
