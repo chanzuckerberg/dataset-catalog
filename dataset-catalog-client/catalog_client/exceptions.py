@@ -56,6 +56,17 @@ class LineageResolutionError(CatalogError):
         )
 
 
+class DuplicateDatasetError(CatalogError):
+    """A dataset with the same canonical_id, version, and project already exists."""
+
+    def __init__(self, ref: DatasetRef) -> None:
+        self.ref = ref
+        super().__init__(
+            f"Dataset already exists: {ref!r}. "
+            f"Use update_if_exists=True to update or error_on_duplicate=False to skip."
+        )
+
+
 def raise_for_status(response: httpx.Response) -> None:
     """Raise an appropriate CatalogError for non-2xx responses."""
     if response.status_code == 401:
