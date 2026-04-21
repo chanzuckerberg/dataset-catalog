@@ -28,7 +28,7 @@ def test_builder_build_returns_registration_request():
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
-        .with_experiment(assay=["10x Chromium"], assay_ontology_id=["EFO:0009922"])
+        .with_experiment(assay=[OntologyEntry(label="10x Chromium", ontology_id="EFO:0009922")])
         .build()
     )
     assert isinstance(req, RegistrationRequest)
@@ -39,7 +39,8 @@ def test_builder_build_returns_registration_request():
     assert req.locations[0].location_uri == "s3://bucket/key"
     assert req.governance.data_owner == "team-x"
     assert req.metadata.sample.organism[0].label == "Homo sapiens"
-    assert req.metadata.experiment.assay == ["10x Chromium"]
+    assert req.metadata.experiment.assay[0].label == "10x Chromium"
+    assert req.metadata.experiment.assay[0].ontology_id == "EFO:0009922"
 
 
 def test_builder_multiple_locations():

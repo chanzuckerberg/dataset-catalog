@@ -36,8 +36,7 @@ class ExperimentMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     sub_modality: str | None = None
-    assay: list[str] | None = None
-    assay_ontology_id: list[str] | None = None
+    assay: list[OntologyEntry] | None = None
     machine_information: dict[str, Any] | None = None
     experimental_protocols: dict[str, Any] | None = None
 
