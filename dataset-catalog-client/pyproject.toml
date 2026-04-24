@@ -10,13 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx==0.28.1",
     "pydantic>=2.10.0",
-    "boto3>=1.28.0",
-    "blake3>=0.3.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "jupyter>=1.1.1",
 ]
 
 [tool.ruff]
@@ -27,6 +20,14 @@ select = ["E", "F", "I"]
 ignore = ["E501"]
 
 [dependency-groups]
+
+checksum = [
+    "boto3>=1.42.90",
+    "blake3>=0.3.0",
+    "awscrt>=0.32.1",
+    "crcmod>=1.7",
+]
+
 dev = [
     "jupyter>=1.1.1",
     "pre-commit>=4.5.1",
