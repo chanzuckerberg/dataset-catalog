@@ -4,6 +4,7 @@ import base64
 import hashlib
 import warnings
 import zlib
+from typing import Any
 
 import boto3
 
@@ -26,47 +27,6 @@ class _HashUtils:
     """Hash algorithm implementations."""
 
     @staticmethod
-    def blake3(data: bytes) -> str:
-        """Compute blake3 hash of data.
-
-        Args:
-            data: Bytes to hash
-
-        Returns:
-            Hexadecimal string representation of hash
-
-        Raises:
-            ImportError: If blake3 package not available
-        """
-        if blake3 is None:
-            raise ImportError("blake3 package required for blake3 algorithm")
-        return blake3.blake3(data).hexdigest()
-
-    @staticmethod
-    def blake2b(data: bytes) -> str:
-        """Compute blake2b hash of data.
-
-        Args:
-            data: Bytes to hash
-
-        Returns:
-            Hexadecimal string representation of hash (128 chars)
-        """
-        return hashlib.blake2b(data).hexdigest()
-
-    @staticmethod
-    def blake2s(data: bytes) -> str:
-        """Compute blake2s hash of data.
-
-        Args:
-            data: Bytes to hash
-
-        Returns:
-            Hexadecimal string representation of hash (64 chars)
-        """
-        return hashlib.blake2s(data).hexdigest()
-
-    @staticmethod
     def crc32(data: bytes) -> str:
         """Compute CRC32 checksum of data.
 
@@ -78,14 +38,26 @@ class _HashUtils:
         """
         return format(zlib.crc32(data) & 0xFFFFFFFF, "08x")
 
+    @staticmethod
+    def get_checksum_algorithm_mapping() -> dict[str, Any]:
+        """Returns a map of supported checksum algorithms, and their implementation.
+        Returns:
+            Mapping of checksum algorithm to their implementation
+        """
+        return {
+            "blake3": blake3.blake3(),
+            "blake2b": hashlib.blake2b(),
+            "crc32": _HashUtils.crc32,
+        }
+
 
 class _ChecksumBackend:
     """Handles checksum generation for different storage platforms."""
 
-    def _determine_platform(self, asset: DataAssetRequest) -> StoragePlatform | None:
-        """Determine storage platform from asset.
+    UNSUPPORTED_PLATFORMS = {StoragePlatform.external, StoragePlatform.other}
 
-        Checks explicit storage_platform first, fallback to URI parsing.
+    def _determine_platform(self, asset: DataAssetRequest) -> StoragePlatform | None:
+        """Determine storage platform from asset. Checks explicit storage_platform first, fallback to URI parsing.
 
         Args:
             asset: Asset to check platform for
@@ -93,28 +65,16 @@ class _ChecksumBackend:
         Returns:
             StoragePlatform if supported, None otherwise
         """
-        # Primary: Check explicit storage_platform
         if asset.storage_platform:
-            # Exclude unsupported platforms
-            if asset.storage_platform not in {
-                StoragePlatform.external,
-                StoragePlatform.other,
-            }:
+            if asset.storage_platform not in self.UNSUPPORTED_PLATFORMS:
                 return asset.storage_platform
             return None
 
         # Fallback: Parse URI patterns
         return self._detect_platform(asset.location_uri)
 
-    def _detect_platform(self, location_uri: str) -> StoragePlatform | None:
-        """Parse URI patterns to detect storage platform.
-
-        Args:
-            location_uri: URI to parse
-
-        Returns:
-            StoragePlatform if recognized pattern, None otherwise
-        """
+    @classmethod
+    def _detect_platform(cls, location_uri: str) -> StoragePlatform | None:
         if location_uri.startswith(("s3://", "s3a://")):
             return StoragePlatform.s3
         elif "/hpc/" in location_uri:
@@ -126,9 +86,8 @@ class _ChecksumBackend:
         else:
             return None
 
-    def _compute_filesystem_checksum(
-        self, path: str, algorithm: str
-    ) -> tuple[str, str]:
+    @classmethod
+    def _compute_filesystem_checksum(cls, path: str, algorithm: str) -> tuple[str, str]:
         """Compute checksum for filesystem file.
 
         Args:
@@ -142,55 +101,25 @@ class _ChecksumBackend:
             FileNotFoundError: If file doesn't exist
             ValueError: If algorithm not supported
         """
-        if algorithm not in get_supported_algorithms():
+        hash_func = _HashUtils.get_checksum_algorithm_mapping().get(algorithm)
+        if hash_func is None:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
-
-        chunk_size = 8192
-
-        # Initialize hash objects directly for streaming
-        if algorithm == "blake3":
-            if blake3 is None:
-                raise ImportError("blake3 package required for blake3 algorithm")
-            hash_obj = blake3.blake3()
-        elif algorithm == "blake2b":
-            hash_obj = hashlib.blake2b()
-        elif algorithm == "blake2s":
-            hash_obj = hashlib.blake2s()
-        elif algorithm == "crc32":
-            crc_value = 0
-        else:
-            raise ValueError(f"Unsupported algorithm: {algorithm}")
-
-        # Stream file in chunks for memory efficiency
-        with open(path, "rb") as f:
-            while chunk := f.read(chunk_size):
-                if algorithm == "crc32":
-                    # CRC32 needs cumulative value
-                    crc_value = zlib.crc32(chunk, crc_value)
-                else:
-                    hash_obj.update(chunk)
-
-        # Return final hash value
-        if algorithm == "crc32":
-            checksum_value = format(crc_value & 0xFFFFFFFF, "08x")
-        else:
-            checksum_value = hash_obj.hexdigest()
+        checksum_value = hash_func(path)
 
         return checksum_value, algorithm
 
     def _compute_s3_checksum(
         self, uri: str, algorithm: str | None, compute_if_no_s3_checksum: bool = True
-    ) -> tuple[str, str]:
+    ) -> tuple[str | None, str | None]:
         """Compute checksum for S3 object with CRC32 optimization.
 
-        When algorithm is None, attempts to use existing S3 CRC32 checksum.
+        When algorithm is None, attempts to use existing S3 checksum.
         Otherwise downloads object and computes requested algorithm.
 
         Args:
             uri: S3 URI (s3://bucket/key)
             algorithm: Hash algorithm or None for CRC32 optimization
-            compute_if_no_s3_checksum: If False, raise exception when no existing
-                                      S3 checksum is found instead of downloading
+            compute_if_no_s3_checksum: If False, does not compute S3 checksum is not found
 
         Returns:
             Tuple of (checksum_value, checksum_alg) or (None, None) if
@@ -199,8 +128,6 @@ class _ChecksumBackend:
         Raises:
             Various boto3 exceptions: For S3 access errors
         """
-
-        # Parse S3 URI
         uri_parts = uri.replace("s3://", "").replace("s3a://", "").split("/", 1)
         bucket = uri_parts[0]
         key = uri_parts[1] if len(uri_parts) > 1 else ""
@@ -227,21 +154,14 @@ class _ChecksumBackend:
                 # Fall through to download method if allowed
                 pass
 
-            # If no S3 checksum found and compute_if_no_s3_checksum=False, return None
-            if not compute_if_no_s3_checksum:
-                return None, None
-
-        # Don't compute if flag is False and specific algorithm requested
-        if not compute_if_no_s3_checksum and algorithm:
+        if not compute_if_no_s3_checksum:
             return None, None
 
         # Fallback: Download object and compute hash
         target_algorithm = algorithm or "blake3"
-
-        if target_algorithm not in get_supported_algorithms():
+        hash_func = _HashUtils.get_checksum_algorithm_mapping().get(target_algorithm)
+        if not hash_func:
             raise ValueError(f"Unsupported algorithm: {target_algorithm}")
-
-        hash_func = getattr(_HashUtils, target_algorithm)
 
         # Download object
         response = s3_client.get_object(Bucket=bucket, Key=key)
@@ -254,9 +174,9 @@ def get_supported_algorithms() -> list[str]:
     """Returns list of supported checksum algorithms.
 
     Returns:
-        List of algorithm names: ['blake3', 'blake2b', 'blake2s', 'crc32']
+        List of algorithm names
     """
-    return ["blake3", "blake2b", "blake2s", "crc32"]
+    return list(_HashUtils.get_checksum_algorithm_mapping().keys())
 
 
 def generate_for_assets(
@@ -282,7 +202,6 @@ def generate_for_assets(
     Supported algorithms: blake3, blake2b, blake2s, crc32
 
     TODO: Expand checksum generation to support folder assets (AssetType.folder).
-          Current implementation only handles files (AssetType.file).
     """
     if not assets:
         return []
@@ -324,7 +243,6 @@ def generate_for_assets(
                     asset_copy.location_uri, target_algorithm
                 )
 
-            # Update asset copy with checksum if computed
             if checksum_value is not None:
                 asset_copy.checksum = checksum_value
                 asset_copy.checksum_alg = checksum_alg
