@@ -45,7 +45,7 @@ class DatasetCreate(BaseModel):
     canonical_id: str
     name: str
     version: str = "1.0.0"
-    project: str | None = None
+    project: str
     modality: DatasetModality
     locations: list[DataAssetRequest] = Field(min_length=1)
     governance: GovernanceMetadata
