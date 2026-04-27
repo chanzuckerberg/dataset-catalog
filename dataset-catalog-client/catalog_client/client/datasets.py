@@ -8,6 +8,7 @@ from catalog_client.models.dataset import (
     DatasetCreate,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetResponse,
     DatasetWithRelationsResponse,
 )
@@ -102,11 +103,13 @@ class DatasetClient(_SyncBase):
         response = self._get(f"{_PREFIX}/{dataset_id}", params=params)
         return DatasetWithRelationsResponse.model_validate(response.json())
 
-    def create(self, dataset: DatasetCreate) -> DatasetResponse:
+    def create(self, dataset: DatasetRequest | DatasetCreate) -> DatasetResponse:
         response = self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
-    def update(self, ref: str | DatasetRef, dataset: DatasetCreate) -> DatasetResponse:
+    def update(
+        self, ref: str | DatasetRef, dataset: DatasetRequest | DatasetCreate
+    ) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
         response = self._patch(
             f"{_PREFIX}/{dataset_id}",
@@ -176,12 +179,12 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._get(f"{_PREFIX}/{dataset_id}", params=params)
         return DatasetWithRelationsResponse.model_validate(response.json())
 
-    async def create(self, dataset: DatasetCreate) -> DatasetResponse:
+    async def create(self, dataset: DatasetRequest | DatasetCreate) -> DatasetResponse:
         response = await self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
     async def update(
-        self, ref: str | DatasetRef, dataset: DatasetCreate
+        self, ref: str | DatasetRef, dataset: DatasetRequest | DatasetCreate
     ) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
         response = await self._patch(

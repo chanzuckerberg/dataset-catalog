@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import enum
+import warnings
 from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -41,7 +42,7 @@ class DatasetRef(NamedTuple):
         return f"DatasetRef<canonical_id={self.canonical_id},version={self.version},project={self.project}>"
 
 
-class DatasetCreate(BaseModel):
+class DatasetRequest(BaseModel):
     canonical_id: str = Field(
         description="Unique identifier for the dataset across versions in a project"
     )
@@ -97,7 +98,20 @@ class DatasetCreate(BaseModel):
         return v
 
 
-class DatasetResponse(DatasetCreate):
+class DatasetCreate(DatasetRequest):
+    """Deprecated: Use DatasetRequest instead. This will be removed in a future version."""
+
+    def __init__(self, **data):
+        warnings.warn(
+            "DatasetCreate is deprecated and will be removed in a future version. "
+            "Use DatasetRequest instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**data)
+
+
+class DatasetResponse(DatasetRequest):
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     created_at: datetime.datetime = Field(

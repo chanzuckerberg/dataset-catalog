@@ -469,25 +469,24 @@ except DuplicateDatasetError as e:
 
 ## Key models reference
 
-| Model | Used for |
-|---|---|
-| `DatasetCreate` | Creating or updating a dataset |
-| `DatasetResponse` | Return value from create / update |
+| Model                          | Used for                                                               |
+|--------------------------------|------------------------------------------------------------------------|
+| `DatasetCreate`                | Creating or updating a dataset                                         |
+| `DatasetResponse`              | Return value from create / update                                      |
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
-| `DataAssetRequest` | Asset entry inside `DatasetCreate.locations` |
-| `DataAssetResponse` | Asset entry inside response `locations` |
-| `GovernanceMetadata` | Access control and ownership info |
-| `DatasetMetadata` | Top-level metadata envelope (`experiment`, `sample`, `data_summary`) |
-| `SampleMetadata` | Biological sample information |
-| `ExperimentMetadata` | Experimental setup and instrument info |
-| `DataSummaryMetadata` | Content descriptors and modality-specific measurements |
-| `DataQualityChecks` | QC pass / fail / skipped check names |
-| `CollectionCreate` | Creating a collection |
-| `CollectionUpdate` | Partially updating a collection |
-| `CollectionResponse` | Collection return value |
-| `LineageEdgeCreate` | Creating a lineage edge |
-| `LineageEdgeResponse` | Lineage edge return value |
-| `PaginatedResponse[T]` | Wrapper for list endpoints (`total`, `limit`, `offset`, `results`) |
+| `DataAssetRequest`             | Asset entry inside `DatasetCreate.locations`                           |
+| `DataAssetResponse`            | Asset entry inside response `locations`                                |
+| `GovernanceMetadata`           | Access control and ownership info                                      |
+| `DatasetMetadata`              | Top-level metadata envelope (`experiment`, `sample`, `data_summary`)   |
+| `SampleMetadata`               | Biological sample information                                          |
+| `ExperimentMetadata`           | Experimental setup and instrument info                                 |
+| `DataSummaryMetadata`          | Content descriptors and modality-specific measurements                 |
+| `DataQualityChecks`            | QC pass / fail / skipped check names                                   |
+| `CollectionRequest`            | Creating/Updating a collection                                         |
+| `CollectionResponse`           | Collection return value                                                |
+| `LineageEdgeRequest`           | Creating a lineage edge                                                |
+| `LineageEdgeResponse`          | Lineage edge return value                                              |
+| `PaginatedResponse[T]`         | Wrapper for list endpoints (`total`, `limit`, `offset`, `results`)     |
 
 ### Enums
 

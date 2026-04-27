@@ -14,7 +14,12 @@ from catalog_client.exceptions import (
     LineageResolutionError,
     NotFoundError,
 )
-from catalog_client.models.dataset import DatasetCreate, DatasetModality, DatasetRef
+from catalog_client.models.dataset import (
+    DatasetCreate,
+    DatasetModality,
+    DatasetRef,
+    DatasetRequest,
+)
 from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
 from catalog_client.registration.request import RegistrationRequest
@@ -108,7 +113,10 @@ class CatalogClient:
         self.close()
 
     def _create_or_update(
-        self, dataset: DatasetCreate, update_if_exists: bool, error_on_duplicate: bool
+        self,
+        dataset: DatasetRequest | DatasetCreate,
+        update_if_exists: bool,
+        error_on_duplicate: bool,
     ) -> str:
         """Create a new dataset or update existing one based on parameters."""
         # Validate mutually exclusive parameters
