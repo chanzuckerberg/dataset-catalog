@@ -6,7 +6,7 @@ import datetime
 import enum
 from typing import TYPE_CHECKING, NamedTuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from catalog_client.models.asset import DataAssetRequest, DataAssetResponse
 from catalog_client.models.governance import GovernanceMetadata
@@ -51,7 +51,8 @@ class DatasetCreate(BaseModel):
         description="Version string for the dataset (defaults to '1.0.0')",
     )
     project: str | None = Field(
-        default=None, description="Project or study that this dataset belongs to"
+        default=None,
+        description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
         description="Data modality (imaging, sequencing, mass spec, or unknown)"
@@ -63,7 +64,7 @@ class DatasetCreate(BaseModel):
         description="Access control and compliance metadata"
     )
     metadata: DatasetMetadata = Field(
-        description="Biological and experimental metadata"
+        description="Biological, experimental and data quality metadata"
     )
     description: str | None = Field(
         default=None, description="Detailed description of the dataset"
@@ -71,7 +72,7 @@ class DatasetCreate(BaseModel):
     doi: str | None = Field(
         default=None, description="Digital Object Identifier for the dataset"
     )
-    cross_db_references: str | None = Field(
+    cross_db_references: list[str] | str | None = Field(
         default=None, description="References to external databases or systems"
     )
     dataset_type: DatasetType | None = Field(
@@ -86,6 +87,14 @@ class DatasetCreate(BaseModel):
     data_quality: DataQualityChecks | None = Field(
         default=None, description="Results of data quality validation checks"
     )
+
+    @field_validator("cross_db_references", mode="before")
+    @classmethod
+    def convert_cross_db_references_to_string(cls, v):
+        """Convert list of cross-db references to string separated by '; '."""
+        if isinstance(v, list):
+            return "; ".join(v)
+        return v
 
 
 class DatasetResponse(DatasetCreate):
@@ -104,6 +113,14 @@ class DatasetResponse(DatasetCreate):
     record_version: int = Field(
         description="Internal version number for tracking changes to the record"
     )
+
+    @field_validator("cross_db_references", mode="before")
+    @classmethod
+    def convert_cross_db_references_to_list(cls, v):
+        """Convert string cross-db references to list by splitting on '; '."""
+        if isinstance(v, str) and v:
+            return v.split("; ")
+        return v
 
 
 class DatasetWithRelationsResponse(DatasetResponse):
