@@ -72,6 +72,7 @@ def generate_for_assets(
             continue
 
         platform = _determine_platform(asset_copy)
+        print(platform)
 
         if platform is None:
             warnings.warn(
@@ -87,6 +88,7 @@ def generate_for_assets(
             hash_result = checksum(
                 path, algorithm=algorithm, use_stored=compute_if_no_s3_checksum
             )
+            print(hash_result)
 
             if hash_result is not None:
                 asset_copy.checksum = (
