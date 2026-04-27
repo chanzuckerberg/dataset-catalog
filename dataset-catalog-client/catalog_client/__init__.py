@@ -40,7 +40,7 @@ from catalog_client.exceptions import (
 )
 from catalog_client.models import (
     AssetType,
-    CollectionCreate,
+    CollectionRequest,
     CollectionResponse,
     CollectionType,
     CollectionUpdate,
@@ -56,7 +56,7 @@ from catalog_client.models import (
     DatasetWithRelationsResponse,
     ExperimentMetadata,
     GovernanceMetadata,
-    LineageEdgeCreate,
+    LineageEdgeRequest,
     LineageEdgeResponse,
     LineageType,
     OntologyEntry,
@@ -81,7 +81,7 @@ __all__ = [
     "RegistrationRequest",
     # Models
     "AssetType",
-    "CollectionCreate",
+    "CollectionRequest",
     "CollectionResponse",
     "CollectionType",
     "CollectionUpdate",
@@ -97,7 +97,7 @@ __all__ = [
     "DatasetWithRelationsResponse",
     "ExperimentMetadata",
     "GovernanceMetadata",
-    "LineageEdgeCreate",
+    "LineageEdgeRequest",
     "LineageEdgeResponse",
     "LineageType",
     "OntologyEntry",

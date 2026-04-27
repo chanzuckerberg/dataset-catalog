@@ -15,7 +15,7 @@ from catalog_client.exceptions import (
     NotFoundError,
 )
 from catalog_client.models.dataset import DatasetCreate, DatasetModality, DatasetRef
-from catalog_client.models.lineage import LineageEdgeCreate
+from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
 from catalog_client.registration.request import RegistrationRequest
 
@@ -61,7 +61,7 @@ class CatalogClient:
                 continue
 
             self.lineages.create(
-                LineageEdgeCreate(
+                LineageEdgeRequest(
                     source_dataset_id=source_id,
                     destination_dataset_id=dataset_id,
                     lineage_type=spec.lineage_type,
@@ -189,7 +189,7 @@ class AsyncCatalogClient:
                 continue
 
             await self.lineages.create(
-                LineageEdgeCreate(
+                LineageEdgeRequest(
                     source_dataset_id=source_id,
                     destination_dataset_id=dataset_id,
                     lineage_type=spec.lineage_type,

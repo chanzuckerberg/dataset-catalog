@@ -234,9 +234,9 @@ Collections are flat, mutable groupings of datasets (e.g. for a publication or t
 ### Create / update / delete
 
 ```python
-from catalog_client import CollectionCreate, CollectionUpdate, CollectionType
+from catalog_client import CollectionRequest, CollectionType
 
-col = client.collections.create(CollectionCreate(
+col = client.collections.create(CollectionRequest(
     canonical_id="my-publication-collection",
     version="1.0.0",
     name="Nature Paper 2025 datasets",
@@ -245,7 +245,14 @@ col = client.collections.create(CollectionCreate(
     description="All datasets used in doi:10.1234/example",
 ))
 
-updated = client.collections.update(col.id, CollectionUpdate(name="Nature Paper 2025 (final)"))
+updated = client.collections.update(col.id, CollectionRequest(
+    canonical_id="my-publication-collection",
+    version="1.0.0",
+    name="Nature Paper 2025 datasets(final)",
+    collection_owner="data-team",
+    collection_type=CollectionType.publication,
+    description="All datasets used in doi:10.1234/example",
+))
 
 client.collections.delete(col.id)  # soft-delete, status 204
 ```
@@ -284,9 +291,9 @@ tombstone an edge recorded in error.
 ### Create an edge
 
 ```python
-from catalog_client import LineageEdgeCreate, LineageType
+from catalog_client import LineageEdgeRequest, LineageType
 
-edge = client.lineages.create(LineageEdgeCreate(
+edge = client.lineages.create(LineageEdgeRequest(
     source_dataset_id="source-uuid",
     destination_dataset_id="derived-uuid",
     lineage_type=LineageType.transformed_from,

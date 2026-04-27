@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
-    CollectionCreate,
+    CollectionRequest,
     CollectionResponse,
-    CollectionUpdate,
 )
 from catalog_client.models.pagination import PaginatedResponse
 
@@ -24,12 +23,12 @@ class CollectionClient(_SyncBase):
         response = self._get(f"{_PREFIX}/{collection_id}")
         return CollectionResponse.model_validate(response.json())
 
-    def create(self, collection: CollectionCreate) -> CollectionResponse:
+    def create(self, collection: CollectionRequest) -> CollectionResponse:
         response = self._post(f"{_PREFIX}/", json=collection.model_dump(mode="json"))
         return CollectionResponse.model_validate(response.json())
 
     def update(
-        self, collection_id: str, collection: CollectionUpdate
+        self, collection_id: str, collection: CollectionRequest
     ) -> CollectionResponse:
         response = self._patch(
             f"{_PREFIX}/{collection_id}",
@@ -62,14 +61,14 @@ class AsyncCollectionClient(_AsyncBase):
         response = await self._get(f"{_PREFIX}/{collection_id}")
         return CollectionResponse.model_validate(response.json())
 
-    async def create(self, collection: CollectionCreate) -> CollectionResponse:
+    async def create(self, collection: CollectionRequest) -> CollectionResponse:
         response = await self._post(
             f"{_PREFIX}/", json=collection.model_dump(mode="json")
         )
         return CollectionResponse.model_validate(response.json())
 
     async def update(
-        self, collection_id: str, collection: CollectionUpdate
+        self, collection_id: str, collection: CollectionRequest
     ) -> CollectionResponse:
         response = await self._patch(
             f"{_PREFIX}/{collection_id}",

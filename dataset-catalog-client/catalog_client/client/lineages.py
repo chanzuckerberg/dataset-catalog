@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.lineage import (
-    LineageEdgeCreate,
+    LineageEdgeRequest,
     LineageEdgeResponse,
     LineageType,
 )
@@ -37,7 +37,7 @@ class LineageClient(_SyncBase):
         response = self._get(f"{_PREFIX}/{edge_id}")
         return LineageEdgeResponse.model_validate(response.json())
 
-    def create(self, edge: LineageEdgeCreate) -> LineageEdgeResponse:
+    def create(self, edge: LineageEdgeRequest) -> LineageEdgeResponse:
         response = self._post(f"{_PREFIX}/", json=edge.model_dump(mode="json"))
         return LineageEdgeResponse.model_validate(response.json())
 
@@ -69,7 +69,7 @@ class AsyncLineageClient(_AsyncBase):
         response = await self._get(f"{_PREFIX}/{edge_id}")
         return LineageEdgeResponse.model_validate(response.json())
 
-    async def create(self, edge: LineageEdgeCreate) -> LineageEdgeResponse:
+    async def create(self, edge: LineageEdgeRequest) -> LineageEdgeResponse:
         response = await self._post(f"{_PREFIX}/", json=edge.model_dump(mode="json"))
         return LineageEdgeResponse.model_validate(response.json())
 

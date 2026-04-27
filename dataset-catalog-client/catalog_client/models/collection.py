@@ -6,7 +6,7 @@ import datetime
 import enum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CollectionType(str, enum.Enum):
@@ -14,41 +14,39 @@ class CollectionType(str, enum.Enum):
     training = "training"
 
 
-class CollectionCreate(BaseModel):
-    canonical_id: str
-    version: str
-    name: str
-    collection_owner: str
-    description: str | None = None
-    license: str | None = None
-    doi: str | None = None
-    collection_type: CollectionType | None = None
-    metadata: dict[str, Any] | None = None
+class CollectionRequest(BaseModel):
+    canonical_id: str = Field(
+        description="Unique identifier for the collection across versions"
+    )
+    version: str = Field(description="Version string for the collection")
+    name: str = Field(description="Human-readable name of the collection")
+    collection_owner: str = Field(description="Owner or maintainer of the collection")
+    description: str | None = Field(
+        default=None, description="Detailed description of the collection"
+    )
+    license: str | None = Field(
+        default=None, description="License under which the collection is made available"
+    )
+    doi: str | None = Field(
+        default=None, description="Digital Object Identifier for the collection"
+    )
+    collection_type: CollectionType | None = Field(
+        default=None, description="Type of collection (publication or training)"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Additional metadata as key-value pairs"
+    )
 
 
-class CollectionUpdate(BaseModel):
-    canonical_id: str | None = None
-    version: str | None = None
-    name: str | None = None
-    collection_owner: str | None = None
-    description: str | None = None
-    license: str | None = None
-    doi: str | None = None
-    collection_type: CollectionType | None = None
-    metadata: dict[str, Any] | None = None
-
-
-class CollectionResponse(BaseModel):
-    id: str
-    tombstoned: bool
-    created_at: datetime.datetime
-    last_modified_at: datetime.datetime
-    canonical_id: str
-    version: str
-    name: str
-    collection_owner: str
-    description: str | None = None
-    license: str | None = None
-    doi: str | None = None
-    collection_type: CollectionType | None = None
-    collection_metadata: dict[str, Any] | None
+class CollectionResponse(CollectionRequest):
+    id: str = Field(description="Unique system-generated ID for this collection")
+    tombstoned: bool = Field(description="Whether the collection has been soft-deleted")
+    created_at: datetime.datetime = Field(
+        description="Timestamp when the collection was first created"
+    )
+    last_modified_at: datetime.datetime = Field(
+        description="Timestamp when the collection was last updated"
+    )
+    collection_metadata: dict[str, Any] | None = Field(
+        default=None, description="Additional metadata as key-value pairs"
+    )
