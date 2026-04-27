@@ -7,7 +7,7 @@ import boto3
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksum.algorithms import Algorithm
 from catalog_client.utils.checksum.models import ChecksumResult
-from catalog_client.utils.checksum_generator import (
+from catalog_client.utils.generator import (
     _fetch_all_s3_stored_checksums,
     _find_common_algorithm_in_folder,
     _parse_s3_uri,
@@ -81,12 +81,11 @@ def generate_for_assets(
     s3_client = None
 
     for asset in assets:
-        asset_copy = DataAssetRequest(**asset.model_dump())
-
-        if asset_copy.checksum is not None:
-            result.append(asset_copy)
+        if asset.checksum is not None:
+            result.append(asset)
             continue
 
+        asset_copy = DataAssetRequest(**asset.model_dump())
         platform = _determine_platform(asset_copy)
 
         if platform is None:
@@ -101,14 +100,13 @@ def generate_for_assets(
 
         is_s3 = platform == StoragePlatform.s3
         detected_algorithm = algorithm
-        has_cached_result = False
+
+        if is_s3 and s3_client is None:
+            s3_client = boto3.client("s3")
 
         try:
             # ── DETECTION PHASE (S3 only, algorithm=None) ──────────────
             if algorithm is None and is_s3:
-                if s3_client is None:
-                    s3_client = boto3.client("s3")
-
                 if asset_copy.asset_type == AssetType.file:
                     bucket, key = _parse_s3_uri(asset_copy.location_uri)
                     all_checksums = _fetch_all_s3_stored_checksums(
@@ -121,20 +119,18 @@ def generate_for_assets(
                         cached_results[asset_copy.location_uri] = all_checksums[
                             detected_algorithm
                         ]
-                        has_cached_result = True
 
                 elif asset_copy.asset_type == AssetType.folder:
-                    detected_algorithm, per_child_all = (
+                    detected_algorithm, cached_children = (
                         _find_common_algorithm_in_folder(
                             asset_copy.location_uri, s3_client
                         )
                     )
                     if detected_algorithm is not None:
-                        for child_path, child_algos in per_child_all.items():
-                            cached_results[child_path] = child_algos[detected_algorithm]
+                        cached_results.update(cached_children)
 
             # ── COMPUTE PHASE ──────────────────────────────────────────
-            if has_cached_result:
+            if asset_copy.location_uri in cached_results:
                 hash_result = cached_results[asset_copy.location_uri]
 
             else:
@@ -144,9 +140,6 @@ def generate_for_assets(
                     continue
 
                 effective_algorithm = detected_algorithm or "blake3"
-
-                if is_s3 and s3_client is None:
-                    s3_client = boto3.client("s3")
 
                 hash_result = checksum(
                     asset_copy.location_uri,

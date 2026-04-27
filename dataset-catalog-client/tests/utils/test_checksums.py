@@ -12,7 +12,7 @@ from moto import mock_aws
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils import checksums
 from catalog_client.utils.checksum.models import ChecksumResult
-from catalog_client.utils.checksum_generator import (
+from catalog_client.utils.generator import (
     _fetch_all_s3_stored_checksums,
     _find_common_algorithm_in_folder,
     _parse_s3_uri,

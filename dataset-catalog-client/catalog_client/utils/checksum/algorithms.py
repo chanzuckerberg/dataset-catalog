@@ -50,7 +50,11 @@ class _CryptoHasher:
 
 
 class _CRC32Hasher:
-    """CRC32 via zlib (stdlib). Streams correctly across update() calls."""
+    """CRC32 via zlib (stdlib). Streams correctly across update() calls.
+
+    Spec: https://www.rfc-editor.org/rfc/rfc1952#section-8
+    Polynomial: 0x04C11DB7 (ISO 3309 / ITU-T V.42 / IEEE 802.3 Ethernet)
+    """
 
     def __init__(self) -> None:
         self._crc: int = 0
@@ -65,19 +69,11 @@ class _CRC32Hasher:
         return struct.pack(">I", self._crc)
 
 
-class _CRC64Hasher:
-    """
-    CRC64/ECMA-182 via crcmod.
-    initCrc=0, xorOut=0 allows correct incremental accumulation.
-    """
-
-    _FN = crcmod.predefined.mkCrcFun("crc-64")  # built once at class level
+class _CRC64BaseHasher:
+    """Shared base for 64-bit CRC hashers (ECMA-182 and NVMe)."""
 
     def __init__(self) -> None:
         self._crc: int = 0
-
-    def update(self, data: bytes) -> None:
-        self._crc = self._FN(data, self._crc)
 
     def hexdigest(self) -> str:
         return f"{self._crc:016x}"
@@ -86,10 +82,29 @@ class _CRC64Hasher:
         return struct.pack(">Q", self._crc)
 
 
-class _CRC64NVMEHasher:
+class _CRC64Hasher(_CRC64BaseHasher):
     """
-    CRC64/NVME via awscrt — same polynomial used by AWS S3.
+    CRC64/ECMA-182 via crcmod.
+    initCrc=0, xorOut=0 allows correct incremental accumulation.
+
+    Spec: https://ecma-international.org/publications-and-standards/standards/ecma-182/
+    Polynomial: 0x42F0E1EBA9EA3693
+    """
+
+    _FN = crcmod.predefined.mkCrcFun("crc-64")  # built once at class level
+
+    def update(self, data: bytes) -> None:
+        self._crc = self._FN(data, self._crc)
+
+
+class _CRC64NVMEHasher(_CRC64BaseHasher):
+    """
+    CRC64/NVMe via awscrt — same polynomial used by AWS S3.
     Raises ImportError at instantiation if awscrt is not installed.
+
+    Spec: https://nvmexpress.org/specifications/ (NVM Express Base Spec §Annex I)
+    Polynomial: 0xAD93D23594C93659
+    AWS S3 support: https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
     """
 
     def __init__(self) -> None:
@@ -97,22 +112,20 @@ class _CRC64NVMEHasher:
             raise ImportError(
                 "crc64nvme requires the awscrt package: pip install awscrt"
             )
-        self._crc: int = 0
+        super().__init__()
 
     def update(self, data: bytes) -> None:
         self._crc = _awscrt_crc64nvme(data, self._crc)
 
-    def hexdigest(self) -> str:
-        return f"{self._crc:016x}"
-
-    def raw(self) -> bytes:
-        return struct.pack(">Q", self._crc)
-
 
 def new_hasher(algorithm: Algorithm) -> _Hasher:
     if algorithm == "blake3":
+        """cryptographic hash; combine chunks via Merkle tree.
+        Spec: https://github.com/BLAKE3-team/BLAKE3-specs/blob/master/blake3.pdf"""
         return _CryptoHasher(blake3.blake3())
     elif algorithm == "blake2b":
+        """cryptographic hash (RFC 7693); combine chunks via Merkle tree.
+        Spec: https://www.rfc-editor.org/rfc/rfc7693"""
         return _CryptoHasher(hashlib.blake2b())
     elif algorithm == "crc32":
         return _CRC32Hasher()

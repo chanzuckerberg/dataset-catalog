@@ -4,7 +4,6 @@ Supports local filesystem and S3.
 
 Dependencies:
     pip install blake3 boto3 crcmod awscrt
-
     awscrt is only required for crc64nvme. All other algorithms work without it.
 
 Algorithm notes:
@@ -137,7 +136,8 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
         buf_len += len(raw)
         if buf_len >= CHUNK_SIZE:
             flush_chunk(buf.getvalue())
-            buf = io.BytesIO()
+            buf.seek(0)
+            buf.truncate()
             buf_len = 0
 
     tail = buf.getvalue()
@@ -303,80 +303,23 @@ def _fetch_s3_stored_checksum(
 ) -> ChecksumResult | None:
     """
     Attempt to retrieve a stored checksum from S3 without downloading the object.
-
-    Priority order:
-      1. S3 native checksum (CRC32, CRC64NVME) — fetched via HeadObject with
-         ChecksumMode=ENABLED. Returned as base64, decoded to hex.
-      2. User-defined metadata — stored by upload_with_checksum() for algorithms
-         S3 doesn't support natively (blake3, blake2b, crc64).
-
-    Returns None if no stored checksum is found for the requested algorithm,
-    signalling the caller should fall back to a full download + compute.
-
-    Note on multipart composite:
-      For multipart-uploaded objects, S3's native checksum is the *composite*
-      (CRC of each part's CRC), not the whole-file CRC. We surface it as both
-      file_hash and merkle_root with source='s3_native' so callers can compare
-      against their own composite. If you need the true whole-file CRC, you
-      must download and compute (pass use_stored=False).
+    Returns None if no stored checksum is found for the requested algorithm.
     """
-    path = f"s3://{bucket}/{key}"
-
-    # Try S3 native checksum
-    if algorithm in _S3_NATIVE_RESPONSE_KEY:
-        resp_key = _S3_NATIVE_RESPONSE_KEY[algorithm]
-        try:
-            head = s3.head_object(Bucket=bucket, Key=key, ChecksumMode="ENABLED")
-        except Exception:
-            return None
-
-        raw_value = head.get(resp_key)
-        if raw_value:
-            clean_b64 = _strip_multipart_suffix(raw_value)
-            hex_digest = _b64_to_hex(clean_b64)
-            return ChecksumResult(
-                path=path,
-                algorithm=algorithm,
-                file_hash=hex_digest,
-                merkle_root=hex_digest,
-                source="s3_native",
-                # No chunk manifest available when reading from stored checksum
-            )
-
-    # Try user-defined metadata (non-native algorithms)
-    try:
-        head = s3.head_object(Bucket=bucket, Key=key)
-    except Exception:
-        return None
-
-    metadata = {k.lower(): v for k, v in head.get("Metadata", {}).items()}
-    file_hash = metadata.get(f"x-checksum-{algorithm}")
-    merkle_root = metadata.get(f"x-checksum-{algorithm}-merkle")
-
-    if file_hash:
-        return ChecksumResult(
-            path=path,
-            algorithm=algorithm,
-            file_hash=file_hash,
-            merkle_root=merkle_root or file_hash,
-            source="s3_metadata",
-        )
-
-    return None
+    return _fetch_all_s3_stored_checksums(bucket, key, s3).get(algorithm)
 
 
 def _find_common_algorithm_in_folder(
     path: str, s3_client
-) -> tuple[str | None, dict[str, dict[str, ChecksumResult]]]:
+) -> tuple[str | None, dict[str, ChecksumResult]]:
     """
     Find the best common algorithm across all files under a folder.
 
     Returns:
-        (algorithm, per_child_all_checksums)
+        (algorithm, child_checksums)
         - algorithm: highest-priority algorithm shared by ALL children,
                      or None if no common algorithm exists.
-        - per_child_all_checksums: dict mapping child_path -> {algo: ChecksumResult}
-                                   populated only on success (common algorithm found).
+        - child_checksums: dict mapping child_path -> ChecksumResult for the
+                           chosen algorithm. Empty if no common algorithm found.
     """
     if not path.startswith(("s3://", "s3a://")):
         return None, {}
@@ -415,7 +358,9 @@ def _find_common_algorithm_in_folder(
         return None, {}
 
     best_algorithm = _select_best_algorithm(common_algorithms)
-    return best_algorithm, per_child_all_checksums
+    return best_algorithm, {
+        p: results[best_algorithm] for p, results in per_child_all_checksums.items()
+    }
 
 
 def _hash_s3_file(
