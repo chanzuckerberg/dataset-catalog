@@ -298,15 +298,16 @@ dependencies = [
     { name = "pydantic" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 checksum = [
     { name = "awscrt" },
     { name = "blake3" },
     { name = "boto3" },
     { name = "crcmod" },
 ]
+
+[package.dev-dependencies]
 dev = [
-    { name = "boto3" },
     { name = "jupyter" },
     { name = "moto" },
     { name = "pre-commit" },
@@ -318,19 +319,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "awscrt", marker = "extra == 'checksum'", specifier = ">=0.32.1" },
+    { name = "blake3", marker = "extra == 'checksum'", specifier = ">=0.3.0" },
+    { name = "boto3", marker = "extra == 'checksum'", specifier = ">=1.42.90" },
+    { name = "crcmod", marker = "extra == 'checksum'", specifier = ">=1.7" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pydantic", specifier = ">=2.10.0" },
 ]
+provides-extras = ["checksum"]
 
 [package.metadata.requires-dev]
-checksum = [
-    { name = "awscrt", specifier = ">=0.32.1" },
-    { name = "blake3", specifier = ">=0.3.0" },
-    { name = "boto3", specifier = ">=1.42.90" },
-    { name = "crcmod", specifier = ">=1.7" },
-]
 dev = [
-    { name = "boto3", specifier = ">=1.42.90" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "moto", specifier = ">=4.0.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },
