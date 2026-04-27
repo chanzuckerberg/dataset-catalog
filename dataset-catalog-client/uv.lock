@@ -298,11 +298,6 @@ dependencies = [
     { name = "pydantic" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "jupyter" },
-]
-
 [package.dev-dependencies]
 checksum = [
     { name = "awscrt" },
@@ -324,10 +319,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
     { name = "pydantic", specifier = ">=2.10.0" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 checksum = [

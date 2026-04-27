@@ -198,10 +198,13 @@ def _hash_local_dir(path: str, algorithm: Algorithm) -> ChecksumResult:
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    assert uri.startswith("s3://"), f"Not an S3 URI: {uri}"
-    without_scheme = uri[5:]
-    bucket, _, key = without_scheme.partition("/")
-    return bucket, key
+    """Parse s3:// or s3a:// URI into (bucket, key)."""
+    for scheme in ("s3://", "s3a://"):
+        if uri.startswith(scheme):
+            without_scheme = uri[len(scheme) :]
+            bucket, _, key = without_scheme.partition("/")
+            return bucket, key
+    raise ValueError(f"Not an S3 URI: {uri}")
 
 
 # Maps our algorithm name to the HeadObject response field S3 uses
@@ -209,6 +212,23 @@ _S3_NATIVE_RESPONSE_KEY: dict[str, str] = {
     "crc32": "ChecksumCRC32",
     "crc64nvme": "ChecksumCRC64NVME",
 }
+
+
+# Algorithm priority for selection (higher = preferred, computed over native)
+ALGORITHM_PRIORITY: dict[str, int] = {
+    "blake3": 100,
+    "blake2b": 90,
+    "crc64": 80,
+    "crc64nvme": 70,
+    "crc32": 60,
+}
+
+
+def _select_best_algorithm(algorithms: set[str]) -> str | None:
+    """Select the highest-priority algorithm from a set of algorithm names."""
+    if not algorithms:
+        return None
+    return max(algorithms, key=lambda a: ALGORITHM_PRIORITY.get(a, 0))
 
 
 def _b64_to_hex(b64: str) -> str:
@@ -226,6 +246,53 @@ def _strip_multipart_suffix(value: str) -> str:
         b64_part, _, _ = value.rpartition("-")
         return b64_part
     return value
+
+
+def _fetch_all_s3_stored_checksums(
+    bucket: str, key: str, s3_client
+) -> dict[str, ChecksumResult]:
+    """
+    Fetch all stored checksums for an S3 object in one HeadObject call.
+    Returns dict mapping algorithm name -> ChecksumResult.
+    Returns empty dict on any error.
+    """
+    results: dict[str, ChecksumResult] = {}
+    path = f"s3://{bucket}/{key}"
+
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=key, ChecksumMode="ENABLED")
+
+        # Native S3 checksums (CRC32, CRC64NVME)
+        for algo, response_key in _S3_NATIVE_RESPONSE_KEY.items():
+            if raw_value := head.get(response_key):
+                clean_b64 = _strip_multipart_suffix(raw_value)
+                hex_digest = _b64_to_hex(clean_b64)
+                results[algo] = ChecksumResult(
+                    path=path,
+                    algorithm=algo,
+                    file_hash=hex_digest,
+                    merkle_root=hex_digest,
+                    source="s3_native",
+                )
+
+        # User metadata checksums (blake3, blake2b, crc64)
+        metadata = {k.lower(): v for k, v in head.get("Metadata", {}).items()}
+        for algo in ["blake3", "blake2b", "crc64"]:
+            file_hash = metadata.get(f"x-checksum-{algo}")
+            if file_hash:
+                merkle_root = metadata.get(f"x-checksum-{algo}-merkle", file_hash)
+                results[algo] = ChecksumResult(
+                    path=path,
+                    algorithm=algo,
+                    file_hash=file_hash,
+                    merkle_root=merkle_root,
+                    source="s3_metadata",
+                )
+
+    except Exception:
+        return {}
+
+    return results
 
 
 def _fetch_s3_stored_checksum(
@@ -298,29 +365,89 @@ def _fetch_s3_stored_checksum(
     return None
 
 
+def _find_common_algorithm_in_folder(
+    path: str, s3_client
+) -> tuple[str | None, dict[str, dict[str, ChecksumResult]]]:
+    """
+    Find the best common algorithm across all files under a folder.
+
+    Returns:
+        (algorithm, per_child_all_checksums)
+        - algorithm: highest-priority algorithm shared by ALL children,
+                     or None if no common algorithm exists.
+        - per_child_all_checksums: dict mapping child_path -> {algo: ChecksumResult}
+                                   populated only on success (common algorithm found).
+    """
+    if not path.startswith(("s3://", "s3a://")):
+        return None, {}
+
+    bucket, prefix = _parse_s3_uri(path)
+    common_algorithms: set[str] | None = None
+    per_child_all_checksums: dict[str, dict[str, ChecksumResult]] = {}
+
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            if obj["Key"].endswith("/"):
+                continue
+
+            child_path = f"s3://{bucket}/{obj['Key']}"
+            all_checksums = _fetch_all_s3_stored_checksums(
+                bucket, obj["Key"], s3_client
+            )
+
+            if not all_checksums:
+                return None, {}
+
+            child_algos = set(all_checksums.keys())
+
+            if common_algorithms is None:
+                common_algorithms = child_algos
+            else:
+                common_algorithms &= child_algos
+
+            if not common_algorithms:
+                return None, {}
+
+            per_child_all_checksums[child_path] = all_checksums
+
+    if not common_algorithms:
+        return None, {}
+
+    best_algorithm = _select_best_algorithm(common_algorithms)
+    return best_algorithm, per_child_all_checksums
+
+
 def _hash_s3_file(
     bucket: str,
     key: str,
     algorithm: Algorithm,
     s3,
     use_stored: bool = True,
+    cached_results: dict[str, ChecksumResult] | None = None,
 ) -> ChecksumResult:
     """
     Return a ChecksumResult for an S3 object.
 
+    If cached_results contains a result for this path, return it immediately.
     If use_stored=True (default), checks for a stored S3 checksum first via
     _fetch_s3_stored_checksum. Falls back to streaming download only when no
     stored checksum exists for the requested algorithm.
 
     Set use_stored=False to always recompute (e.g. for integrity audits).
     """
+    path = f"s3://{bucket}/{key}"
+
+    if cached_results and path in cached_results:
+        return cached_results[path]
+
     if use_stored:
         stored = _fetch_s3_stored_checksum(bucket, key, algorithm, s3)
         if stored is not None:
             return stored
 
     resp = s3.get_object(Bucket=bucket, Key=key)
-    return _hash_stream(resp["Body"], algorithm, f"s3://{bucket}/{key}")
+    return _hash_stream(resp["Body"], algorithm, path)
 
 
 def insert(tree: dict, parts: list[str], s3_key: str) -> None:
@@ -337,6 +464,7 @@ def _hash_s3_prefix(
     algorithm: Algorithm,
     s3,
     use_stored: bool = True,
+    cached_results: dict[str, ChecksumResult] | None = None,
 ) -> ChecksumResult:
     """Hash all objects under an S3 prefix as a virtual directory tree."""
     paginator = s3.get_paginator("list_objects_v2")
@@ -356,7 +484,12 @@ def _hash_s3_prefix(
         for name, value in sorted(node.items()):
             if isinstance(value, tuple) and value[0] == "file":
                 children[name] = _hash_s3_file(
-                    bucket, value[1], algorithm, s3, use_stored
+                    bucket,
+                    value[1],
+                    algorithm,
+                    s3,
+                    use_stored,
+                    cached_results,
                 )
             elif isinstance(value, dict):
                 children[name] = hash_tree(value, f"{virtual_path}{name}/")
@@ -384,11 +517,12 @@ def checksum(
     algorithm: Algorithm = None,
     s3_client=None,
     use_stored: bool = True,
+    cached_results: dict[str, ChecksumResult] | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for a file or folder on local disk or S3.
     Args:
-        path:        Local path or s3://bucket/key URI.
+        path:        Local path or s3://bucket/key URI (s3a:// also accepted).
                      Trailing slash (or S3 prefix ending in /) = treat as directory.
         algorithm:   One of: blake3 (default), blake2b, crc32, crc64, crc64nvme.
         s3_client:   Optional pre-configured boto3 S3 client. Created automatically
@@ -399,6 +533,9 @@ def checksum(
                      the object. Falls back to a full download+compute only when no
                      stored checksum is found for the requested algorithm.
                      Set to False to always recompute (e.g. for integrity audits).
+        cached_results: Optional dict of path -> ChecksumResult populated by the
+                     detection phase in generate_for_assets(). When provided,
+                     S3 file lookups check the cache before fetching or computing.
 
     Returns:
         ChecksumResult with:
@@ -411,12 +548,26 @@ def checksum(
             children             — per-child results (directories only)
     """
     effective_algorithm = algorithm or "blake3"
-    if path.startswith("s3://"):
+    if path.startswith(("s3://", "s3a://")):
         client = s3_client or boto3.client("s3")
         bucket, key = _parse_s3_uri(path)
         if path.endswith("/") or not key:
-            return _hash_s3_prefix(bucket, key, effective_algorithm, client, use_stored)
-        return _hash_s3_file(bucket, key, effective_algorithm, client, use_stored)
+            return _hash_s3_prefix(
+                bucket,
+                key,
+                effective_algorithm,
+                client,
+                use_stored,
+                cached_results,
+            )
+        return _hash_s3_file(
+            bucket,
+            key,
+            effective_algorithm,
+            client,
+            use_stored,
+            cached_results,
+        )
     else:
         if os.path.isdir(path):
             return _hash_local_dir(path, effective_algorithm)

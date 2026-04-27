@@ -2,9 +2,18 @@
 
 import warnings
 
-from catalog_client.models.asset import DataAssetRequest, StoragePlatform
+import boto3
+
+from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksum.algorithms import Algorithm
-from catalog_client.utils.checksum_generator import checksum
+from catalog_client.utils.checksum.models import ChecksumResult
+from catalog_client.utils.checksum_generator import (
+    _fetch_all_s3_stored_checksums,
+    _find_common_algorithm_in_folder,
+    _parse_s3_uri,
+    _select_best_algorithm,
+    checksum,
+)
 
 
 class ChecksumWarning(UserWarning):
@@ -46,11 +55,17 @@ def generate_for_assets(
     """Generate checksums for assets on supported storage platforms.
 
     Args:
-        assets: List of assets to process
-        algorithm: Checksum algorithm. If None, defaults to blake3 except for S3 where existing CRC32 is preferred.
-        compute_if_no_s3_checksum: If True, compute checksum by downloading S3 objects
-                                  when no existing S3 checksum is available. If False,
-                                  skip S3 objects without existing checksums.
+        assets: List of assets to process.
+        algorithm: Checksum algorithm. If None, the system will:
+            - For S3 files: detect the stored checksum algorithm (preferring
+              computed/metadata over native, by priority).
+            - For S3 folders: find the best algorithm shared by ALL children
+              (set intersection, preferring computed over native).
+            - Fall back to blake3 if no stored checksum is found.
+        compute_if_no_s3_checksum: If True (default), compute checksum by
+            downloading S3 objects when no stored checksum exists. If False,
+            skip S3 objects without stored checksums. This flag only affects
+            S3 assets; non-S3 assets always proceed to computation.
 
     Returns:
         New list with checksums populated for supported assets.
@@ -62,33 +77,84 @@ def generate_for_assets(
         return []
 
     result = []
+    cached_results: dict[str, ChecksumResult] = {}
+    s3_client = None
+
     for asset in assets:
-        # Create copy to avoid modifying original
         asset_copy = DataAssetRequest(**asset.model_dump())
 
-        # Skip if already has checksum
         if asset_copy.checksum is not None:
             result.append(asset_copy)
             continue
 
         platform = _determine_platform(asset_copy)
-        print(platform)
 
         if platform is None:
             warnings.warn(
-                f"Storage platform for '{asset_copy.location_uri}' not supported for checksum generation",
+                f"Storage platform for '{asset_copy.location_uri}' "
+                f"not supported for checksum generation",
                 ChecksumWarning,
                 stacklevel=2,
             )
             result.append(asset_copy)
             continue
 
+        is_s3 = platform == StoragePlatform.s3
+        detected_algorithm = algorithm
+        has_cached_result = False
+
         try:
-            path = asset_copy.location_uri
-            hash_result = checksum(
-                path, algorithm=algorithm, use_stored=compute_if_no_s3_checksum
-            )
-            print(hash_result)
+            # ── DETECTION PHASE (S3 only, algorithm=None) ──────────────
+            if algorithm is None and is_s3:
+                if s3_client is None:
+                    s3_client = boto3.client("s3")
+
+                if asset_copy.asset_type == AssetType.file:
+                    bucket, key = _parse_s3_uri(asset_copy.location_uri)
+                    all_checksums = _fetch_all_s3_stored_checksums(
+                        bucket, key, s3_client
+                    )
+                    if all_checksums:
+                        detected_algorithm = _select_best_algorithm(
+                            set(all_checksums.keys())
+                        )
+                        cached_results[asset_copy.location_uri] = all_checksums[
+                            detected_algorithm
+                        ]
+                        has_cached_result = True
+
+                elif asset_copy.asset_type == AssetType.folder:
+                    detected_algorithm, per_child_all = (
+                        _find_common_algorithm_in_folder(
+                            asset_copy.location_uri, s3_client
+                        )
+                    )
+                    if detected_algorithm is not None:
+                        for child_path, child_algos in per_child_all.items():
+                            cached_results[child_path] = child_algos[detected_algorithm]
+
+            # ── COMPUTE PHASE ──────────────────────────────────────────
+            if has_cached_result:
+                hash_result = cached_results[asset_copy.location_uri]
+
+            else:
+                # Gate S3 assets by compute_if_no_s3_checksum flag
+                if is_s3 and not compute_if_no_s3_checksum:
+                    result.append(asset_copy)
+                    continue
+
+                effective_algorithm = detected_algorithm or "blake3"
+
+                if is_s3 and s3_client is None:
+                    s3_client = boto3.client("s3")
+
+                hash_result = checksum(
+                    asset_copy.location_uri,
+                    algorithm=effective_algorithm,
+                    s3_client=s3_client,
+                    use_stored=False,
+                    cached_results=cached_results,
+                )
 
             if hash_result is not None:
                 asset_copy.checksum = (
