@@ -381,7 +381,7 @@ def _hash_s3_prefix(
 
 def checksum(
     path: str,
-    algorithm: Algorithm = "blake3",
+    algorithm: Algorithm = None,
     s3_client=None,
     use_stored: bool = True,
 ) -> ChecksumResult:
@@ -410,13 +410,14 @@ def checksum(
             chunks               — per-chunk manifest (files only, when computed)
             children             — per-child results (directories only)
     """
+    effective_algorithm = algorithm or "blake3"
     if path.startswith("s3://"):
         client = s3_client or boto3.client("s3")
         bucket, key = _parse_s3_uri(path)
         if path.endswith("/") or not key:
-            return _hash_s3_prefix(bucket, key, algorithm, client, use_stored)
-        return _hash_s3_file(bucket, key, algorithm, client, use_stored)
+            return _hash_s3_prefix(bucket, key, effective_algorithm, client, use_stored)
+        return _hash_s3_file(bucket, key, effective_algorithm, client, use_stored)
     else:
         if os.path.isdir(path):
-            return _hash_local_dir(path, algorithm)
-        return _hash_local_file(path, algorithm)
+            return _hash_local_dir(path, effective_algorithm)
+        return _hash_local_file(path, effective_algorithm)
