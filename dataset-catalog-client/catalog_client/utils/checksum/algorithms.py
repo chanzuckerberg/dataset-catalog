@@ -22,13 +22,15 @@ CRYPTO_ALGORITHMS = {"blake3", "blake2b"}
 
 @runtime_checkable
 class _Hasher(Protocol):
-    def update(self, data: bytes) -> None: ...
-    def hexdigest(self) -> str: ...
-    def raw(
-        self,
-    ) -> (
-        bytes
-    ): ...  # returns the digest as raw bytes for use when combining chunk digests.
+    def update(self, data: bytes) -> None:
+        pass
+
+    def hexdigest(self) -> str:
+        pass
+
+    def raw(self) -> bytes:
+        """Returns the digest as raw bytes for use when combining chunk digests."""
+        pass
 
 
 class _CryptoHasher:
