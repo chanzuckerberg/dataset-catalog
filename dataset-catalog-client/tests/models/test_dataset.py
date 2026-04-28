@@ -1,3 +1,5 @@
+from typing import Any
+
 from catalog_client.models.asset import AssetType, DataAssetRequest
 from catalog_client.models.dataset import (
     DatasetCreate,
@@ -10,7 +12,7 @@ from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.metadata import DatasetMetadata
 
 
-def _minimal_create(**kwargs) -> DatasetCreate:
+def _minimal_create(**kwargs: Any) -> DatasetCreate:
     defaults = dict(
         canonical_id="ds-001",
         name="Test Dataset",
@@ -24,7 +26,7 @@ def _minimal_create(**kwargs) -> DatasetCreate:
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
-    return DatasetCreate(**defaults)
+    return DatasetCreate(**defaults)  # type: ignore
 
 
 def test_dataset_ref_is_named_tuple():

@@ -180,7 +180,7 @@ class _ChecksumBackend:
 
     def _compute_s3_checksum(
         self, uri: str, algorithm: str | None, compute_if_no_s3_checksum: bool = True
-    ) -> tuple[str, str]:
+    ) -> tuple[str | None, str | None]:
         """Compute checksum for S3 object with CRC32 optimization.
 
         When algorithm is None, attempts to use existing S3 CRC32 checksum.
@@ -189,8 +189,7 @@ class _ChecksumBackend:
         Args:
             uri: S3 URI (s3://bucket/key)
             algorithm: Hash algorithm or None for CRC32 optimization
-            compute_if_no_s3_checksum: If False, raise exception when no existing
-                                      S3 checksum is found instead of downloading
+            compute_if_no_s3_checksum: If False, does not compute S3 checksum is not found
 
         Returns:
             Tuple of (checksum_value, checksum_alg) or (None, None) if

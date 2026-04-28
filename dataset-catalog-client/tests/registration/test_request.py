@@ -22,7 +22,7 @@ def _minimal_request(**kwargs) -> RegistrationRequest:
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
-    return RegistrationRequest(**defaults)
+    return RegistrationRequest(**defaults)  # type: ignore
 
 
 def test_registration_request_required_fields():

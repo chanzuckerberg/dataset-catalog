@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: dataset-catalog-client
@@ -19,10 +22,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Run ruff check
-        run: uv run --group dev ruff check .
-      - name: Run ruff format check
-        run: uv run --group dev ruff format --check .
+      - name: Install pre-commit
+        run: uv tool install pre-commit
+      - name: Run pre-commit
+        run: uv tool run pre-commit run --all-files
 
   test:
     name: Test
