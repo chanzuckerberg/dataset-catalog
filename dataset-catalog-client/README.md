@@ -15,6 +15,10 @@ pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirect
 ```bash
 pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client[dev]'
 ```
+#### With uv and via ssh (for example, exec'd onto HPC)
+```bash
+ uv pip install 'git+ssh://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+```
 
 #### For CI/CD Pipelines
 When installing in automated pipelines, you'll need GitHub authentication. Set up a GitHub token with repository access:

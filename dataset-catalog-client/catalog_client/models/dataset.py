@@ -52,7 +52,6 @@ class DatasetRequest(BaseModel):
         description="Version string for the dataset (defaults to '1.0.0')",
     )
     project: str | None = Field(
-        default=None,
         description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
@@ -80,7 +79,7 @@ class DatasetRequest(BaseModel):
         default=None, description="Whether dataset is raw or processed"
     )
     is_latest: bool = Field(
-        default=False, description="Whether this is the latest version of the dataset"
+        default=True, description="Whether this is the latest version of the dataset"
     )
     metadata_schema: str | None = Field(
         default=None, description="Schema version used for the metadata structure"
