@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 
-from catalog_client import DatasetRequest
 from catalog_client._context import reset_client, set_client
 from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
@@ -15,7 +14,7 @@ from catalog_client.exceptions import (
     LineageResolutionError,
     NotFoundError,
 )
-from catalog_client.models.dataset import DatasetModality, DatasetRef
+from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetRequest
 from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
 from catalog_client.registration.request import RegistrationRequest
