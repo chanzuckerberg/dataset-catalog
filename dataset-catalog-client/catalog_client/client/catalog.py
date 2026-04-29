@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import httpx
 
+from catalog_client import DatasetRequest
 from catalog_client._context import reset_client, set_client
-from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
+from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
 from catalog_client.exceptions import (
@@ -14,11 +15,7 @@ from catalog_client.exceptions import (
     LineageResolutionError,
     NotFoundError,
 )
-from catalog_client.models.dataset import (
-    DatasetModality,
-    DatasetRef,
-    DatasetRequest,
-)
+from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
 from catalog_client.registration.request import RegistrationRequest
@@ -112,10 +109,7 @@ class CatalogClient:
         self.close()
 
     def _create_or_update(
-        self,
-        dataset: DatasetRequest,
-        update_if_exists: bool,
-        error_on_duplicate: bool,
+        self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
     ) -> str:
         """Create a new dataset or update existing one based on parameters."""
         # Validate mutually exclusive parameters

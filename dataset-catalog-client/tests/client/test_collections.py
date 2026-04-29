@@ -3,7 +3,7 @@ import re
 import httpx
 from pytest_httpx import HTTPXMock
 
-from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
+from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.models.collection import (
     CollectionRequest,
 )

@@ -76,15 +76,18 @@ class DatasetClient(_SyncBase):
         )
 
     def _resolve(self, ref: DatasetRef) -> str:
-        results = self.list(
-            canonical_id=ref.canonical_id, project=ref.project, limit=1000
+        response = self.list(
+            canonical_id=ref.canonical_id,
+            project=ref.project,
+            version=ref.version,
+            limit=10,
         )
-        matches = [d for d in results.results if d.version == ref.version]
-        if len(matches) == 0:
+        result = response.results
+        if len(result) == 0:
             raise NotFoundError(404, f"No dataset found for {ref}")
-        if len(matches) > 1:
+        if len(result) > 1:
             raise NotFoundError(404, f"Multiple datasets found for {ref}")
-        return matches[0].id
+        return result[0].id
 
     def get(
         self,
