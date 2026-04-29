@@ -3,9 +3,9 @@ import re
 import httpx
 from pytest_httpx import HTTPXMock
 
-from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
+from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.models.collection import (
-    CollectionCreate,
+    CollectionRequest,
 )
 from catalog_client.models.pagination import PaginatedResponse
 
@@ -59,7 +59,7 @@ def test_create_collection(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         url=COLLECTIONS_URL, status_code=201, json=COLLECTION_RESPONSE
     )
-    coll = CollectionCreate(
+    coll = CollectionRequest(
         canonical_id="col-001",
         version="1.0.0",
         name="My Collection",

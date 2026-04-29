@@ -5,7 +5,7 @@ from pytest_httpx import HTTPXMock
 
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
 from catalog_client.models.lineage import (
-    LineageEdgeCreate,
+    LineageEdgeRequest,
     LineageType,
 )
 from catalog_client.models.pagination import PaginatedResponse
@@ -55,7 +55,7 @@ def test_get_lineage_edge(httpx_mock: HTTPXMock):
 
 def test_create_lineage_edge(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=LINEAGE_URL, status_code=201, json=EDGE_RESPONSE)
-    edge = LineageEdgeCreate(
+    edge = LineageEdgeRequest(
         source_dataset_id="src-uuid",
         destination_dataset_id="dst-uuid",
         lineage_type=LineageType.transformed_from,

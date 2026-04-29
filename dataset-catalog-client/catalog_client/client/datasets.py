@@ -5,9 +5,9 @@ from __future__ import annotations
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import NotFoundError
 from catalog_client.models.dataset import (
-    DatasetCreate,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetResponse,
     DatasetWithRelationsResponse,
 )
@@ -76,15 +76,18 @@ class DatasetClient(_SyncBase):
         )
 
     def _resolve(self, ref: DatasetRef) -> str:
-        results = self.list(
-            canonical_id=ref.canonical_id, project=ref.project, limit=1000
+        response = self.list(
+            canonical_id=ref.canonical_id,
+            project=ref.project,
+            version=ref.version,
+            limit=10,
         )
-        matches = [d for d in results.results if d.version == ref.version]
-        if len(matches) == 0:
+        result = response.results
+        if len(result) == 0:
             raise NotFoundError(404, f"No dataset found for {ref}")
-        if len(matches) > 1:
+        if len(result) > 1:
             raise NotFoundError(404, f"Multiple datasets found for {ref}")
-        return matches[0].id
+        return result[0].id
 
     def get(
         self,
@@ -102,11 +105,11 @@ class DatasetClient(_SyncBase):
         response = self._get(f"{_PREFIX}/{dataset_id}", params=params)
         return DatasetWithRelationsResponse.model_validate(response.json())
 
-    def create(self, dataset: DatasetCreate) -> DatasetResponse:
+    def create(self, dataset: DatasetRequest) -> DatasetResponse:
         response = self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
-    def update(self, ref: str | DatasetRef, dataset: DatasetCreate) -> DatasetResponse:
+    def update(self, ref: str | DatasetRef, dataset: DatasetRequest) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
         response = self._patch(
             f"{_PREFIX}/{dataset_id}",
@@ -176,12 +179,12 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._get(f"{_PREFIX}/{dataset_id}", params=params)
         return DatasetWithRelationsResponse.model_validate(response.json())
 
-    async def create(self, dataset: DatasetCreate) -> DatasetResponse:
+    async def create(self, dataset: DatasetRequest) -> DatasetResponse:
         response = await self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
         return DatasetResponse.model_validate(response.json())
 
     async def update(
-        self, ref: str | DatasetRef, dataset: DatasetCreate
+        self, ref: str | DatasetRef, dataset: DatasetRequest
     ) -> DatasetResponse:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
         response = await self._patch(

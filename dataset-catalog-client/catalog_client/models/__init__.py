@@ -5,22 +5,22 @@ from catalog_client.models.asset import (
     StoragePlatform,
 )
 from catalog_client.models.collection import (
-    CollectionCreate,
+    CollectionRequest,
     CollectionResponse,
     CollectionType,
-    CollectionUpdate,
 )
 from catalog_client.models.dataset import (
     DatasetCreate,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetResponse,
     DatasetType,
     DatasetWithRelationsResponse,
 )
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import (
-    LineageEdgeCreate,
+    LineageEdgeRequest,
     LineageEdgeResponse,
     LineageType,
 )
@@ -37,10 +37,9 @@ from catalog_client.models.quality import DataQualityChecks
 
 __all__ = [
     "AssetType",
-    "CollectionCreate",
+    "CollectionRequest",
     "CollectionResponse",
     "CollectionType",
-    "CollectionUpdate",
     "DataAssetRequest",
     "DataAssetResponse",
     "DataQualityChecks",
@@ -49,12 +48,13 @@ __all__ = [
     "DatasetMetadata",
     "DatasetModality",
     "DatasetRef",
+    "DatasetRequest",
     "DatasetResponse",
     "DatasetType",
     "DatasetWithRelationsResponse",
     "ExperimentMetadata",
     "GovernanceMetadata",
-    "LineageEdgeCreate",
+    "LineageEdgeRequest",
     "LineageEdgeResponse",
     "LineageType",
     "OntologyEntry",

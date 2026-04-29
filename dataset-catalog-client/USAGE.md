@@ -32,35 +32,38 @@ An async variant is also available — see [Async usage](#async-usage).
 
 ### Create a dataset
 
-`DatasetCreate` requires `canonical_id`, `name`, `modality`, `locations` (≥ 1 asset),
+`DatasetRequest` requires `canonical_id`, `name`, `version`, `project`, `modality`, `locations` (≥ 1 asset),
 `governance`, and `metadata`. Everything else is optional.
 
 ```python
 from catalog_client import (
     CatalogClient,
-    DatasetCreate,
+    DatasetRequest,
     DatasetModality,
     DataAssetRequest,
     AssetType,
     GovernanceMetadata,
     DatasetMetadata,
+    StoragePlatform,
 )
 
 with CatalogClient(base_url="...", api_token="...") as client:
-    dataset = client.datasets.create(DatasetCreate(
+    dataset = client.datasets.create(DatasetRequest(
         canonical_id="my-rna-seq-dataset",
         name="RNA-seq batch 42",
         version="1.0.0",
+        project="SHRIMP",
         modality=DatasetModality.sequencing,
         locations=[
             DataAssetRequest(
                 location_uri="s3://my-bucket/rna-seq/batch42/",
                 asset_type=AssetType.folder,
+                storage_platform=StoragePlatform.s3
             )
         ],
         governance=GovernanceMetadata(
             data_owner="genomics-team",
-            data_sensitivity="internal",
+            access_scope="internal",
             is_pii=False,
         ),
         metadata=DatasetMetadata(),
@@ -119,6 +122,40 @@ To record lineage at registration time:
         .submit()
     )
 ```
+
+You can also pass a `DatasetRef` instead of a UUID — it will be resolved at submission time:
+
+```python
+from catalog_client import DatasetRef
+
+dataset_id = (
+    client.new_registration(...)
+    .with_location(...)
+    .with_governance(data_owner="genomics-team", is_pii=False)
+    .with_lineage(
+        DatasetRef(canonical_id="raw-rna-seq", version="1.0.0", project="atlas"),
+        lineage_type=LineageType.transformed_from,
+    )
+    .submit()
+)
+```
+
+### Additional builder methods
+
+The builder exposes further optional methods:
+
+| Method | Description |
+|--------|-------------|
+| `.described(text)` | Set a free-text description |
+| `.as_latest(bool)` | Mark as the latest version (default `True`) |
+| `.of_type(DatasetType)` | Set `dataset_type` to `raw` or `processed` |
+| `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
+| `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
+| `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
+| `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed, failed, skipped check names) |
+| `.with_custom_metadata(**kwargs)` | Add arbitrary key-value pairs at the dataset-metadata level |
+| `.with_lineage(source, lineage_type=…)` | Record a lineage edge (UUID string or `DatasetRef`) |
+| `.build()` | Return the `RegistrationRequest` without submitting |
 
 ### Handling duplicate datasets
 
@@ -204,12 +241,15 @@ PATCH applies only the fields you set (`exclude_unset=True`). Changing `canonica
 `version`, or `project` tombstones the existing record and creates a new one.
 
 ```python
+from catalog_client import DatasetRequest
+
 updated = client.datasets.update(
     "dataset-uuid",
-    DatasetCreate(
+    DatasetRequest(
         canonical_id="my-rna-seq-dataset",
         name="RNA-seq batch 42 (revised)",
         version="1.0.1",
+        project="atlas",
         modality=DatasetModality.sequencing,
         locations=[...],
         governance=GovernanceMetadata(...),
@@ -234,9 +274,9 @@ Collections are flat, mutable groupings of datasets (e.g. for a publication or t
 ### Create / update / delete
 
 ```python
-from catalog_client import CollectionCreate, CollectionUpdate, CollectionType
+from catalog_client import CollectionRequest, CollectionType
 
-col = client.collections.create(CollectionCreate(
+col = client.collections.create(CollectionRequest(
     canonical_id="my-publication-collection",
     version="1.0.0",
     name="Nature Paper 2025 datasets",
@@ -245,7 +285,14 @@ col = client.collections.create(CollectionCreate(
     description="All datasets used in doi:10.1234/example",
 ))
 
-updated = client.collections.update(col.id, CollectionUpdate(name="Nature Paper 2025 (final)"))
+updated = client.collections.update(col.id, CollectionRequest(
+    canonical_id="my-publication-collection",
+    version="1.0.0",
+    name="Nature Paper 2025 datasets(final)",
+    collection_owner="data-team",
+    collection_type=CollectionType.publication,
+    description="All datasets used in doi:10.1234/example",
+))
 
 client.collections.delete(col.id)  # soft-delete, status 204
 ```
@@ -284,9 +331,9 @@ tombstone an edge recorded in error.
 ### Create an edge
 
 ```python
-from catalog_client import LineageEdgeCreate, LineageType
+from catalog_client import LineageEdgeRequest, LineageType
 
-edge = client.lineages.create(LineageEdgeCreate(
+edge = client.lineages.create(LineageEdgeRequest(
     source_dataset_id="source-uuid",
     destination_dataset_id="derived-uuid",
     lineage_type=LineageType.transformed_from,
@@ -313,12 +360,14 @@ client.lineages.delete("edge-uuid")  # soft-delete, status 204
 
 ## Checksum Generation
 
+> **Alpha feature:** The checksum generation utilities are experimental and subject to change. APIs and behavior may evolve in future releases without a deprecation cycle.
+
 The client provides utilities to automatically generate checksums for dataset assets on supported storage platforms.
 
 ### Basic usage
 
 ```python
-from catalog_client import DataAssetRequest, AssetType
+from catalog_client import DataAssetRequest, AssetType, DatasetRequest, DatasetModality, GovernanceMetadata, DatasetMetadata
 from catalog_client.utils.checksums import generate_for_assets
 
 # Create assets without checksums
@@ -337,9 +386,11 @@ assets = [
 assets_with_checksums = generate_for_assets(assets)
 
 # Use in dataset creation
-dataset = client.datasets.create(DatasetCreate(
+dataset = client.datasets.create(DatasetRequest(
     canonical_id="my-dataset",
     name="My Dataset",
+    version="1.0.0",
+    project="atlas",
     modality=DatasetModality.sequencing,
     locations=assets_with_checksums,  # Now includes checksums
     governance=GovernanceMetadata(...),
@@ -427,12 +478,14 @@ asyncio.run(main())
 ```python
 from catalog_client import (
     AuthenticationError,
-    DuplicateDatasetError,
-    NotFoundError,
-    ValidationError,
+    CatalogHTTPError,
     CatalogServerError,
     CatalogConnectionError,
     CatalogError,
+    DuplicateDatasetError,
+    LineageResolutionError,
+    NotFoundError,
+    ValidationError,
 )
 
 try:
@@ -445,6 +498,8 @@ except ValidationError as e:
     print(f"422 – {e.detail}")
 except CatalogServerError as e:
     print(f"Server error {e.status_code}")
+except CatalogHTTPError as e:
+    print(f"Unexpected HTTP error {e.status_code}: {e.detail}")
 except CatalogConnectionError as e:
     print(f"Network error: {e}")
 except CatalogError as e:
@@ -456,31 +511,36 @@ try:
 except DuplicateDatasetError as e:
     print(f"Dataset already exists: {e}")
     # Consider using update_if_exists=True or error_on_duplicate=False
+except LineageResolutionError as e:
+    print(f"Could not resolve source dataset ref: {e}")
 ```
 
 ---
 
 ## Key models reference
 
-| Model | Used for |
-|---|---|
-| `DatasetCreate` | Creating or updating a dataset |
-| `DatasetResponse` | Return value from create / update |
+| Model                          | Used for                                                               |
+|--------------------------------|------------------------------------------------------------------------|
+| `DatasetRequest`               | Creating or updating a dataset                                         |
+| `DatasetCreate`                | **Deprecated** — alias for `DatasetRequest`, will be removed           |
+| `DatasetResponse`              | Return value from create / update                                      |
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
-| `DataAssetRequest` | Asset entry inside `DatasetCreate.locations` |
-| `DataAssetResponse` | Asset entry inside response `locations` |
-| `GovernanceMetadata` | Access control and ownership info |
-| `DatasetMetadata` | Top-level metadata envelope (`experiment`, `sample`, `data_summary`) |
-| `SampleMetadata` | Biological sample information |
-| `ExperimentMetadata` | Experimental setup and instrument info |
-| `DataSummaryMetadata` | Content descriptors and modality-specific measurements |
-| `DataQualityChecks` | QC pass / fail / skipped check names |
-| `CollectionCreate` | Creating a collection |
-| `CollectionUpdate` | Partially updating a collection |
-| `CollectionResponse` | Collection return value |
-| `LineageEdgeCreate` | Creating a lineage edge |
-| `LineageEdgeResponse` | Lineage edge return value |
-| `PaginatedResponse[T]` | Wrapper for list endpoints (`total`, `limit`, `offset`, `results`) |
+| `DataAssetRequest`             | Asset entry inside `DatasetRequest.locations`                          |
+| `DataAssetResponse`            | Asset entry inside response `locations`                                |
+| `GovernanceMetadata`           | Access control and ownership info                                      |
+| `DatasetMetadata`              | Top-level metadata envelope (`experiment`, `sample`, `data_summary`)   |
+| `SampleMetadata`               | Biological sample information                                          |
+| `ExperimentMetadata`           | Experimental setup and instrument info                                 |
+| `DataSummaryMetadata`          | Content descriptors and modality-specific measurements                 |
+| `DataQualityChecks`            | QC pass / fail / skipped check names                                   |
+| `OntologyEntry`                | `{ label, ontology_id }` — organism, disease, development stage        |
+| `TissueEntry`                  | Extends `OntologyEntry` with optional `type` field                     |
+| `CollectionRequest`            | Creating/Updating a collection                                         |
+| `CollectionResponse`           | Collection return value                                                |
+| `LineageEdgeRequest`           | Creating a lineage edge                                                |
+| `LineageEdgeResponse`          | Lineage edge return value                                              |
+| `RegistrationRequest`          | Full registration payload (built via `new_registration()` builder)     |
+| `PaginatedResponse[T]`         | Wrapper for list endpoints (`total`, `limit`, `offset`, `results`)     |
 
 ### Enums
 

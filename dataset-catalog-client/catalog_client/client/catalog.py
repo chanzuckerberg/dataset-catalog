@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 
 from catalog_client._context import reset_client, set_client
-from catalog_client.client.collections import AsyncCollectionClient, CollectionClient
+from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
 from catalog_client.exceptions import (
@@ -14,8 +14,8 @@ from catalog_client.exceptions import (
     LineageResolutionError,
     NotFoundError,
 )
-from catalog_client.models.dataset import DatasetCreate, DatasetModality, DatasetRef
-from catalog_client.models.lineage import LineageEdgeCreate
+from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetRequest
+from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
 from catalog_client.registration.request import RegistrationRequest
 
@@ -47,7 +47,7 @@ class CatalogClient:
         error_on_duplicate: bool = True,
     ) -> str:
         """Register a dataset and any lineage edges. Returns the dataset_id."""
-        dataset = request.to_dataset_create()
+        dataset = request.to_dataset_request()
         dataset_id = self._create_or_update(
             dataset, update_if_exists, error_on_duplicate
         )
@@ -61,7 +61,7 @@ class CatalogClient:
                 continue
 
             self.lineages.create(
-                LineageEdgeCreate(
+                LineageEdgeRequest(
                     source_dataset_id=source_id,
                     destination_dataset_id=dataset_id,
                     lineage_type=spec.lineage_type,
@@ -108,7 +108,7 @@ class CatalogClient:
         self.close()
 
     def _create_or_update(
-        self, dataset: DatasetCreate, update_if_exists: bool, error_on_duplicate: bool
+        self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
     ) -> str:
         """Create a new dataset or update existing one based on parameters."""
         # Validate mutually exclusive parameters
@@ -176,7 +176,7 @@ class AsyncCatalogClient:
 
     async def register(self, request: RegistrationRequest) -> str:
         """Register a new dataset and any lineage edges. Returns the new dataset_id."""
-        dataset = request.to_dataset_create()
+        dataset = request.to_dataset_request()
         response = await self.datasets.create(dataset)
         dataset_id = response.id
 
@@ -189,7 +189,7 @@ class AsyncCatalogClient:
                 continue
 
             await self.lineages.create(
-                LineageEdgeCreate(
+                LineageEdgeRequest(
                     source_dataset_id=source_id,
                     destination_dataset_id=dataset_id,
                     lineage_type=spec.lineage_type,
