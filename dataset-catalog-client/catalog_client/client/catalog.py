@@ -15,7 +15,6 @@ from catalog_client.exceptions import (
     NotFoundError,
 )
 from catalog_client.models.dataset import (
-    DatasetCreate,
     DatasetModality,
     DatasetRef,
     DatasetRequest,
@@ -52,7 +51,7 @@ class CatalogClient:
         error_on_duplicate: bool = True,
     ) -> str:
         """Register a dataset and any lineage edges. Returns the dataset_id."""
-        dataset = request.to_dataset_create()
+        dataset = request.to_dataset_request()
         dataset_id = self._create_or_update(
             dataset, update_if_exists, error_on_duplicate
         )
@@ -114,7 +113,7 @@ class CatalogClient:
 
     def _create_or_update(
         self,
-        dataset: DatasetRequest | DatasetCreate,
+        dataset: DatasetRequest,
         update_if_exists: bool,
         error_on_duplicate: bool,
     ) -> str:
@@ -184,7 +183,7 @@ class AsyncCatalogClient:
 
     async def register(self, request: RegistrationRequest) -> str:
         """Register a new dataset and any lineage edges. Returns the new dataset_id."""
-        dataset = request.to_dataset_create()
+        dataset = request.to_dataset_request()
         response = await self.datasets.create(dataset)
         dataset_id = response.id
 

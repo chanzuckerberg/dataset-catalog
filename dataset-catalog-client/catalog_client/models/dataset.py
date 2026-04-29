@@ -42,7 +42,9 @@ class DatasetRef(NamedTuple):
         return f"DatasetRef<canonical_id={self.canonical_id},version={self.version},project={self.project}>"
 
 
-class DatasetRequest(BaseModel):
+class _DatasetBase(BaseModel):
+    """Shared fields between DatasetRequest and DatasetResponse."""
+
     canonical_id: str = Field(
         description="Unique identifier for the dataset across versions in a project"
     )
@@ -51,14 +53,11 @@ class DatasetRequest(BaseModel):
         default="1.0.0",
         description="Version string for the dataset (defaults to '1.0.0')",
     )
-    project: str | None = Field(
+    project: str = Field(
         description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
         description="Data modality (imaging, sequencing, mass spec, or unknown)"
-    )
-    locations: list[DataAssetRequest] = Field(
-        min_length=1, description="List of data assets that comprise this dataset"
     )
     governance: GovernanceMetadata = Field(
         description="Access control and compliance metadata"
@@ -88,6 +87,12 @@ class DatasetRequest(BaseModel):
         default=None, description="Results of data quality validation checks"
     )
 
+
+class DatasetRequest(_DatasetBase):
+    locations: list[DataAssetRequest] = Field(
+        min_length=1, description="List of data assets that comprise this dataset"
+    )
+
     @field_validator("cross_db_references", mode="before")
     @classmethod
     def convert_cross_db_references_to_string(cls, v):
@@ -110,7 +115,7 @@ class DatasetCreate(DatasetRequest):
         super().__init__(**data)
 
 
-class DatasetResponse(DatasetRequest):
+class DatasetResponse(_DatasetBase):
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     created_at: datetime.datetime = Field(

@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 
 from catalog_client.models.asset import DataAssetRequest
 from catalog_client.models.dataset import (
-    DatasetCreate,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetType,
 )
 from catalog_client.models.governance import GovernanceMetadata
@@ -57,8 +57,8 @@ class RegistrationRequest:
     is_latest: bool = True
     lineage: list[LineageSpec] = field(default_factory=list)
 
-    def to_dataset_create(self):
-        return DatasetCreate(
+    def to_dataset_request(self) -> DatasetRequest:
+        return DatasetRequest(
             canonical_id=self.canonical_id,
             name=self.name,
             version=self.version,

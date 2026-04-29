@@ -38,29 +38,32 @@ An async variant is also available — see [Async usage](#async-usage).
 ```python
 from catalog_client import (
     CatalogClient,
-    DatasetCreate,
+    DatasetRequest,
     DatasetModality,
     DataAssetRequest,
     AssetType,
     GovernanceMetadata,
     DatasetMetadata,
+    StoragePlatform,
 )
 
 with CatalogClient(base_url="...", api_token="...") as client:
-    dataset = client.datasets.create(DatasetCreate(
+    dataset = client.datasets.create(DatasetRequest(
         canonical_id="my-rna-seq-dataset",
         name="RNA-seq batch 42",
         version="1.0.0",
+        project="SHRIMP",
         modality=DatasetModality.sequencing,
         locations=[
             DataAssetRequest(
                 location_uri="s3://my-bucket/rna-seq/batch42/",
                 asset_type=AssetType.folder,
+                storage_platform=StoragePlatform.s3
             )
         ],
         governance=GovernanceMetadata(
             data_owner="genomics-team",
-            data_sensitivity="internal",
+            access_scope="internal",
             is_pii=False,
         ),
         metadata=DatasetMetadata(),

@@ -2,9 +2,9 @@ from typing import Any
 
 from catalog_client.models.asset import AssetType, DataAssetRequest
 from catalog_client.models.dataset import (
-    DatasetCreate,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetResponse,
     DatasetType,
 )
@@ -12,7 +12,7 @@ from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.metadata import DatasetMetadata
 
 
-def _minimal_create(**kwargs: Any) -> DatasetCreate:
+def _minimal_create(**kwargs: Any) -> DatasetRequest:
     defaults = dict(
         canonical_id="ds-001",
         name="Test Dataset",
@@ -26,7 +26,7 @@ def _minimal_create(**kwargs: Any) -> DatasetCreate:
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
-    return DatasetCreate(**defaults)  # type: ignore
+    return DatasetRequest(**defaults)  # type: ignore
 
 
 def test_dataset_ref_is_named_tuple():
@@ -47,7 +47,7 @@ def test_dataset_create_requires_canonical_id():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        DatasetCreate(
+        DatasetRequest(
             name="x",
             version="1.0.0",
             project="p",
@@ -70,7 +70,7 @@ def test_dataset_create_locations_min_length():
 
 def test_dataset_create_is_latest_defaults_false():
     ds = _minimal_create()
-    assert ds.is_latest is False
+    assert ds.is_latest is True
 
 
 def test_dataset_modality_enum():
