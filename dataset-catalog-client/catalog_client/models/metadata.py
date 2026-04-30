@@ -10,9 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 class OntologyEntry(BaseModel):
     """{ label, ontology_id } — used for organism, disease, development_stage."""
 
-    label: str = Field(description="Human-readable name or label for the ontology term")
-    ontology_id: str = Field(
-        description="Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)"
+    label: str | None = Field(
+        default=None, description="Human-readable name or label for the ontology term"
+    )
+    ontology_id: str | None = Field(
+        default=None,
+        description="Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
     )
 
 
