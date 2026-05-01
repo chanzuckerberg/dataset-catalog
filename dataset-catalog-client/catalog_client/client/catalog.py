@@ -128,6 +128,7 @@ class CatalogClient:
             canonical_id=dataset.canonical_id,
             version=dataset.version,
             project=dataset.project,
+            exclude_tombstoned=False,
             limit=10,  # reasonable limit for duplicates check
         )
         existing_datasets = results.results
@@ -146,13 +147,12 @@ class CatalogClient:
                 f"Multiple datasets found ({len(existing_datasets)}) for {dataset_ref!r}"
             )
 
+        existing_dataset = existing_datasets[0]
         if update_if_exists:
-            existing_dataset = existing_datasets[0]
             self.datasets.update(existing_dataset.id, dataset)
             return existing_dataset.id
 
-        # Default: return existing dataset ID without error
-        return existing_datasets[0].id
+        return existing_dataset.id
 
 
 class AsyncCatalogClient:
