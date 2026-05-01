@@ -21,13 +21,21 @@ def _build_list_params(
     version: str | None,
     modality: DatasetModality | None,
     project: str | None,
-    is_latest: bool | None,
+    is_latest: bool,
     include_lineage: bool,
     include_collections: bool,
+    exclude_tombstoned: bool,
     offset: int,
     limit: int,
 ) -> dict:
-    params: dict = {"offset": offset, "limit": limit}
+    params: dict = {
+        "offset": offset,
+        "limit": limit,
+        "include_lineage": include_lineage,
+        "include_collections": include_collections,
+        "exclude_tombstoned": exclude_tombstoned,
+        "is_latest": is_latest,
+    }
     if canonical_id is not None:
         params["canonical_id"] = canonical_id
     if version is not None:
@@ -36,12 +44,6 @@ def _build_list_params(
         params["modality"] = modality.value
     if project is not None:
         params["project"] = project
-    if is_latest is not None:
-        params["is_latest"] = is_latest
-    if include_lineage:
-        params["include_lineage"] = True
-    if include_collections:
-        params["include_collections"] = True
     return params
 
 
@@ -53,9 +55,10 @@ class DatasetClient(_SyncBase):
         version: str | None = None,
         modality: DatasetModality | None = None,
         project: str | None = None,
-        is_latest: bool | None = None,
+        is_latest: bool = True,
         include_lineage: bool = False,
         include_collections: bool = False,
+        exclude_tombstoned: bool = True,
         offset: int = 0,
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
@@ -67,6 +70,7 @@ class DatasetClient(_SyncBase):
             is_latest,
             include_lineage,
             include_collections,
+            exclude_tombstoned,
             offset,
             limit,
         )
@@ -81,6 +85,7 @@ class DatasetClient(_SyncBase):
             project=ref.project,
             version=ref.version,
             limit=10,
+            exclude_tombstoned=False,
         )
         result = response.results
         if len(result) == 0:
@@ -130,9 +135,10 @@ class AsyncDatasetClient(_AsyncBase):
         version: str | None = None,
         modality: DatasetModality | None = None,
         project: str | None = None,
-        is_latest: bool | None = None,
+        is_latest: bool = True,
         include_lineage: bool = False,
         include_collections: bool = False,
+        exclude_tombstoned: bool = True,
         offset: int = 0,
         limit: int = 100,
     ) -> PaginatedResponse[DatasetWithRelationsResponse]:
@@ -144,6 +150,7 @@ class AsyncDatasetClient(_AsyncBase):
             is_latest,
             include_lineage,
             include_collections,
+            exclude_tombstoned,
             offset,
             limit,
         )
