@@ -2,7 +2,14 @@
   "packages": {
     "dataset-catalog-client": {
       "package-name": "catalog-client",
-      "release-type": "python"
+      "release-type": "python",
+      "changelog-sections": [
+        {"type": "feat", "section": "Features"},
+        {"type": "fix", "section": "Bug Fixes"},
+        {"type": "chore", "section": "Miscellaneous", "hidden": false},
+        {"type": "doc", "section": "Documentation", "hidden": false},
+        {"type": "test", "section": "Tests", "hidden": false}
+      ]
     }
   }
 }
