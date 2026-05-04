@@ -72,6 +72,17 @@ class ExperimentMetadata(BaseModel):
     )
 
 
+class ResolutionMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    spatial: dict[str, Any] | None = Field(
+        default=None, description="Spatial resolution information"
+    )
+    temporal: dict[str, Any] | None = Field(
+        default=None, description="Temporal resolution information"
+    )
+
+
 class DataSummaryMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -84,9 +95,9 @@ class DataSummaryMetadata(BaseModel):
     read_confidence: float | None = Field(
         default=None, description="Quality score or confidence measure for reads"
     )
-    resolution: list[int] | None = Field(
+    resolution: ResolutionMetadata | None = Field(
         default=None,
-        description="Resolution values for imaging data (e.g., [x_res, y_res, z_res])",
+        description="Resolution information for imaging data",
     )
     dimension: list[int] | None = Field(
         default=None,

@@ -5,9 +5,12 @@ from catalog_client.models.asset import (
     StoragePlatform,
 )
 from catalog_client.models.collection import (
+    ChildCollectionEntryResponse,
+    CollectionChildType,
     CollectionRequest,
     CollectionResponse,
     CollectionType,
+    DatasetEntryResponse,
 )
 from catalog_client.models.dataset import (
     DatasetCreate,
@@ -29,6 +32,7 @@ from catalog_client.models.metadata import (
     DataSummaryMetadata,
     ExperimentMetadata,
     OntologyEntry,
+    ResolutionMetadata,
     SampleMetadata,
     TissueEntry,
 )
@@ -37,9 +41,12 @@ from catalog_client.models.quality import DataQualityChecks
 
 __all__ = [
     "AssetType",
+    "ChildCollectionEntryResponse",
+    "CollectionChildType",
     "CollectionRequest",
     "CollectionResponse",
     "CollectionType",
+    "DatasetEntryResponse",
     "DataAssetRequest",
     "DataAssetResponse",
     "DataQualityChecks",
@@ -59,6 +66,7 @@ __all__ = [
     "LineageType",
     "OntologyEntry",
     "PaginatedResponse",
+    "ResolutionMetadata",
     "SampleMetadata",
     "StoragePlatform",
     "TissueEntry",

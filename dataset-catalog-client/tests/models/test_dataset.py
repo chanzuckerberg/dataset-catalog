@@ -106,7 +106,7 @@ def test_dataset_response_parses_json():
         "doi": None,
         "cross_db_references": None,
         "is_latest": False,
-        "record_schema_version": None,
+        "record_schema_version": "v1.1.0",
         "metadata_schema": None,
     }
     ds = DatasetResponse.model_validate(data)
