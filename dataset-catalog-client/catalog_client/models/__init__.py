@@ -28,9 +28,15 @@ from catalog_client.models.lineage import (
     LineageType,
 )
 from catalog_client.models.metadata import (
+    BiologicalAnnotation,
+    ChannelMetadata,
+    ChannelNormalization,
+    ChannelType,
     DatasetMetadata,
     DataSummaryMetadata,
     ExperimentMetadata,
+    IntensityStatistics,
+    MarkerType,
     OntologyEntry,
     ResolutionMetadata,
     SampleMetadata,
@@ -41,6 +47,10 @@ from catalog_client.models.quality import DataQualityChecks
 
 __all__ = [
     "AssetType",
+    "BiologicalAnnotation",
+    "ChannelMetadata",
+    "ChannelNormalization",
+    "ChannelType",
     "ChildCollectionEntryResponse",
     "CollectionChildType",
     "CollectionRequest",
@@ -61,6 +71,8 @@ __all__ = [
     "DatasetWithRelationsResponse",
     "ExperimentMetadata",
     "GovernanceMetadata",
+    "IntensityStatistics",
+    "MarkerType",
     "LineageEdgeRequest",
     "LineageEdgeResponse",
     "LineageType",

@@ -81,7 +81,7 @@ class _DatasetBase(BaseModel):
         default=True, description="Whether this is the latest version of the dataset"
     )
     record_schema_version: str | None = Field(
-        default="v1.1.0",
+        default="v1.3.0",
         description="Version of the record schema used for this dataset",
     )
     metadata_schema: str | None = Field(

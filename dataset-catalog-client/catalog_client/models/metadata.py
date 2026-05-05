@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -83,9 +84,66 @@ class ResolutionMetadata(BaseModel):
     )
 
 
+class ChannelType(str, enum.Enum):
+    fluorescence = "fluorescence"
+    chromogenic = "chromogenic"
+    labelfree = "labelfree"
+    predicted = "predicted"
+
+
+class MarkerType(str, enum.Enum):
+    endogenous_tag = "endogenous_tag"
+    live_cell_dye = "live_cell_dye"
+    fixed_dye = "fixed_dye"
+    antibody = "antibody"
+
+
+class BiologicalAnnotation(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    biological_target: str | None = Field(default=None)
+    marker_type: MarkerType | None = Field(default=None)
+    marker: str | None = Field(default=None)
+    cpg_labeled_structure: str | None = Field(default=None)
+    cpg_labeled_molecule: str | None = Field(default=None)
+
+
+class ChannelMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    name: str | None = Field(default=None)
+    index: int | None = Field(default=None)
+    description: str | None = Field(default=None)
+    channel_type: ChannelType | None = Field(default=None)
+    biological_annotation: BiologicalAnnotation | None = Field(default=None)
+
+
+class IntensityStatistics(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    p1: float | None = Field(default=None)
+    p5: float | None = Field(default=None)
+    p95: float | None = Field(default=None)
+    p99: float | None = Field(default=None)
+    p95_p5: float | None = Field(default=None)
+    p99_p1: float | None = Field(default=None)
+    mean: float | None = Field(default=None)
+    std: float | None = Field(default=None)
+    median: float | None = Field(default=None)
+    iqr: float | None = Field(default=None)
+
+
+class ChannelNormalization(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    dataset_statistics: IntensityStatistics | None = Field(default=None)
+    timepoint_statistics: dict[str, IntensityStatistics] | None = Field(default=None)
+
+
 class DataSummaryMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    cell_count: int | None = Field(default=None)
     read_count: int | None = Field(
         default=None, description="Number of reads or sequences (for sequencing data)"
     )
@@ -103,15 +161,17 @@ class DataSummaryMetadata(BaseModel):
         default=None,
         description="Dimensional measurements (e.g., [width, height, depth])",
     )
-    channels: dict[str, Any] | None = Field(
-        default=None, description="Channel information for multi-channel imaging data"
-    )
     well: str | None = Field(
         default=None, description="Well identifier for plate-based experiments"
     )
     fov: str | None = Field(
         default=None, description="Field of view identifier for imaging experiments"
     )
+    channels: list[ChannelMetadata] | None = Field(
+        default=None, description="Channel information for multi-channel imaging data"
+    )
+    channel_normalization: ChannelNormalization | None = Field(default=None)
+    dca_schema_version: str | None = Field(default=None)
 
 
 class DatasetMetadata(BaseModel):
