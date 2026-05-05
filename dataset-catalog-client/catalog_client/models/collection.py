@@ -58,9 +58,6 @@ class CollectionResponse(CollectionRequest):
     last_modified_at: datetime.datetime = Field(
         description="Timestamp when the collection was last updated"
     )
-    collection_metadata: dict[str, Any] | None = Field(
-        default=None, description="Additional metadata as key-value pairs"
-    )
 
 
 class DatasetEntryResponse(BaseModel):
