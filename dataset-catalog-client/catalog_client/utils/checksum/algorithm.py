@@ -1,10 +1,18 @@
 import hashlib
 import struct
 import zlib
-from typing import Literal, Protocol, runtime_checkable
+from enum import StrEnum
+from typing import Protocol, runtime_checkable
 
-import blake3
 import crcmod
+
+try:  # Optional: blake3 must be installed separately
+    import blake3 as _blake3
+
+    _HAS_BLAKE3 = True
+except ImportError:
+    _blake3 = None  # type: ignore[assignment]
+    _HAS_BLAKE3 = False
 
 try:  # Optional: awscrt is only needed for crc64nvme
     from awscrt.checksums import crc64nvme as _awscrt_crc64nvme
@@ -14,10 +22,16 @@ except ImportError:
     _HAS_AWSCRT = False
 
 
-Algorithm = Literal["blake3", "blake2b", "crc32", "crc64", "crc64nvme"]
+class Algorithm(StrEnum):
+    blake3 = "blake3"
+    blake2b = "blake2b"
+    crc32 = "crc32"
+    crc64 = "crc64"
+    crc64nvme = "crc64nvme"
 
-CRC_ALGORITHMS = {"crc32", "crc64", "crc64nvme"}
-CRYPTO_ALGORITHMS = {"blake3", "blake2b"}
+
+CRC_ALGORITHMS: set[Algorithm] = {Algorithm.crc32, Algorithm.crc64, Algorithm.crc64nvme}
+CRYPTO_ALGORITHMS: set[Algorithm] = {Algorithm.blake3, Algorithm.blake2b}
 
 
 @runtime_checkable
@@ -109,9 +123,7 @@ class _CRC64NVMEHasher(_CRC64BaseHasher):
 
     def __init__(self) -> None:
         if not _HAS_AWSCRT:
-            raise ImportError(
-                "crc64nvme requires the awscrt package: pip install awscrt"
-            )
+            raise ImportError("crc64nvme requires the awscrt package: pip install awscrt")
         super().__init__()
 
     def update(self, data: bytes) -> None:
@@ -120,9 +132,9 @@ class _CRC64NVMEHasher(_CRC64BaseHasher):
 
 def new_hasher(algorithm: Algorithm) -> _Hasher:
     if algorithm == "blake3":
-        """cryptographic hash; combine chunks via Merkle tree.
-        Spec: https://github.com/BLAKE3-team/BLAKE3-specs/blob/master/blake3.pdf"""
-        return _CryptoHasher(blake3.blake3())
+        if not _HAS_BLAKE3:
+            raise ImportError("blake3 package required: pip install blake3")
+        return _CryptoHasher(_blake3.blake3())  # type: ignore[union-attr]
     elif algorithm == "blake2b":
         """cryptographic hash (RFC 7693); combine chunks via Merkle tree.
         Spec: https://www.rfc-editor.org/rfc/rfc7693"""

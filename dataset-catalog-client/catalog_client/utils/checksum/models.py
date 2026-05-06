@@ -2,7 +2,7 @@ import base64
 from dataclasses import dataclass, field
 from typing import Literal
 
-from catalog_client.utils.checksum.algorithms import Algorithm
+from catalog_client.utils.checksum.algorithm import Algorithm
 
 CHUNK_SIZE = 256 * 1024 * 1024  # 256MB application-level chunks
 ChecksumSource = Literal[
@@ -10,6 +10,15 @@ ChecksumSource = Literal[
     "s3_native",  # read from S3 native checksum (CRC32, CRC64NVME)
     "s3_metadata",  # read from S3 user-defined metadata (blake3, blake2b, crc64)
 ]
+
+
+@dataclass
+class LocationChecksum:
+    value: str | None = None
+    algorithm: Algorithm | None = None
+
+    def __bool__(self) -> bool:
+        return self.value is not None and self.algorithm is not None
 
 
 @dataclass

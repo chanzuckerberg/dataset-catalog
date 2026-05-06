@@ -21,11 +21,11 @@ checksum = [
 ]
 
 [tool.ruff]
+line-length = 120
 exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-ignore = ["E501"]
 
 [dependency-groups]
 
@@ -37,7 +37,15 @@ dev = [
     "pytest-httpx>=0.30.0",
     "ruff>=0.9.0",
     "moto>=4.0.0",
+    "mypy>=2.0.0",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore.*", "crcmod", "crcmod.*", "awscrt.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

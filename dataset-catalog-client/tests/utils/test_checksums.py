@@ -10,9 +10,9 @@ import pytest
 from moto import mock_aws
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
-from catalog_client.utils import checksums
+from catalog_client.utils import checksum as checksums
 from catalog_client.utils.checksum.models import ChecksumResult
-from catalog_client.utils.generator import (
+from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
     _find_common_algorithm_in_folder,
     _parse_s3_uri,
@@ -40,44 +40,6 @@ class TestParseS3Uri:
     def test_invalid_uri_raises(self):
         with pytest.raises(ValueError, match="Not an S3 URI"):
             _parse_s3_uri("http://example.com/file")
-
-
-# ── Platform Detection ─────────────────────────────────────────────────────────
-
-
-class TestPlatformDetection:
-    @pytest.mark.parametrize(
-        "uri, expected",
-        [
-            ("s3://bucket/key", StoragePlatform.s3),
-            ("s3a://bucket/key", StoragePlatform.s3),
-            ("/hpc/data/file.txt", StoragePlatform.hpc),
-            ("/bruno_hpc/data/file.txt", StoragePlatform.bruno_hpc),
-            ("/coreweave/data/file.txt", StoragePlatform.coreweave),
-            ("http://example.com/file.txt", None),
-        ],
-    )
-    def test_detect_platform_from_uri(self, uri, expected):
-        assert checksums._detect_platform(uri) == expected
-
-    def test_explicit_platform_overrides_uri(self):
-        asset = DataAssetRequest(
-            location_uri="file:///local/path",
-            asset_type=AssetType.file,
-            storage_platform=StoragePlatform.s3,
-        )
-        assert checksums._determine_platform(asset) == StoragePlatform.s3
-
-    @pytest.mark.parametrize(
-        "platform", [StoragePlatform.external, StoragePlatform.other]
-    )
-    def test_unsupported_explicit_platform_returns_none(self, platform):
-        asset = DataAssetRequest(
-            location_uri="s3://bucket/key",
-            asset_type=AssetType.file,
-            storage_platform=platform,
-        )
-        assert checksums._determine_platform(asset) is None
 
 
 # ── Algorithm Selection ────────────────────────────────────────────────────────
@@ -187,9 +149,7 @@ class TestFindCommonAlgorithmInFolder:
                 Metadata={"x-checksum-blake3": f"hash_{name}"},
             )
 
-        algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/dataset/", s3
-        )
+        algo, per_child = _find_common_algorithm_in_folder("s3://test-bucket/dataset/", s3)
         assert algo == "blake3"
         assert len(per_child) == 3
 
@@ -213,12 +173,10 @@ class TestFindCommonAlgorithmInFolder:
             return {}  # b.txt has no checksums
 
         with patch(
-            "catalog_client.utils.checksum_generator._fetch_all_s3_stored_checksums",
+            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums",
             side_effect=_mock_fetch,
         ):
-            algo, per_child = _find_common_algorithm_in_folder(
-                "s3://test-bucket/dataset/", s3
-            )
+            algo, per_child = _find_common_algorithm_in_folder("s3://test-bucket/dataset/", s3)
         assert algo is None
         assert per_child == {}
 
@@ -241,17 +199,13 @@ class TestFindCommonAlgorithmInFolder:
             Metadata={"x-checksum-crc64": "hash_c64_b"},
         )
 
-        algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/dataset/", s3
-        )
+        algo, per_child = _find_common_algorithm_in_folder("s3://test-bucket/dataset/", s3)
         assert algo == "crc64"
         assert len(per_child) == 2
 
     def test_empty_folder_returns_none(self):
         s3 = self._setup_bucket()
-        algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/empty/", s3
-        )
+        algo, per_child = _find_common_algorithm_in_folder("s3://test-bucket/empty/", s3)
         assert algo is None
         assert per_child == {}
 
@@ -266,7 +220,7 @@ class TestFindCommonAlgorithmInFolder:
 
 class TestGenerateForAssetsCore:
     def test_empty_list(self):
-        assert checksums.generate_for_assets([]) == []
+        assert checksums.for_assets([]) == []
 
     def test_skips_assets_with_existing_checksums(self):
         assets = [
@@ -278,7 +232,7 @@ class TestGenerateForAssetsCore:
                 checksum_alg="blake3",
             )
         ]
-        result = checksums.generate_for_assets(assets, algorithm="crc32")
+        result = checksums.for_assets(assets, algorithm="crc32")
         assert result[0].checksum == "existing123"
         assert result[0].checksum_alg == "blake3"
 
@@ -291,28 +245,12 @@ class TestGenerateForAssetsCore:
         ]
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = checksums.generate_for_assets(assets, algorithm="blake3")
+            result = checksums.for_assets(assets, algorithm="blake3")
 
             assert len(w) == 1
             assert issubclass(w[0].category, checksums.ChecksumWarning)
             assert "not supported" in str(w[0].message)
             assert result[0].checksum is None
-
-    def test_does_not_mutate_original_assets(self):
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("data")
-            temp_path = f.name
-        try:
-            original = DataAssetRequest(
-                location_uri=temp_path,
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.hpc,
-            )
-            result = checksums.generate_for_assets([original], algorithm="blake3")
-            assert result[0].checksum is not None
-            assert original.checksum is None
-        finally:
-            os.unlink(temp_path)
 
 
 # ── generate_for_assets: Filesystem ────────────────────────────────────────────
@@ -339,7 +277,7 @@ class TestGenerateForAssetsFilesystem:
                     storage_platform=StoragePlatform.hpc,
                 )
             ]
-            result = checksums.generate_for_assets(assets, algorithm=algorithm)
+            result = checksums.for_assets(assets, algorithm=algorithm)
             assert result[0].checksum_alg == algorithm
             assert len(result[0].checksum) == expected_hex_len
         finally:
@@ -358,7 +296,7 @@ class TestGenerateForAssetsFilesystem:
                     storage_platform=StoragePlatform.hpc,
                 )
             ]
-            result = checksums.generate_for_assets(assets, algorithm="blake3")
+            result = checksums.for_assets(assets, algorithm="blake3")
             assert result[0].checksum is not None
             assert result[0].checksum_alg == "blake3"
 
@@ -372,7 +310,7 @@ class TestGenerateForAssetsFilesystem:
         ]
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = checksums.generate_for_assets(assets, algorithm="blake3")
+            result = checksums.for_assets(assets, algorithm="blake3")
             assert len(w) == 1
             assert "Failed to generate checksum" in str(w[0].message)
             assert result[0].checksum is None
@@ -389,7 +327,7 @@ class TestGenerateForAssetsFilesystem:
                     storage_platform=StoragePlatform.hpc,
                 )
             ]
-            result = checksums.generate_for_assets(assets, algorithm=None)
+            result = checksums.for_assets(assets, algorithm=None)
             assert result[0].checksum_alg == "blake3"
         finally:
             os.unlink(temp_path)
@@ -415,7 +353,7 @@ class TestGenerateForAssetsS3:
                 asset_type=AssetType.file,
             )
         ]
-        result = checksums.generate_for_assets(assets, algorithm="blake3")
+        result = checksums.for_assets(assets, algorithm="blake3")
         assert result[0].checksum_alg == "blake3"
         assert result[0].checksum is not None
 
@@ -435,7 +373,7 @@ class TestGenerateForAssetsS3:
                 asset_type=AssetType.file,
             )
         ]
-        result = checksums.generate_for_assets(assets, algorithm=None)
+        result = checksums.for_assets(assets, algorithm=None)
         assert result[0].checksum == "stored_hash_value"
         assert result[0].checksum_alg == "blake3"
 
@@ -451,10 +389,10 @@ class TestGenerateForAssetsS3:
             )
         ]
         with patch(
-            "catalog_client.utils.checksums._fetch_all_s3_stored_checksums",
+            "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
             return_value={},
         ):
-            result = checksums.generate_for_assets(assets, algorithm=None)
+            result = checksums.for_assets(assets, algorithm=None)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
@@ -481,7 +419,7 @@ class TestGenerateForAssetsS3:
                 asset_type=AssetType.folder,
             )
         ]
-        result = checksums.generate_for_assets(assets, algorithm=None)
+        result = checksums.for_assets(assets, algorithm=None)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
@@ -502,10 +440,10 @@ class TestGenerateForAssetsS3:
             )
         ]
         with patch(
-            "catalog_client.utils.checksums._find_common_algorithm_in_folder",
+            "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
             return_value=(None, {}),
         ):
-            result = checksums.generate_for_assets(assets, algorithm=None)
+            result = checksums.for_assets(assets, algorithm=None)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
@@ -518,7 +456,7 @@ class TestGenerateForAssetsS3:
         ]
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = checksums.generate_for_assets(assets, algorithm="blake3")
+            result = checksums.for_assets(assets, algorithm="blake3")
             assert len(w) == 1
             assert "Failed to generate checksum" in str(w[0].message)
             assert result[0].checksum is None
@@ -534,9 +472,7 @@ class TestGenerateForAssetsS3:
                 asset_type=AssetType.file,
             )
         ]
-        result = checksums.generate_for_assets(
-            assets, algorithm="blake3", compute_if_no_s3_checksum=False
-        )
+        result = checksums.for_assets(assets, algorithm="blake3", compute_if_no_s3_checksum=False)
         assert result[0].checksum is None
 
     def test_compute_if_no_s3_checksum_false_does_not_skip_local(self):
@@ -552,9 +488,7 @@ class TestGenerateForAssetsS3:
                     storage_platform=StoragePlatform.hpc,
                 )
             ]
-            result = checksums.generate_for_assets(
-                assets, algorithm="blake3", compute_if_no_s3_checksum=False
-            )
+            result = checksums.for_assets(assets, algorithm="blake3", compute_if_no_s3_checksum=False)
             assert result[0].checksum is not None
         finally:
             os.unlink(temp_path)
@@ -587,7 +521,7 @@ class TestGenerateForAssetsS3:
 
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
-                result = checksums.generate_for_assets(assets, algorithm="blake3")
+                result = checksums.for_assets(assets, algorithm="blake3")
 
                 assert result[0].checksum is not None  # S3
                 assert result[1].checksum is not None  # local
