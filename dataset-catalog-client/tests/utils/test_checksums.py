@@ -54,7 +54,6 @@ class TestHashUtils:
     def test_algorithm_deterministic(self):
         """Test all algorithms are deterministic."""
         data = b"test data for consistency"
-
         assert _HashUtils.blake3(data) == _HashUtils.blake3(data)
         assert _HashUtils.blake2b(data) == _HashUtils.blake2b(data)
         assert _HashUtils.blake2s(data) == _HashUtils.blake2s(data)

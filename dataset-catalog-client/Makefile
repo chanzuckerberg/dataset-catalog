@@ -1,4 +1,4 @@
-.PHONY: help init test lint format typecheck check clean pre-commit
+.PHONY: help init test lint format typecheck check clean build pre-commit
 
 help:
 	@echo "Usage: make <target>"
@@ -10,6 +10,7 @@ help:
 	@echo "  typecheck   Type-check with mypy"
 	@echo "  check       Run lint + format + typecheck + tests"
 	@echo "  pre-commit  Run all pre-commit hooks on all files"
+	@echo "  build       Build the Python package"
 	@echo "  clean       Remove build artifacts and cache files"
 
 init:
@@ -32,6 +33,9 @@ check: lint format typecheck test
 
 pre-commit:
 	cd .. && uv run pre-commit run --all-files
+
+build: clean
+	uv build
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +

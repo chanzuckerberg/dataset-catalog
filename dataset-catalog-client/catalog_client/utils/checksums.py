@@ -4,16 +4,13 @@ import base64
 import hashlib
 import warnings
 import zlib
+from typing import Any
 
+import blake3
 import boto3
 
 from catalog_client import AssetType
 from catalog_client.models.asset import DataAssetRequest, StoragePlatform
-
-try:
-    import blake3
-except ImportError:
-    blake3 = None
 
 
 class ChecksumWarning(UserWarning):
@@ -148,6 +145,7 @@ class _ChecksumBackend:
         chunk_size = 8192
 
         # Initialize hash objects directly for streaming
+        hash_obj: Any
         if algorithm == "blake3":
             if blake3 is None:
                 raise ImportError("blake3 package required for blake3 algorithm")
