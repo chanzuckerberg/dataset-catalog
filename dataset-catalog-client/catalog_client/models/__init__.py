@@ -5,9 +5,12 @@ from catalog_client.models.asset import (
     StoragePlatform,
 )
 from catalog_client.models.collection import (
+    ChildCollectionEntryResponse,
+    CollectionChildType,
     CollectionRequest,
     CollectionResponse,
     CollectionType,
+    DatasetEntryResponse,
 )
 from catalog_client.models.dataset import (
     DatasetCreate,
@@ -25,10 +28,17 @@ from catalog_client.models.lineage import (
     LineageType,
 )
 from catalog_client.models.metadata import (
+    BiologicalAnnotation,
+    ChannelMetadata,
+    ChannelNormalization,
+    ChannelType,
     DatasetMetadata,
     DataSummaryMetadata,
     ExperimentMetadata,
+    IntensityStatistics,
+    MarkerType,
     OntologyEntry,
+    ResolutionMetadata,
     SampleMetadata,
     TissueEntry,
 )
@@ -37,9 +47,16 @@ from catalog_client.models.quality import DataQualityChecks
 
 __all__ = [
     "AssetType",
+    "BiologicalAnnotation",
+    "ChannelMetadata",
+    "ChannelNormalization",
+    "ChannelType",
+    "ChildCollectionEntryResponse",
+    "CollectionChildType",
     "CollectionRequest",
     "CollectionResponse",
     "CollectionType",
+    "DatasetEntryResponse",
     "DataAssetRequest",
     "DataAssetResponse",
     "DataQualityChecks",
@@ -54,11 +71,14 @@ __all__ = [
     "DatasetWithRelationsResponse",
     "ExperimentMetadata",
     "GovernanceMetadata",
+    "IntensityStatistics",
+    "MarkerType",
     "LineageEdgeRequest",
     "LineageEdgeResponse",
     "LineageType",
     "OntologyEntry",
     "PaginatedResponse",
+    "ResolutionMetadata",
     "SampleMetadata",
     "StoragePlatform",
     "TissueEntry",

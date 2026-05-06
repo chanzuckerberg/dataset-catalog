@@ -14,9 +14,19 @@ _PREFIX = "collections"
 
 class CollectionClient(_SyncBase):
     def list(
-        self, *, offset: int = 0, limit: int = 100
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        canonical_id: str | None = None,
+        version: str | None = None,
     ) -> PaginatedResponse[CollectionResponse]:
-        response = self._get(f"{_PREFIX}/", params={"skip": offset, "limit": limit})
+        params: dict = {"offset": offset, "limit": limit}
+        if canonical_id is not None:
+            params["canonical_id"] = canonical_id
+        if version is not None:
+            params["version"] = version
+        response = self._get(f"{_PREFIX}/", params=params)
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
     def get(self, collection_id: str) -> CollectionResponse:
@@ -50,11 +60,19 @@ class CollectionClient(_SyncBase):
 
 class AsyncCollectionClient(_AsyncBase):
     async def list(
-        self, *, offset: int = 0, limit: int = 100
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        canonical_id: str | None = None,
+        version: str | None = None,
     ) -> PaginatedResponse[CollectionResponse]:
-        response = await self._get(
-            f"{_PREFIX}/", params={"skip": offset, "limit": limit}
-        )
+        params: dict = {"offset": offset, "limit": limit}
+        if canonical_id is not None:
+            params["canonical_id"] = canonical_id
+        if version is not None:
+            params["version"] = version
+        response = await self._get(f"{_PREFIX}/", params=params)
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
     async def get(self, collection_id: str) -> CollectionResponse:
