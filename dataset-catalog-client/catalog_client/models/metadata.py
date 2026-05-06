@@ -147,7 +147,7 @@ class DataSummaryMetadata(BaseModel):
     read_count: int | None = Field(
         default=None, description="Number of reads or sequences (for sequencing data)"
     )
-    read_length: int | None = Field(
+    read_length: int | dict[str, int] | None = Field(
         default=None, description="Length of reads in base pairs (for sequencing data)"
     )
     read_confidence: float | None = Field(
@@ -161,10 +161,10 @@ class DataSummaryMetadata(BaseModel):
         default=None,
         description="Dimensional measurements (e.g., [width, height, depth])",
     )
-    well: str | None = Field(
+    well: str | list[str] | None = Field(
         default=None, description="Well identifier for plate-based experiments"
     )
-    fov: str | None = Field(
+    fov: str | list[str] | None = Field(
         default=None, description="Field of view identifier for imaging experiments"
     )
     channels: list[ChannelMetadata] | None = Field(
