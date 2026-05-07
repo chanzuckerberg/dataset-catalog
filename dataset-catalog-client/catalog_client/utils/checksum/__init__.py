@@ -1,6 +1,10 @@
 """
 Checksum utilities for local and S3 data assets.
 
+.. warning::
+    **Alpha feature.** This API is in alpha and may change without notice between releases.
+    See docs/checksum_guide.md for usage examples.
+
 Algorithms
 ----------
 blake3, blake2b   cryptographic hashes; combined across chunks via Merkle tree.
@@ -18,14 +22,14 @@ awscrt is only required for crc64nvme.
 
 Usage
 -----
-    from catalog_client.utils.checksum import compute_checksum, generate_for_assets, Algorithm
+    from catalog_client.utils.checksum import compute_checksum, for_assets, Algorithm
 
     # Single path (local or S3)
     result = compute_checksum("data/file.h5ad", algorithm=Algorithm.blake3)
     result = compute_checksum("s3://my-bucket/prefix/", algorithm=Algorithm.crc32)
 
     # Batch asset list
-    assets = generate_for_assets(assets, algorithm=Algorithm.blake3)
+    assets = for_assets(assets, algorithm=Algorithm.blake3)
 """
 
 from catalog_client.utils.checksum.algorithm import Algorithm

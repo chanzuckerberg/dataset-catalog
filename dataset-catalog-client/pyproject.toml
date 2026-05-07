@@ -8,13 +8,13 @@ version = "0.2.0"
 description = "Python client library for the Scientific Dataset Catalog API"
 requires-python = ">=3.12"
 dependencies = [
+    "boto3>=1.42.90",
     "httpx==0.28.1",
     "pydantic>=2.10.0",
 ]
 
 [project.optional-dependencies]
 checksum = [
-  "boto3>=1.42.90",
   "blake3>=0.3.0",
   "awscrt>=0.32.1",
   "crcmod>=1.7",

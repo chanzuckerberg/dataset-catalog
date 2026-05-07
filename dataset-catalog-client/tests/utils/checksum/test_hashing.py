@@ -1,6 +1,5 @@
 """Tests for compute_checksum_s3 and compute_checksum_localfs.
 
-Each test maps to a numbered use case in docs/compute_checksum_flows.md.
 S3 tests use a MagicMock client; local tests use real I/O via tmp_path.
 """
 
@@ -59,11 +58,11 @@ def test_s3_trailing_slash_routes_to_prefix_listing():
     s3.get_paginator.assert_called_once_with("list_objects_v2")
 
 
-# ── compute_checksum_s3 — S3 file (UC 1–4) ───────────────────────────────────
+# ── compute_checksum_s3 — S3 file ────────────────────────────────────────────
 
 
 def test_s3_file_cached_result_returned_immediately():
-    # UC-1: path in cached_results → return at once; no S3 call
+    # path in cached_results → return at once; no S3 call
     s3 = _s3()
     cached = {FILE_URI: _make_result(FILE_URI)}
     result = compute_checksum_s3(FILE_URI, Algorithm.blake3, s3, cached_results=cached)
@@ -73,7 +72,7 @@ def test_s3_file_cached_result_returned_immediately():
 
 
 def test_s3_file_stored_checksum_returned_without_download():
-    # UC-2: use_stored=True, stored metadata found → return stored; no download
+    # use_stored=True, stored metadata found → return stored; no download
     s3 = _s3(head={"Metadata": {"x-checksum-blake3": HEX64}})
     result = compute_checksum_s3(FILE_URI, Algorithm.blake3, s3, use_stored=True)
     s3.get_object.assert_not_called()
@@ -82,7 +81,7 @@ def test_s3_file_stored_checksum_returned_without_download():
 
 
 def test_s3_file_no_stored_checksum_downloads_and_hashes():
-    # UC-3: use_stored=True but no stored checksum → fall back to download
+    # use_stored=True but no stored checksum → fall back to download
     s3 = _s3(head={}, body=b"file content")
     result = compute_checksum_s3(FILE_URI, Algorithm.crc32, s3, use_stored=True)
     s3.get_object.assert_called_once()
@@ -91,7 +90,7 @@ def test_s3_file_no_stored_checksum_downloads_and_hashes():
 
 
 def test_s3_file_use_stored_false_always_downloads():
-    # UC-4: use_stored=False → skip stored checksum check; always download
+    # use_stored=False → skip stored checksum check; always download
     s3 = _s3(body=b"data")
     result = compute_checksum_s3(FILE_URI, Algorithm.crc32, s3, use_stored=False)
     s3.head_object.assert_not_called()
@@ -99,11 +98,11 @@ def test_s3_file_use_stored_false_always_downloads():
     assert result.source == "computed"
 
 
-# ── compute_checksum_s3 — S3 prefix / folder (UC 5–11) ───────────────────────
+# ── compute_checksum_s3 — S3 prefix / folder ─────────────────────────────────
 
 
 def test_s3_prefix_all_children_cached_no_s3_calls():
-    # UC-5: every child already in cached_results → no head_object or get_object
+    # every child already in cached_results → no head_object or get_object
     child_key = f"{PREFIX}file.h5ad"
     child_uri = f"s3://{BUCKET}/{child_key}"
     s3 = _s3_prefix(keys=[child_key])
@@ -117,7 +116,7 @@ def test_s3_prefix_all_children_cached_no_s3_calls():
 
 
 def test_s3_prefix_some_children_cached_rest_downloaded():
-    # UC-6: one child cached, one not — only uncached child is fetched
+    # one child cached, one not — only uncached child is fetched
     cached_key = f"{PREFIX}cached.h5ad"
     missing_key = f"{PREFIX}missing.h5ad"
     cached_uri = f"s3://{BUCKET}/{cached_key}"
@@ -133,7 +132,7 @@ def test_s3_prefix_some_children_cached_rest_downloaded():
 
 
 def test_s3_prefix_use_stored_true_stored_checksums_no_download():
-    # UC-7: use_stored=True and every child has a stored metadata checksum → no download
+    # use_stored=True and every child has a stored metadata checksum → no download
     child_key = f"{PREFIX}file.h5ad"
     s3 = _s3_prefix(
         keys=[child_key],
@@ -147,7 +146,7 @@ def test_s3_prefix_use_stored_true_stored_checksums_no_download():
 
 
 def test_s3_prefix_use_stored_true_no_stored_downloads():
-    # UC-8: use_stored=True but no stored checksum on children → downloads
+    # use_stored=True but no stored checksum on children → downloads
     child_key = f"{PREFIX}file.h5ad"
     s3 = _s3_prefix(keys=[child_key], head={}, body=b"data")
 
@@ -157,7 +156,7 @@ def test_s3_prefix_use_stored_true_no_stored_downloads():
 
 
 def test_s3_prefix_use_stored_false_downloads_all_children():
-    # UC-9: use_stored=False → all children downloaded regardless of stored checksums
+    # use_stored=False → all children downloaded regardless of stored checksums
     keys = [f"{PREFIX}a.h5ad", f"{PREFIX}b.h5ad"]
     s3 = _s3_prefix(keys=keys, body=b"data")
 
@@ -168,7 +167,7 @@ def test_s3_prefix_use_stored_false_downloads_all_children():
 
 
 def test_s3_prefix_virtual_subdirectories_hashed_recursively():
-    # UC-10: keys with sub-paths create virtual directory nodes in the tree
+    # keys with sub-paths create virtual directory nodes in the tree
     keys = [f"{PREFIX}subdir/a.h5ad", f"{PREFIX}subdir/b/c.h5ad"]
     s3 = _s3_prefix(keys=keys, body=b"data")
 
@@ -182,7 +181,7 @@ def test_s3_prefix_virtual_subdirectories_hashed_recursively():
 
 
 def test_s3_prefix_empty_prefix_returns_hash_of_empty():
-    # UC-11: no objects under prefix → Merkle of empty child list (hash of empty bytes)
+    # no objects under prefix → Merkle of empty child list (hash of empty bytes)
     s3 = _s3_prefix(keys=[])
 
     result = compute_checksum_s3(PREFIX_URI, Algorithm.blake3, s3)
@@ -274,11 +273,11 @@ def test_localfs_same_content_same_hash(tmp_path):
     assert r1.file_hash == r2.file_hash
 
 
-# ── compute_checksum_localfs — local directory (UC 12–15) ────────────────────
+# ── compute_checksum_localfs — local directory ───────────────────────────────
 
 
 def test_localfs_directory_files_only(tmp_path):
-    # UC-12: directory with only files → Merkle over name+hash pairs
+    # directory with only files → Merkle over name+hash pairs
     (tmp_path / "a.txt").write_bytes(b"aaa")
     (tmp_path / "b.txt").write_bytes(b"bbb")
 
@@ -291,7 +290,7 @@ def test_localfs_directory_files_only(tmp_path):
 
 
 def test_localfs_directory_with_subdirectories(tmp_path):
-    # UC-13: subdirectories are hashed recursively
+    # subdirectories are hashed recursively
     sub = tmp_path / "subdir"
     sub.mkdir()
     (sub / "child.txt").write_bytes(b"child")
@@ -304,7 +303,7 @@ def test_localfs_directory_with_subdirectories(tmp_path):
 
 
 def test_localfs_empty_directory(tmp_path):
-    # UC-14: empty directory → hash of empty bytes; no children
+    # empty directory → hash of empty bytes; no children
     result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
 
     assert result.is_directory
@@ -314,7 +313,7 @@ def test_localfs_empty_directory(tmp_path):
 
 
 def test_localfs_directory_mixed_files_and_subdirs(tmp_path):
-    # UC-15: directory with both files and sub-directories
+    # directory with both files and sub-directories
     (tmp_path / "file.txt").write_bytes(b"data")
     sub = tmp_path / "subdir"
     sub.mkdir()

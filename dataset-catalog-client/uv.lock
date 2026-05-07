@@ -333,6 +333,7 @@ name = "catalog-client"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
@@ -341,7 +342,6 @@ dependencies = [
 checksum = [
     { name = "awscrt" },
     { name = "blake3" },
-    { name = "boto3" },
     { name = "crcmod" },
 ]
 
@@ -361,7 +361,7 @@ dev = [
 requires-dist = [
     { name = "awscrt", marker = "extra == 'checksum'", specifier = ">=0.32.1" },
     { name = "blake3", marker = "extra == 'checksum'", specifier = ">=0.3.0" },
-    { name = "boto3", marker = "extra == 'checksum'", specifier = ">=1.42.90" },
+    { name = "boto3", specifier = ">=1.42.90" },
     { name = "crcmod", marker = "extra == 'checksum'", specifier = ">=1.7" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pydantic", specifier = ">=2.10.0" },
