@@ -12,7 +12,8 @@ class GovernanceMetadata(BaseModel):
 
     license: str | None = Field(
         default=None,
-        description="License under which the dataset is made available. This can either be the name of the license like 'MIT' or a link to the term of agreement",
+        description="License under which the dataset is made available. This can either be the name of the license like"
+        " 'MIT' or a link to the term of agreement",
     )
     data_sensitivity: str | None = Field(
         default=None,
@@ -34,9 +35,7 @@ class GovernanceMetadata(BaseModel):
         default=None,
         description="Person or group responsible for data stewardship and quality",
     )
-    data_owner: str | None = Field(
-        default=None, description="Person or organization that owns the data"
-    )
+    data_owner: str | None = Field(default=None, description="Person or organization that owns the data")
     is_external_reference: bool | None = Field(
         default=None,
         description="Whether this dataset references external data hosted by a third part, and not stored locally",
