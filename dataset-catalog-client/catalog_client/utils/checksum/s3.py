@@ -113,7 +113,7 @@ def _fetch_s3_stored_checksum(
     return _fetch_all_s3_stored_checksums(bucket, key, s3).get(algorithm)
 
 
-def _find_common_algorithm_in_folder(path: str, s3_client) -> tuple[str | None, dict[str, ChecksumResult]]:
+def _find_common_algorithm_in_folder(path: str, s3_client) -> tuple[Algorithm | None, dict[str, ChecksumResult]]:
     """
     Find the best common algorithm across all files under a folder.
 

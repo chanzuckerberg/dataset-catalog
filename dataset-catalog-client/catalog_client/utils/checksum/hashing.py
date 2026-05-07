@@ -241,28 +241,46 @@ def _hash_s3_prefix(
     return hash_tree(tree, prefix)
 
 
+def compute_checksum_localfs(path: str, algorithm: Algorithm) -> ChecksumResult:
+    """
+    Compute a checksum for a local path (file or directory). Defaults to blake3.
+    """
+    if os.path.isdir(path):
+        return _hash_local_dir(path, algorithm)
+    return _hash_local_file(path, algorithm)
+
+
+def compute_checksum_s3(
+    path: str,
+    algorithm: Algorithm,
+    s3_client=None,
+    use_stored: bool = True,
+    cached_results: dict[str, ChecksumResult] | None = None,
+) -> ChecksumResult:
+    """
+    Compute a checksum for an S3 URI (s3:// or s3a://). Defaults to blake3.
+    Trailing slash = treat as prefix (virtual directory).
+
+    use_stored=True (default) returns any checksum already on the S3 object
+    without downloading. Set False to always recompute (e.g. integrity audits).
+    """
+    bucket, key = _parse_s3_uri(path)
+    if path.endswith("/") or not key:
+        return _hash_s3_prefix(bucket, key, algorithm, s3_client, use_stored, cached_results)
+    return _hash_s3_file(bucket, key, algorithm, s3_client, use_stored, cached_results)
+
+
 def compute_checksum(
     path: str,
-    algorithm: Algorithm | None = None,
+    algorithm: Algorithm,
     s3_client=None,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for a local path or S3 URI (s3:// or s3a://).
-    Trailing slash = treat as directory. Defaults to blake3.
-
-    use_stored=True (default) returns any checksum already on the S3 object
-    without downloading. Set False to always recompute (e.g. integrity audits).
+    Delegates to compute_checksum_s3 or compute_checksum_localfs.
     """
-    effective_algorithm = algorithm or Algorithm.blake3
     if path.startswith(("s3://", "s3a://")):
-        client = s3_client
-        bucket, key = _parse_s3_uri(path)
-        if path.endswith("/") or not key:
-            return _hash_s3_prefix(bucket, key, effective_algorithm, client, use_stored, cached_results)
-        return _hash_s3_file(bucket, key, effective_algorithm, client, use_stored, cached_results)
-    else:
-        if os.path.isdir(path):
-            return _hash_local_dir(path, effective_algorithm)
-        return _hash_local_file(path, effective_algorithm)
+        return compute_checksum_s3(path, algorithm, s3_client, use_stored, cached_results)
+    return compute_checksum_localfs(path, algorithm)
