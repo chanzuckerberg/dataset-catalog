@@ -57,6 +57,22 @@ class CollectionClient(_SyncBase):
         response = self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
         return CollectionResponse.model_validate(response.json())
 
+    def add_collection(
+        self, collection_id: str, child_collection_id: str
+    ) -> CollectionResponse:
+        response = self._put(
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
+        )
+        return CollectionResponse.model_validate(response.json())
+
+    def remove_collection(
+        self, collection_id: str, child_collection_id: str
+    ) -> CollectionResponse:
+        response = self._delete(
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
+        )
+        return CollectionResponse.model_validate(response.json())
+
 
 class AsyncCollectionClient(_AsyncBase):
     async def list(
