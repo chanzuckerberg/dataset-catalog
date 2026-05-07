@@ -102,7 +102,7 @@ def test_s3_file_stored_checksum_returned_without_download(mock_fetch, mock_s3):
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
     mock_compute.assert_not_called()
     assert result[0].checksum == HASH
-    assert result[0].checksum_alg == Algorithm.blake3
+    assert result[0].checksum_alg == Algorithm.crc64
 
 
 @patch("catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums", return_value={})
@@ -159,6 +159,70 @@ def test_s3_file_explicit_algo_with_compute_flag_downloads_and_computes(mock_com
 
 def test_s3_file_explicit_algo_no_compute_flag_skips_download(mock_s3):
     # UC-11: explicit algorithm, compute_if_no_s3_checksum=False → download skipped, unset
+    asset = make_asset(S3_FILE, AssetType.file)
+    with patch("catalog_client.utils.checksum.generate.compute_checksum") as mock_compute:
+        result = for_assets([asset], algorithm=Algorithm.crc32, s3_client=mock_s3, compute_if_no_s3_checksum=False)
+    mock_compute.assert_not_called()
+    assert result[0].checksum is None
+
+
+# ── UC-28 – UC-31: S3 file, explicit algorithm, stored checksum present ───────
+
+
+@patch(
+    "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+    return_value={Algorithm.crc32: make_result(S3_FILE, Algorithm.crc32, HASH)},
+)
+def test_s3_file_explicit_algo_matching_stored_compute_flag_true_uses_stored(mock_fetch, mock_s3):
+    # UC-28: explicit algorithm, compute_if_no_s3_checksum=True, stored algo matches → use stored, don't compute
+    asset = make_asset(S3_FILE, AssetType.file)
+    with patch("catalog_client.utils.checksum.generate.compute_checksum") as mock_compute:
+        result = for_assets([asset], algorithm=Algorithm.crc32, s3_client=mock_s3, compute_if_no_s3_checksum=True)
+    mock_compute.assert_not_called()
+    assert result[0].checksum == HASH
+    assert result[0].checksum_alg == Algorithm.crc32
+
+
+@patch(
+    "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+    return_value={Algorithm.crc32: make_result(S3_FILE, Algorithm.crc32, HASH)},
+)
+def test_s3_file_explicit_algo_matching_stored_compute_flag_false_uses_stored(mock_fetch, mock_s3):
+    # UC-29: explicit algorithm, compute_if_no_s3_checksum=False, stored algo matches → use stored, don't compute
+    asset = make_asset(S3_FILE, AssetType.file)
+    with patch("catalog_client.utils.checksum.generate.compute_checksum") as mock_compute:
+        result = for_assets([asset], algorithm=Algorithm.crc32, s3_client=mock_s3, compute_if_no_s3_checksum=False)
+    mock_compute.assert_not_called()
+    assert result[0].checksum == HASH
+    assert result[0].checksum_alg == Algorithm.crc32
+
+
+@patch(
+    "catalog_client.utils.checksum.generate.compute_checksum",
+    return_value=make_result(S3_FILE, Algorithm.crc32, HASH),
+)
+@patch(
+    "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+    return_value={Algorithm.blake3: make_result(S3_FILE, Algorithm.blake3, HASH)},
+)
+def test_s3_file_explicit_algo_mismatched_stored_compute_flag_true_downloads_and_computes(
+    mock_fetch, mock_compute, mock_s3
+):
+    # UC-30: explicit algorithm, compute_if_no_s3_checksum=True, stored algo does not match → download and compute
+    asset = make_asset(S3_FILE, AssetType.file)
+    result = for_assets([asset], algorithm=Algorithm.crc32, s3_client=mock_s3, compute_if_no_s3_checksum=True)
+    mock_compute.assert_called_once()
+    assert mock_compute.call_args.kwargs["algorithm"] == Algorithm.crc32
+    assert result[0].checksum == HASH
+    assert result[0].checksum_alg == Algorithm.crc32
+
+
+@patch(
+    "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+    return_value={Algorithm.blake3: make_result(S3_FILE, Algorithm.blake3, HASH)},
+)
+def test_s3_file_explicit_algo_mismatched_stored_compute_flag_false_leaves_checksum_unset(mock_fetch, mock_s3):
+    # UC-31: explicit algorithm, compute_if_no_s3_checksum=False, stored algo does not match → unset, skip download
     asset = make_asset(S3_FILE, AssetType.file)
     with patch("catalog_client.utils.checksum.generate.compute_checksum") as mock_compute:
         result = for_assets([asset], algorithm=Algorithm.crc32, s3_client=mock_s3, compute_if_no_s3_checksum=False)
