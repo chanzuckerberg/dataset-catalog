@@ -42,31 +42,35 @@ class CatalogClient:
 
     def register(
         self,
-        request: RegistrationRequest,
+        request: RegistrationRequest | DatasetRequest,
         update_if_exists: bool = False,
         error_on_duplicate: bool = True,
     ) -> str:
         """Register a dataset and any lineage edges. Returns the dataset_id."""
-        dataset = request.to_dataset_request()
+        if isinstance(request, RegistrationRequest):
+            dataset_request = request.to_dataset_request()
+        else:
+            dataset_request = request
         dataset_id = self._create_or_update(
-            dataset, update_if_exists, error_on_duplicate
+            dataset_request, update_if_exists, error_on_duplicate
         )
 
-        for spec in request.lineage:
-            if spec.source_dataset_id is not None:
-                source_id = spec.source_dataset_id
-            elif spec.source_ref is not None:
-                source_id = self._resolve_ref(spec.source_ref)
-            else:
-                continue
+        if isinstance(request, RegistrationRequest):
+            for spec in request.lineage:
+                if spec.source_dataset_id is not None:
+                    source_id = spec.source_dataset_id
+                elif spec.source_ref is not None:
+                    source_id = self._resolve_ref(spec.source_ref)
+                else:
+                    continue
 
-            self.lineages.create(
-                LineageEdgeRequest(
-                    source_dataset_id=source_id,
-                    destination_dataset_id=dataset_id,
-                    lineage_type=spec.lineage_type,
+                self.lineages.create(
+                    LineageEdgeRequest(
+                        source_dataset_id=source_id,
+                        destination_dataset_id=dataset_id,
+                        lineage_type=spec.lineage_type,
+                    )
                 )
-            )
 
         return dataset_id
 
