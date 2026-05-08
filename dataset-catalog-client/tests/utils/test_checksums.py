@@ -99,39 +99,6 @@ class TestCheckSumBackend:
         platform = backend._determine_platform(asset)
         assert platform == StoragePlatform.s3
 
-    def test_uri_pattern_detection_hpc(self):
-        """Test HPC URI pattern detection."""
-        from catalog_client.utils.checksums import _ChecksumBackend
-
-        backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="/hpc/data/file.txt", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
-        assert platform == StoragePlatform.hpc
-
-    def test_uri_pattern_detection_bruno_hpc(self):
-        """Test Bruno HPC URI pattern detection."""
-        from catalog_client.utils.checksums import _ChecksumBackend
-
-        backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="/bruno_hpc/data/file.txt", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
-        assert platform == StoragePlatform.bruno_hpc
-
-    def test_uri_pattern_detection_coreweave(self):
-        """Test CoreWeave URI pattern detection."""
-        from catalog_client.utils.checksums import _ChecksumBackend
-
-        backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="/coreweave/data/file.txt", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
-        assert platform == StoragePlatform.coreweave
-
     def test_unsupported_platform_returns_none(self):
         """Test unsupported platform returns None."""
         from catalog_client.utils.checksums import _ChecksumBackend
@@ -345,7 +312,7 @@ class TestGenerateForAssets:
                 DataAssetRequest(
                     location_uri=temp_path,
                     asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.hpc,
+                    storage_platform=StoragePlatform.sf_hpc,
                 )
             ]
 
@@ -370,7 +337,7 @@ class TestGenerateForAssets:
             DataAssetRequest(
                 location_uri="/hpc/existing.txt",
                 asset_type=AssetType.file,
-                storage_platform=StoragePlatform.hpc,
+                storage_platform=StoragePlatform.sf_hpc,
                 checksum="existing123",
                 checksum_alg="blake3",
             )
@@ -409,7 +376,7 @@ class TestGenerateForAssets:
             DataAssetRequest(
                 location_uri="/nonexistent/file.txt",
                 asset_type=AssetType.file,
-                storage_platform=StoragePlatform.hpc,
+                storage_platform=StoragePlatform.sf_hpc,
             )
         ]
 
@@ -458,7 +425,7 @@ class TestGenerateForAssets:
                 DataAssetRequest(
                     location_uri=temp_path,
                     asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.hpc,
+                    storage_platform=StoragePlatform.sf_hpc,
                 )
             ]
 

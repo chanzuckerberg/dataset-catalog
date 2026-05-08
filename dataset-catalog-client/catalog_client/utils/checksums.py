@@ -117,12 +117,6 @@ class _ChecksumBackend:
         """
         if location_uri.startswith(("s3://", "s3a://")):
             return StoragePlatform.s3
-        elif "/hpc/" in location_uri:
-            return StoragePlatform.hpc
-        elif "/bruno_hpc/" in location_uri:
-            return StoragePlatform.bruno_hpc
-        elif "/coreweave/" in location_uri:
-            return StoragePlatform.coreweave
         else:
             return None
 
