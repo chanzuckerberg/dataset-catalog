@@ -91,6 +91,46 @@ def test_remove_dataset_from_collection(httpx_mock: HTTPXMock):
     assert result.id == "col-1"
 
 
+def test_update_collection(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f"{BASE}collections/col-1", json=COLLECTION_RESPONSE)
+    coll = CollectionRequest(
+        canonical_id="col-001",
+        version="1.0.0",
+        name="My Collection",
+        collection_owner="team-x",
+    )
+    result = _sync_client().update("col-1", coll)
+    assert result.id == "col-1"
+
+
+def test_list_collections_with_canonical_id_filter(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=COLLECTIONS_URL, json=PAGINATED)
+    result = _sync_client().list(canonical_id="col-001")
+    assert result.results[0].canonical_id == "col-001"
+
+
+def test_list_collections_with_version_filter(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=COLLECTIONS_URL, json=PAGINATED)
+    result = _sync_client().list(version="1.0.0")
+    assert result.results[0].version == "1.0.0"
+
+
+def test_add_collection_to_collection(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/collections/col-2", json=COLLECTION_RESPONSE
+    )
+    result = _sync_client().add_collection("col-1", "col-2")
+    assert result.id == "col-1"
+
+
+def test_remove_collection_from_collection(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/collections/col-2", json=COLLECTION_RESPONSE
+    )
+    result = _sync_client().remove_collection("col-1", "col-2")
+    assert result.id == "col-1"
+
+
 async def test_list_collections_async(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=COLLECTIONS_URL, json=PAGINATED)
     async with _async_client() as client:

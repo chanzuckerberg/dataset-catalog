@@ -15,9 +15,11 @@ class AssetType(str, enum.Enum):
 
 class StoragePlatform(str, enum.Enum):
     s3 = "s3"
-    bruno_hpc = "bruno_hpc"
-    hpc = "hpc"
-    coreweave = "coreweave"
+    sf_hpc = "sf_hpc"
+    chi_hpc = "chi_hpc"
+    ny_hpc = "ny_hpc"
+    reef = "reef"
+    kelp = "kelp"
     external = "external"
     other = "other"
 

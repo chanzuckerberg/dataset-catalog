@@ -37,8 +37,8 @@ class GovernanceMetadata(BaseModel):
     data_owner: str | None = Field(
         default=None, description="Person or organization that owns the data"
     )
-    is_external_reference: bool | None = Field(
-        default=None,
+    is_external_reference: bool = Field(
+        default=False,
         description="Whether this dataset references external data hosted by a third part, and not stored locally",
     )
     embargoed_until: datetime.date | None = Field(
