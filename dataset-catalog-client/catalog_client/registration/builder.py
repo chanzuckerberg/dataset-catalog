@@ -189,11 +189,19 @@ class RegistrationBuilder:
     def build(self) -> RegistrationRequest:
         return self._request
 
-    def submit(self) -> str:
+    def submit(
+        self,
+        update_if_exists: bool = False,
+        error_on_duplicate: bool = True,
+    ) -> str:
         """Build the request and register it. Returns the new dataset_id."""
         if self._client is None:
             raise RuntimeError(
                 "No client bound to this builder. "
                 "Use client.new_registration(...) instead of RegistrationBuilder(...) directly."
             )
-        return self._client.register(self.build())
+        return self._client.register(
+            self.build(),
+            update_if_exists=update_if_exists,
+            error_on_duplicate=error_on_duplicate,
+        )
