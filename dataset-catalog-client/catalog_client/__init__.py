@@ -79,11 +79,14 @@ from catalog_client.registration import (
     RegistrationBuilder,
     RegistrationRequest,
 )
+from catalog_client.utils.manifest import generate_manifest
 
 __all__ = [
     # Clients
     "AsyncCatalogClient",
     "CatalogClient",
+    # Utils
+    "generate_manifest",
     # Registration
     "LineageSpec",
     "RegistrationBuilder",
