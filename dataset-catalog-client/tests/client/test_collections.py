@@ -5,7 +5,9 @@ from pytest_httpx import HTTPXMock
 
 from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.models.collection import (
+    ChildCollectionEntryResponse,
     CollectionRequest,
+    DatasetEntryResponse,
 )
 from catalog_client.models.pagination import PaginatedResponse
 
@@ -28,6 +30,35 @@ COLLECTION_RESPONSE = {
     "doi": None,
     "collection_type": None,
 }
+
+DATASET_RESPONSE = {
+    "id": "ds-1",
+    "tombstoned": False,
+    "created_at": "2024-01-01T00:00:00Z",
+    "last_modified_at": "2024-01-01T00:00:00Z",
+    "canonical_id": "ds-001",
+    "version": "1.0.0",
+    "project": "atlas",
+    "locations": [],
+    "name": "Test Dataset",
+    "modality": "imaging",
+    "dataset_type": "raw",
+    "governance": {},
+    "data_quality": None,
+    "metadata": {},
+    "record_version": 1,
+    "description": None,
+    "doi": None,
+    "cross_db_references": None,
+    "is_latest": True,
+    "record_schema_version": None,
+    "metadata_schema": None,
+}
+
+DATASET_ENTRY = {"entry_type": "dataset", "entry": DATASET_RESPONSE}
+COLLECTION_ENTRY = {"entry_type": "collection", "entry": COLLECTION_RESPONSE}
+
+ENTRIES_URL = re.compile(rf"{re.escape(BASE)}collections/col-1/entries")
 
 PAGINATED = {"total": 1, "limit": 100, "offset": 0, "results": [COLLECTION_RESPONSE]}
 
@@ -136,3 +167,50 @@ async def test_list_collections_async(httpx_mock: HTTPXMock):
     async with _async_client() as client:
         result = await client.list()
     assert result.total == 1
+
+
+# --- list_entries ---
+
+
+def test_list_entries_mixed_types(httpx_mock: HTTPXMock):
+    # Response contains one dataset entry and one child-collection entry.
+    httpx_mock.add_response(
+        url=ENTRIES_URL,
+        json={
+            "total": 2,
+            "limit": 100,
+            "offset": 0,
+            "results": [DATASET_ENTRY, COLLECTION_ENTRY],
+        },
+    )
+    result = _sync_client().list_entries("col-1")
+    assert isinstance(result, PaginatedResponse)
+    assert result.total == 2
+    assert len(result.results) == 2
+    assert isinstance(result.results[0], DatasetEntryResponse)
+    assert result.results[0].entry.id == "ds-1"
+    assert isinstance(result.results[1], ChildCollectionEntryResponse)
+    assert result.results[1].entry.id == "col-1"
+
+
+def test_list_entries_dataset_only(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=ENTRIES_URL,
+        json={"total": 1, "limit": 100, "offset": 0, "results": [DATASET_ENTRY]},
+    )
+    result = _sync_client().list_entries("col-1")
+    assert len(result.results) == 1
+    assert isinstance(result.results[0], DatasetEntryResponse)
+    assert result.results[0].entry_type == "dataset"
+    assert result.results[0].entry.canonical_id == "ds-001"
+
+
+def test_list_entries_pagination_fields_propagated(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=ENTRIES_URL,
+        json={"total": 50, "limit": 10, "offset": 20, "results": [DATASET_ENTRY]},
+    )
+    result = _sync_client().list_entries("col-1", offset=20, limit=10)
+    assert result.total == 50
+    assert result.limit == 10
+    assert result.offset == 20

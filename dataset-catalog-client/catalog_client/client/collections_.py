@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
+    ChildCollectionEntryResponse,
     CollectionRequest,
     CollectionResponse,
+    DatasetEntryResponse,
 )
 from catalog_client.models.pagination import PaginatedResponse
 
 _PREFIX = "collections"
+
+
+def _parse_entry(
+    raw: dict,
+) -> DatasetEntryResponse | ChildCollectionEntryResponse:
+    if raw.get("entry_type") == "dataset":
+        return DatasetEntryResponse.model_validate(raw)
+    return ChildCollectionEntryResponse.model_validate(raw)
 
 
 class CollectionClient(_SyncBase):
@@ -73,6 +83,31 @@ class CollectionClient(_SyncBase):
         )
         return CollectionResponse.model_validate(response.json())
 
+    def list_entries(
+        self,
+        collection_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse]:
+        """Fetch one page of a collection's entries (datasets and child collections).
+
+        Returns the raw mixed response. Callers that need only datasets should
+        filter results by ``entry_type == "dataset"``.
+        """
+        response = self._get(
+            f"{_PREFIX}/{collection_id}/entries",
+            params={"offset": offset, "limit": min(limit, 100)},
+        )
+        raw = response.json()
+        entries = [_parse_entry(item) for item in raw.get("results", [])]
+        return PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse](
+            total=raw.get("total", 0),
+            limit=raw.get("limit", limit),
+            offset=raw.get("offset", offset),
+            results=entries,
+        )
+
 
 class AsyncCollectionClient(_AsyncBase):
     async def list(
@@ -126,3 +161,28 @@ class AsyncCollectionClient(_AsyncBase):
             f"{_PREFIX}/{collection_id}/datasets/{dataset_id}"
         )
         return CollectionResponse.model_validate(response.json())
+
+    async def list_entries(
+        self,
+        collection_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse]:
+        """Fetch one page of a collection's entries (datasets and child collections).
+
+        Returns the raw mixed response. Callers that need only datasets should
+        filter results by ``entry_type == "dataset"``.
+        """
+        response = await self._get(
+            f"{_PREFIX}/{collection_id}/entries",
+            params={"offset": offset, "limit": min(limit, 100)},
+        )
+        raw = response.json()
+        entries = [_parse_entry(item) for item in raw.get("results", [])]
+        return PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse](
+            total=raw.get("total", 0),
+            limit=raw.get("limit", limit),
+            offset=raw.get("offset", offset),
+            results=entries,
+        )
