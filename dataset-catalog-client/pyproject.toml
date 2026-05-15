@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "catalog-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python client library for the Scientific Dataset Catalog API"
 requires-python = ">=3.12"
 dependencies = [
