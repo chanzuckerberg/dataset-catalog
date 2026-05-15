@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.2.0...catalog-client-v0.3.0) (2026-05-15)
+
+
+### Features
+
+* Adding collection entries endpoint ([#36](https://github.com/chanzuckerberg/dataset-catalog/issues/36)) ([ae2e604](https://github.com/chanzuckerberg/dataset-catalog/commit/ae2e604fa18eee6cd9b01f183d3cd47a2ed4c5e6))
+* sync client with catalog-api ([#26](https://github.com/chanzuckerberg/dataset-catalog/issues/26)) ([e980c91](https://github.com/chanzuckerberg/dataset-catalog/commit/e980c91fdf4e6e096816fbdc57da302c9cfb958d))
+
+
+### Bug Fixes
+
+* Updating the collection client to be in sync with API ([#32](https://github.com/chanzuckerberg/dataset-catalog/issues/32)) ([2958d84](https://github.com/chanzuckerberg/dataset-catalog/commit/2958d84acef5a11d082d4e899d50786110f30a3e))
+
+
+### Miscellaneous
+
+* **deps:** bump jupyter-server in /dataset-catalog-client ([#29](https://github.com/chanzuckerberg/dataset-catalog/issues/29)) ([1dca485](https://github.com/chanzuckerberg/dataset-catalog/commit/1dca48528d0b755b380f6ab14ed33dae333dcf73))
+* **deps:** bump mistune from 3.2.0 to 3.2.1 in /dataset-catalog-client ([#30](https://github.com/chanzuckerberg/dataset-catalog/issues/30)) ([93a6f7b](https://github.com/chanzuckerberg/dataset-catalog/commit/93a6f7b724611983211e190143b1c761341d148d))
+* Making registration methods consistent ([#35](https://github.com/chanzuckerberg/dataset-catalog/issues/35)) ([7a99285](https://github.com/chanzuckerberg/dataset-catalog/commit/7a99285317f0157d7c7fc2085316354c7d741868))
+
 ## [0.2.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.1.0...catalog-client-v0.2.0) (2026-05-01)
 
 
