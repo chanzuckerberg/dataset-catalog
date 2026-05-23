@@ -8,11 +8,13 @@ from catalog_client.utils.checksums import (
 from catalog_client.utils.manifest import (
     FieldFilter,
     FilterCondition,
+    ManifestFormat,
     ManifestResult,
     ManifestStats,
     MetadataFieldSpec,
     generate_manifest,
     generate_manifest_iter,
+    write_manifest,
 )
 
 __all__ = [
@@ -23,9 +25,11 @@ __all__ = [
     # Manifest
     "FieldFilter",
     "FilterCondition",
+    "ManifestFormat",
     "ManifestResult",
     "ManifestStats",
     "MetadataFieldSpec",
     "generate_manifest",
     "generate_manifest_iter",
+    "write_manifest",
 ]

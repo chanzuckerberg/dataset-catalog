@@ -1,8 +1,11 @@
-import csv
 import os
 
 from catalog_client import CatalogClient
-from catalog_client.utils.manifest import MetadataFieldSpec, generate_manifest
+from catalog_client.utils.manifest import (
+    MetadataFieldSpec,
+    generate_manifest,
+    write_manifest,
+)
 
 CATALOG_API_TOKEN = os.getenv("CATALOG_API_TOKEN")
 CATALOG_API_URL = os.getenv(
@@ -45,10 +48,7 @@ def generate(collection_id: str, file_path: str) -> None:
         f"{result.stats.skipped_filtered_assets} filtered out)"
     )
 
-    with open(file_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=result.rows[0].keys())
-        writer.writeheader()
-        writer.writerows(result.rows)
+    write_manifest(result, file_path)
 
 
 if __name__ == "__main__":
