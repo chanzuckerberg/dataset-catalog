@@ -79,14 +79,28 @@ from catalog_client.registration import (
     RegistrationBuilder,
     RegistrationRequest,
 )
-from catalog_client.utils.manifest import generate_manifest
+from catalog_client.utils.manifest import (
+    FieldFilter,
+    FilterCondition,
+    ManifestResult,
+    ManifestStats,
+    MetadataFieldSpec,
+    generate_manifest,
+    generate_manifest_iter,
+)
 
 __all__ = [
     # Clients
     "AsyncCatalogClient",
     "CatalogClient",
     # Utils
+    "FieldFilter",
+    "FilterCondition",
+    "ManifestResult",
+    "ManifestStats",
+    "MetadataFieldSpec",
     "generate_manifest",
+    "generate_manifest_iter",
     # Registration
     "LineageSpec",
     "RegistrationBuilder",
