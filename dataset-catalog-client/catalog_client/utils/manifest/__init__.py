@@ -1,26 +1,21 @@
-"""Utility modules for catalog client."""
+"""Manifest generation package.
 
-from catalog_client.utils.checksums import (
-    ChecksumWarning,
-    generate_for_assets,
-    get_supported_algorithms,
-)
-from catalog_client.utils.manifest import (
+Generates a flat, asset-level manifest from a catalog collection.
+"""
+
+from catalog_client.utils.manifest._types import (
     FieldFilter,
     FilterCondition,
     ManifestResult,
     ManifestStats,
     MetadataFieldSpec,
+)
+from catalog_client.utils.manifest.generate import (
     generate_manifest,
     generate_manifest_iter,
 )
 
 __all__ = [
-    # Checksums
-    "ChecksumWarning",
-    "generate_for_assets",
-    "get_supported_algorithms",
-    # Manifest
     "FieldFilter",
     "FilterCondition",
     "ManifestResult",

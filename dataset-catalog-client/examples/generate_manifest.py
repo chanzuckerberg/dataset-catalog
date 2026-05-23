@@ -10,6 +10,11 @@ CATALOG_API_URL = os.getenv(
 )
 
 
+def _log_progress(datasets_processed: int) -> None:
+    if datasets_processed % 100 == 0:
+        print(f"  processed {datasets_processed} datasets...")
+
+
 def generate(collection_id: str, file_path: str) -> None:
     if not CATALOG_API_TOKEN:
         raise ValueError("CATALOG_API_TOKEN environment variable is not set")
@@ -26,6 +31,7 @@ def generate(collection_id: str, file_path: str) -> None:
         # filter_condition example — only file assets on S3 or GCS:
         # filter_condition={"asset_type": {"eq_": "file"}, "storage_platform": {"in_": ["s3", "gcs"]}},
         # recurse=True,  # include datasets from child collections
+        on_progress=_log_progress,
     )
 
     if not result:
