@@ -3,51 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterator, TypedDict
-
-
-class FieldFilter(TypedDict, total=False):
-    """Operator dict for a single asset field.
-
-    All present operators must pass (AND logic).  Supported operators:
-
-    - Equality: ``eq_`` (str or numeric)
-    - Membership: ``in_`` (value in list), ``nin_`` (value not in list)
-    - String: ``startswith_``, ``endswith_``, ``contains_``
-    - Numeric / comparable: ``gt_``, ``gte_``, ``lt_``, ``lte_``
-
-    Examples::
-
-        {"location_uri": {"endswith_": ".tiff"}}
-        {"storage_platform": {"in_": ["s3", "gcs"]}}
-        {"asset_type": {"nin_": ["folder"]}}
-        {"record_version": {"eq_": 1}}
-    """
-
-    eq_: Any
-    in_: list[Any]
-    nin_: list[Any]
-    startswith_: str
-    endswith_: str
-    contains_: str
-    gt_: Any
-    gte_: Any
-    lt_: Any
-    lte_: Any
-
-
-FilterCondition = dict[str, FieldFilter]
-"""Maps asset field names to :class:`FieldFilter` operator dicts (all must pass — AND logic).
-
-Example::
-
-    {
-        "asset_type": {"eq_": "file"},
-        "storage_platform": {"in_": ["s3", "gcs"]},
-        "location_uri": {"endswith_": ".tiff"},
-        "record_version": {"gte_": 2},
-    }
-"""
+from typing import Any, Iterator, overload
 
 
 @dataclass
@@ -72,12 +28,10 @@ class MetadataFieldSpec:
 
     @property
     def clean_path(self) -> str:
-        """Path with any ``metadata.`` prefix stripped."""
         return self.path.removeprefix("metadata.")
 
     @property
     def column_name(self) -> str:
-        """Output column name: :attr:`alias` if set, otherwise :attr:`clean_path`."""
         return self.alias if self.alias is not None else self.clean_path
 
 
@@ -118,5 +72,9 @@ class ManifestResult:
     def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self.rows)
 
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Any]: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[dict[str, Any]]: ...
     def __getitem__(self, index: int | slice) -> dict[str, Any] | list[dict[str, Any]]:
         return self.rows[index]

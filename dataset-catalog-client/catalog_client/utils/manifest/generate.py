@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator
 if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
+from catalog_client.utils.manifest._filter import FilterCondition
 from catalog_client.utils.manifest._iterator import _iter_entries
 from catalog_client.utils.manifest._types import (
-    FilterCondition,
     ManifestResult,
     ManifestStats,
     MetadataFieldSpec,
@@ -86,7 +86,6 @@ def generate_manifest_iter(
         page_size,
         recurse,
         on_progress,
-        _visited={collection_id},
         stats=None,
     )
 
@@ -146,12 +145,10 @@ def generate_manifest(
             page_size,
             recurse,
             on_progress,
-            _visited={collection_id},
             stats=stats,
         )
     )
 
-    # Warn on field paths that resolved to None for every row — likely a typo.
     if rows and parsed_fields:
         for path, alias in parsed_fields:
             if all(row.get(alias) is None for row in rows):

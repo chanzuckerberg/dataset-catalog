@@ -31,9 +31,6 @@ def generate(collection_id: str, file_path: str) -> None:
             MetadataFieldSpec("experiment.sub_modality", alias="sub_modality"),
             MetadataFieldSpec("experiment.assay[].label", alias="assay_labels"),
         ],
-        # filter_condition example — only file assets on S3 or GCS:
-        # filter_condition={"asset_type": {"eq_": "file"}, "storage_platform": {"in_": ["s3", "gcs"]}},
-        # recurse=True,  # include datasets from child collections
         on_progress=_log_progress,
     )
 

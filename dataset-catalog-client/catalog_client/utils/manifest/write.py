@@ -1,17 +1,15 @@
-"""Manifest output writers — CSV and JSON (Parquet planned)."""
-
-from __future__ import annotations
+"""Manifest output writers — CSV and JSON."""
 
 import csv
 import json
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, get_args
 
 from catalog_client.utils.manifest._types import ManifestResult
 
 ManifestFormat = Literal["csv", "json"]
 
-_SUPPORTED_FORMATS: tuple[str, ...] = ("csv", "json")
+_SUPPORTED_FORMATS: frozenset[str] = frozenset(get_args(ManifestFormat))
 
 
 def write_manifest(
@@ -22,9 +20,6 @@ def write_manifest(
 ) -> None:
     """Write manifest rows to a file.
 
-    Accepts a :class:`ManifestResult` directly or any iterable of row dicts
-    (e.g. the output of :func:`~catalog_client.utils.manifest.generate_manifest_iter`).
-
     Args:
         rows: A :class:`ManifestResult` or any iterable of row dicts.
         path: Destination file path.
@@ -32,8 +27,6 @@ def write_manifest(
 
             - ``"csv"`` *(default)* — UTF-8 CSV with a header row.
             - ``"json"`` — JSON array of objects, pretty-printed.
-
-            Parquet support is planned for a future release.
 
     Raises:
         ValueError: If *format* is not a supported value.

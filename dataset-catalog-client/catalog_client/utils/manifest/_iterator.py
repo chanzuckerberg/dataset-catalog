@@ -8,8 +8,8 @@ if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
 from catalog_client.utils.manifest._extractor import _extract_metadata_field
-from catalog_client.utils.manifest._filter import _asset_matches
-from catalog_client.utils.manifest._types import FilterCondition, ManifestStats
+from catalog_client.utils.manifest._filter import FilterCondition, _asset_matches
+from catalog_client.utils.manifest._types import ManifestStats
 
 
 def _iter_entries(
@@ -21,15 +21,18 @@ def _iter_entries(
     page_size: int,
     recurse: bool,
     on_progress: Callable[[int], None] | None,
-    _visited: set[str],
     stats: ManifestStats | None,
+    _visited: set[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Core generator — yields one row per matching asset.
 
-    Shared by both :func:`~catalog_client.utils.manifest.generate_manifest_iter`
-    and :func:`~catalog_client.utils.manifest.generate_manifest`.
     When *stats* is provided it is mutated with running counters.
+
+    *_visited* tracks collection IDs already processed to prevent cycles during
+    recursive traversal.  Callers should leave it unset; it is managed internally.
     """
+    if _visited is None:
+        _visited = {collection_id}
     offset = 0
     datasets_processed = 0
 
@@ -53,12 +56,11 @@ def _iter_entries(
                             page_size,
                             recurse,
                             on_progress,
-                            _visited,
                             stats,
+                            _visited,
                         )
                 continue
 
-            # entry_type == "dataset"
             dataset = entry.entry
             datasets_processed += 1
             if stats is not None:
@@ -86,12 +88,14 @@ def _iter_entries(
             }
 
             for asset in dataset.locations:
-                asset_dict = asset.model_dump(mode="json")
-
                 if exclude_tombstoned and asset.tombstoned:
                     if stats is not None:
                         stats.skipped_tombstoned_assets += 1
                     continue
+
+                # Serialize once: needed for filter evaluation and for
+                # storage_platform (enum → string) in the output row.
+                asset_dict = asset.model_dump(mode="json")
 
                 if filter_condition and not _asset_matches(
                     asset_dict, filter_condition
@@ -105,10 +109,10 @@ def _iter_entries(
 
                 yield {
                     **dataset_fields,
-                    "location_uri": asset.location_uri,
+                    "location_uri": asset_dict["location_uri"],
                     "storage_platform": asset_dict.get("storage_platform"),
-                    "checksum": asset.checksum,
-                    "checksum_alg": asset.checksum_alg,
+                    "checksum": asset_dict.get("checksum"),
+                    "checksum_alg": asset_dict.get("checksum_alg"),
                     **extracted,
                 }
 

@@ -93,6 +93,14 @@ def _client(*pages):
     return c
 
 
+def _raw_asset(uri="s3://x", **extra_fields):
+    """Minimal asset mock with arbitrary dict fields, for filter testing."""
+    a = MagicMock()
+    a.tombstoned = False
+    a.model_dump.return_value = {"location_uri": uri, **extra_fields}
+    return a
+
+
 # ---------------------------------------------------------------------------
 # Core row structure
 # ---------------------------------------------------------------------------
@@ -469,7 +477,7 @@ def test_iter_yields_rows():
     assert rows[0]["dataset_id"] == "ds-1"
 
 
-def test_iter_is_lazy(monkeypatch):
+def test_iter_is_lazy():
     """Rows are yielded page-by-page, not buffered."""
     dataset = _dataset(assets=[_asset()])
     client = _client(_page([_dataset_entry(dataset)]))
@@ -500,3 +508,172 @@ def test_manifest_result_supports_len_iter_index():
     assert len(result) == 2
     assert result[0]["location_uri"] == "s3://a"
     assert [r["location_uri"] for r in result] == ["s3://a", "s3://b"]
+
+
+def test_manifest_result_supports_slice():
+    dataset = _dataset(assets=[_asset("s3://a"), _asset("s3://b"), _asset("s3://c")])
+    client = _client(_page([_dataset_entry(dataset)]))
+
+    result = generate_manifest(client, "col-1")
+
+    sliced = result[1:]
+    assert isinstance(sliced, list)
+    assert [r["location_uri"] for r in sliced] == ["s3://b", "s3://c"]
+
+
+# ---------------------------------------------------------------------------
+# MetadataFieldSpec properties
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path,expected_clean",
+    [
+        ("metadata.experiment.sub_modality", "experiment.sub_modality"),
+        ("experiment.sub_modality", "experiment.sub_modality"),
+        ("metadata.split", "split"),
+        ("split", "split"),
+    ],
+)
+def test_metadata_field_spec_clean_path(path, expected_clean):
+    assert MetadataFieldSpec(path).clean_path == expected_clean
+
+
+@pytest.mark.parametrize(
+    "path,alias,expected_column",
+    [
+        ("experiment.sub_modality", "modality", "modality"),
+        ("experiment.sub_modality", None, "experiment.sub_modality"),
+        ("metadata.split", None, "split"),
+    ],
+)
+def test_metadata_field_spec_column_name(path, alias, expected_column):
+    assert MetadataFieldSpec(path, alias=alias).column_name == expected_column
+
+
+# ---------------------------------------------------------------------------
+# Filter operators — string (startswith_, endswith_, contains_)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op,operand,matching_uri,other_uri",
+    [
+        ("startswith_", "s3://images", "s3://images/photo.tiff", "s3://data/file.csv"),
+        ("endswith_", ".tiff", "s3://bucket/photo.tiff", "s3://bucket/data.csv"),
+        ("contains_", "/train/", "s3://bucket/train/f", "s3://bucket/test/f"),
+    ],
+)
+def test_filter_string_operators(op, operand, matching_uri, other_uri):
+    dataset = _dataset(assets=[_asset(matching_uri), _asset(other_uri)])
+    client = _client(_page([_dataset_entry(dataset)]))
+
+    result = generate_manifest(
+        client, "col-1", filter_condition={"location_uri": {op: operand}}
+    )
+
+    assert result.stats.total_rows == 1
+    assert result[0]["location_uri"] == matching_uri
+
+
+# ---------------------------------------------------------------------------
+# Filter operators — comparison (gt_, gte_, lt_, lte_)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op,threshold,sizes,expected_rows",
+    [
+        ("gt_", 5, [3, 8], 1),  # only 8 > 5 passes
+        ("gte_", 5, [3, 5, 8], 2),  # 5 and 8 pass
+        ("lt_", 5, [3, 8], 1),  # only 3 < 5 passes
+        ("lte_", 5, [3, 5, 8], 2),  # 3 and 5 pass
+    ],
+)
+def test_filter_comparison_operators(op, threshold, sizes, expected_rows):
+    assets = [_raw_asset(f"s3://{s}", size=s) for s in sizes]
+    ds = _dataset(assets=assets)
+    client = _client(_page([_dataset_entry(ds)]))
+
+    result = generate_manifest(
+        client, "col-1", filter_condition={"size": {op: threshold}}
+    )
+
+    assert result.stats.total_rows == expected_rows
+
+
+# ---------------------------------------------------------------------------
+# Filter — AND logic
+# ---------------------------------------------------------------------------
+
+
+def test_filter_multiple_operators_on_same_field():
+    """Both operators must pass — gte_ + lte_ together form a range."""
+    assets = [_raw_asset(f"s3://{s}", size=s) for s in [50, 200, 400]]
+    client = _client(_page([_dataset_entry(_dataset(assets=assets))]))
+
+    result = generate_manifest(
+        client, "col-1", filter_condition={"size": {"gte_": 100, "lte_": 300}}
+    )
+
+    assert result.stats.total_rows == 1
+    assert result[0]["location_uri"] == "s3://200"
+
+
+def test_filter_multiple_fields():
+    """All field conditions must pass."""
+    dataset = _dataset(
+        assets=[
+            _asset("s3://a.tiff", storage_platform="s3"),
+            _asset("s3://b.tiff", storage_platform="gcs"),
+            _asset("s3://c.csv", storage_platform="s3"),
+        ]
+    )
+    client = _client(_page([_dataset_entry(dataset)]))
+
+    result = generate_manifest(
+        client,
+        "col-1",
+        filter_condition={
+            "storage_platform": {"eq_": "s3"},
+            "location_uri": {"endswith_": ".tiff"},
+        },
+    )
+
+    assert result.stats.total_rows == 1
+    assert result[0]["location_uri"] == "s3://a.tiff"
+
+
+# ---------------------------------------------------------------------------
+# Filter — incompatible / absent field values
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op,operand,field_value",
+    [
+        ("startswith_", "s3://", 42),  # string op on int → excluded
+        ("contains_", "x", None),  # string op on absent field → excluded
+        ("gt_", 0, None),  # comparison op on absent field → excluded
+        ("lte_", 10, None),  # comparison op on absent field → excluded
+        (
+            "gt_",
+            0,
+            "abc",
+        ),  # comparison op on incompatible type → excluded, not TypeError
+        (
+            "lt_",
+            "z",
+            42,
+        ),  # comparison op on incompatible type → excluded, not TypeError
+    ],
+)
+def test_filter_operator_on_incompatible_value_excludes_asset(op, operand, field_value):
+    a = _raw_asset("s3://x", field=field_value)
+    client = _client(_page([_dataset_entry(_dataset(assets=[a]))]))
+
+    result = generate_manifest(
+        client, "col-1", filter_condition={"field": {op: operand}}
+    )
+
+    assert result.stats.total_rows == 0
