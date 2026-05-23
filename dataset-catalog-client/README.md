@@ -54,6 +54,26 @@ with CatalogClient(base_url="https://your-catalog.example.com", api_token="your-
     print(f"Found = {len(resp.results)}")
 ```
 
+To export a flat manifest of all assets in a collection:
+
+```python
+from catalog_client import CatalogClient
+from catalog_client.utils.manifest import MetadataFieldSpec, generate_manifest
+
+client = CatalogClient(base_url="https://your-catalog.example.com", api_token="your-token")
+result = generate_manifest(
+    client,
+    collection_id="<collection-uuid>",
+    metadata_fields=[
+        MetadataFieldSpec("experiment.sub_modality", alias="modality"),
+        MetadataFieldSpec("split"),
+    ],
+)
+print(f"{result.stats.total_rows} rows from {result.stats.total_datasets} datasets")
+```
+
+See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) for the full manifest generation guide.
+
 ## Documentation
 
 | Document | Description |
@@ -62,6 +82,7 @@ with CatalogClient(base_url="https://your-catalog.example.com", api_token="your-
 | [docs/catalog-entities.md](docs/catalog-entities.md) | Conceptual overview of Datasets, Data Assets, Collections, and Lineage |
 | [docs/dataset-model/dataset-schema.md](docs/dataset-model/dataset-schema.md) | Field-level reference for the `DatasetRequest` schema |
 | [docs/dataset-model/dataset-model-changelog.md](docs/dataset-model/dataset-model-changelog.md) | Schema version history and migration notes |
+| [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:
 
