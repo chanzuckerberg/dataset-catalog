@@ -163,9 +163,14 @@ def generate_manifest(
                 "record_version": dataset.record_version,
             }
 
+            clean_metadata_fields = [
+                field_path.removeprefix("metadata.")
+                for field_path in (metadata_fields or [])
+            ]
+
             extracted: dict[str, Any] = {
                 field_path: _extract_metadata_field(metadata_dict, field_path)
-                for field_path in (metadata_fields or [])
+                for field_path in clean_metadata_fields
             }
 
             for asset in dataset.locations:
