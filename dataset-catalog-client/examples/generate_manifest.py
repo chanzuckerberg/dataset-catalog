@@ -19,8 +19,6 @@ def _log_progress(datasets_processed: int) -> None:
 
 
 def generate(collection_id: str, file_path: str) -> None:
-    if not CATALOG_API_TOKEN:
-        raise ValueError("CATALOG_API_TOKEN environment variable is not set")
     client = CatalogClient(CATALOG_API_URL, CATALOG_API_TOKEN)
     result = generate_manifest(
         client,
@@ -51,7 +49,5 @@ def generate(collection_id: str, file_path: str) -> None:
 if __name__ == "__main__":
     if not CATALOG_API_TOKEN:
         raise ValueError("CATALOG_API_TOKEN environment variable is not set")
-    if not CATALOG_API_URL:
-        raise ValueError("CATALOG_API_URL environment variable is not set")
 
     generate("019e1b55-3933-756e-bb97-056b2ae39fcb", "EVICAN.csv")
