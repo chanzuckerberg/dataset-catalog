@@ -19,6 +19,7 @@ def _log_progress(datasets_processed: int) -> None:
 
 
 def generate(collection_id: str, file_path: str) -> None:
+    assert CATALOG_API_TOKEN is not None, "CATALOG_API_TOKEN must be set"
     client = CatalogClient(CATALOG_API_URL, CATALOG_API_TOKEN)
     result = generate_manifest(
         client,
