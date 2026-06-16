@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -382,3 +384,35 @@ async def test_async_register_no_lineage(httpx_mock: HTTPXMock):
     async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
         dataset_id = await client.register(_minimal_request())
     assert dataset_id == "new-uuid"
+
+
+async def test_async_register_error_on_duplicate(httpx_mock: HTTPXMock):
+    """Async register has the same duplicate-handling as sync."""
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        with pytest.raises(DuplicateDatasetError):
+            await client.register(_minimal_request(), error_on_duplicate=True)
+
+
+def test_register_sends_lineage_metadata(httpx_mock: HTTPXMock):
+    """Lineage metadata supplied via the registration flow is sent on the edge."""
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)  # No existing datasets
+    httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
+    httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
+
+    req = _minimal_request(
+        lineage=[
+            LineageSpec(
+                lineage_type=LineageType.transformed_from,
+                source_dataset_id="parent-uuid",
+                metadata={"pipeline": "nf-core"},
+            )
+        ]
+    )
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        client.register(req, error_on_duplicate=False)
+
+    lineage_req = [
+        r for r in httpx_mock.get_requests() if r.url.path.endswith("/lineage/")
+    ][0]
+    assert json.loads(lineage_req.content)["metadata"] == {"pipeline": "nf-core"}

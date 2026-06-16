@@ -79,6 +79,34 @@ def test_builder_with_lineage_ref():
     assert req.lineage[0].source_dataset_id is None
 
 
+def test_builder_with_lineage_metadata():
+    req = (
+        _builder()
+        .with_location("s3://x", asset_type=AssetType.file)
+        .with_lineage(
+            "uuid-parent",
+            lineage_type=LineageType.transformed_from,
+            metadata={"pipeline": "nf-core"},
+        )
+        .build()
+    )
+    assert req.lineage[0].metadata == {"pipeline": "nf-core"}
+
+
+def test_builder_doi_cross_db_and_metadata_schema():
+    req = (
+        _builder()
+        .with_location("s3://x", asset_type=AssetType.file)
+        .with_doi("10.1234/abc")
+        .with_cross_db_references(["SRA:X", "GEO:Y"])
+        .with_metadata_schema(["v1"])
+        .build()
+    )
+    assert req.doi == "10.1234/abc"
+    assert req.cross_db_references == ["SRA:X", "GEO:Y"]
+    assert req.metadata_schema == ["v1"]
+
+
 def test_builder_submit_calls_client_register():
     mock_client = MagicMock()
     mock_client.register.return_value = "new-dataset-id"

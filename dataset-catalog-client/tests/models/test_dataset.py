@@ -68,6 +68,21 @@ def test_dataset_create_locations_min_length():
         _minimal_create(locations=[])
 
 
+def test_dataset_create_project_optional():
+    ds = DatasetRequest(
+        canonical_id="ds-001",
+        name="Test Dataset",
+        version="1.0.0",
+        modality=DatasetModality.sequencing,
+        locations=[
+            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+        ],
+        governance=GovernanceMetadata(),
+        metadata=DatasetMetadata(),
+    )
+    assert ds.project is None
+
+
 def test_dataset_create_is_latest_defaults_false():
     ds = _minimal_create()
     assert ds.is_latest is True

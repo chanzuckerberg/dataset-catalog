@@ -6,6 +6,7 @@ from pytest_httpx import HTTPXMock
 from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.models.collection import (
     ChildCollectionEntryResponse,
+    CollectionChildType,
     CollectionRequest,
     DatasetEntryResponse,
 )
@@ -216,3 +217,45 @@ def test_list_entries_pagination_fields_propagated(httpx_mock: HTTPXMock):
     assert result.total == 50
     assert result.limit == 10
     assert result.offset == 20
+
+
+def test_list_entries_emits_entry_type(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=ENTRIES_URL,
+        json={"total": 0, "limit": 100, "offset": 0, "results": []},
+    )
+    _sync_client().list_entries("col-1", entry_type=CollectionChildType.dataset)
+    assert httpx_mock.get_request().url.params["entry_type"] == "dataset"
+
+
+# --- list_parents ---
+
+
+def test_list_parents(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}collections/col-1/parents.*"),
+        json=PAGINATED,
+    )
+    result = _sync_client().list_parents("col-1")
+    assert isinstance(result, PaginatedResponse)
+    assert result.results[0].id == "col-1"
+
+
+# --- async child-collection parity ---
+
+
+async def test_async_add_and_remove_collection(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/collections/col-2",
+        method="PUT",
+        json=COLLECTION_RESPONSE,
+    )
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/collections/col-2",
+        method="DELETE",
+        status_code=204,
+    )
+    async with _async_client() as client:
+        added = await client.add_collection("col-1", "col-2")
+        assert added.id == "col-1"
+        await client.remove_collection("col-1", "col-2")
