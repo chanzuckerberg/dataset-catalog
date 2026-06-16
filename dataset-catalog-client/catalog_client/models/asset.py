@@ -51,8 +51,8 @@ class DataAssetRequest(BaseModel):
     description: str | None = Field(
         default=None, description="Human-readable description of the asset"
     )
-    storage_platform: StoragePlatform | None = Field(
-        default=None, description="Storage platform where the asset is located"
+    storage_platform: StoragePlatform = Field(
+        description="Storage platform where the asset is located"
     )
     file_count: int | None = Field(
         default=None,
@@ -69,6 +69,13 @@ class DataAssetRequest(BaseModel):
 
 
 class DataAssetResponse(DataAssetRequest):
+    # Lenient on parse: tolerate legacy/external assets returned without a
+    # storage platform, even though it is required when creating an asset.
+    # Intentionally widens the required request field; Pydantic allows the
+    # override and responses are never submitted back as create requests.
+    storage_platform: StoragePlatform | None = Field(  # type: ignore[assignment]
+        default=None, description="Storage platform where the asset is located"
+    )
     id: str = Field(description="Unique system-generated ID for this data asset")
     tombstoned: bool = Field(description="Whether the data asset has been soft-deleted")
     created_at: datetime.datetime = Field(

@@ -82,10 +82,7 @@ class TestCheckSumBackend:
         from catalog_client.utils.checksums import _ChecksumBackend
 
         backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="s3://bucket/key", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
+        platform = backend._detect_platform("s3://bucket/key")
         assert platform == StoragePlatform.s3
 
     def test_uri_pattern_detection_s3a(self):
@@ -93,21 +90,15 @@ class TestCheckSumBackend:
         from catalog_client.utils.checksums import _ChecksumBackend
 
         backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="s3a://bucket/key", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
+        platform = backend._detect_platform("s3a://bucket/key")
         assert platform == StoragePlatform.s3
 
     def test_unsupported_platform_returns_none(self):
-        """Test unsupported platform returns None."""
+        """Test unsupported URI pattern returns None."""
         from catalog_client.utils.checksums import _ChecksumBackend
 
         backend = _ChecksumBackend()
-        asset = DataAssetRequest(
-            location_uri="http://example.com/file.txt", asset_type=AssetType.file
-        )
-        platform = backend._determine_platform(asset)
+        platform = backend._detect_platform("http://example.com/file.txt")
         assert platform is None
 
     def test_compute_filesystem_checksum_blake3(self):
@@ -353,7 +344,9 @@ class TestGenerateForAssets:
         """Test warning for unsupported platform."""
         assets = [
             DataAssetRequest(
-                location_uri="http://example.com/file.txt", asset_type=AssetType.file
+                location_uri="http://example.com/file.txt",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.external,
             )
         ]
 
@@ -403,7 +396,9 @@ class TestGenerateForAssets:
 
         assets = [
             DataAssetRequest(
-                location_uri="s3://test-bucket/test.txt", asset_type=AssetType.file
+                location_uri="s3://test-bucket/test.txt",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.s3,
             )
         ]
 

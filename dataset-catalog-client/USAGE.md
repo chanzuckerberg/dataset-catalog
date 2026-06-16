@@ -88,7 +88,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
             modality=DatasetModality.sequencing,
         )
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
-        .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder)
+        .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
         .with_governance(data_owner="genomics-team", is_pii=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
@@ -116,7 +116,7 @@ To record lineage at registration time:
             project="atlas",
             modality=DatasetModality.sequencing,
         )
-        .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder)
+        .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
         .with_governance(data_owner="genomics-team", is_pii=False)
         .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
@@ -224,8 +224,8 @@ results = client.datasets.search(
     q="rna-seq liver",
     modality=DatasetModality.sequencing,
     organism="Homo sapiens",
-    facets=["modality", "project"],     # repeatable; returns bucket counts
-    sort="relevance",                   # relevance | alphabetical | last_modified | newest | oldest
+    facets=["modality", "project"],            # repeatable; returns bucket counts
+    sort=DatasetSortOption.relevance,          # relevance | alphabetical | last_modified | newest | oldest
     offset=0,
     limit=10,
 )
@@ -440,7 +440,7 @@ The client provides utilities to automatically generate checksums for dataset as
 ### Basic usage
 
 ```python
-from catalog_client import DataAssetRequest, AssetType, DatasetRequest, DatasetModality, GovernanceMetadata, DatasetMetadata
+from catalog_client import DataAssetRequest, AssetType, StoragePlatform, DatasetRequest, DatasetModality, GovernanceMetadata, DatasetMetadata
 from catalog_client.utils.checksums import generate_for_assets
 
 # Create assets without checksums
@@ -448,10 +448,12 @@ assets = [
     DataAssetRequest(
         location_uri="s3://my-bucket/file1.txt",
         asset_type=AssetType.file,
+        storage_platform=StoragePlatform.s3,
     ),
     DataAssetRequest(
         location_uri="/hpc/shared/data/file2.txt",
         asset_type=AssetType.file,
+        storage_platform=StoragePlatform.sf_hpc,
     ),
 ]
 

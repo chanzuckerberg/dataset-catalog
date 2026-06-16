@@ -9,7 +9,7 @@ from catalog_client.exceptions import (
     DuplicateDatasetError,
     LineageResolutionError,
 )
-from catalog_client.models.asset import AssetType, DataAssetRequest
+from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
@@ -77,7 +77,11 @@ def _minimal_request(lineage=None) -> RegistrationRequest:
         project="atlas",
         modality=DatasetModality.sequencing,
         locations=[
-            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+            DataAssetRequest(
+                location_uri="s3://bucket/key",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.s3,
+            )
         ],
         governance=GovernanceMetadata(),
         metadata=DatasetMetadata(),

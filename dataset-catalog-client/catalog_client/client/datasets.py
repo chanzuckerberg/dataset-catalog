@@ -14,6 +14,7 @@ from catalog_client.models.dataset import (
     DatasetRequest,
     DatasetResponse,
     DatasetSearchResponse,
+    DatasetSortOption,
     DatasetWithRelationsResponse,
 )
 from catalog_client.models.pagination import PaginatedResponse
@@ -73,11 +74,11 @@ def _build_search_params(
     disease: str | None,
     development_stage: str | None,
     facets: list[str] | None,
-    sort: str,
+    sort: DatasetSortOption,
     offset: int,
     limit: int,
 ) -> dict:
-    params: dict = {"sort": sort, "offset": offset, "limit": limit}
+    params: dict = {"sort": sort.value, "offset": offset, "limit": limit}
     optional = {
         "q": q,
         "project": project,
@@ -170,7 +171,7 @@ class DatasetClient(_SyncBase):
         disease: str | None = None,
         development_stage: str | None = None,
         facets: _FacetList | None = None,
-        sort: str = "relevance",
+        sort: DatasetSortOption = DatasetSortOption.relevance,
         offset: int = 0,
         limit: int = 10,
     ) -> DatasetSearchResponse:
@@ -312,7 +313,7 @@ class AsyncDatasetClient(_AsyncBase):
         disease: str | None = None,
         development_stage: str | None = None,
         facets: _FacetList | None = None,
-        sort: str = "relevance",
+        sort: DatasetSortOption = DatasetSortOption.relevance,
         offset: int = 0,
         limit: int = 10,
     ) -> DatasetSearchResponse:

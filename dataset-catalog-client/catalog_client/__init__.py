@@ -13,7 +13,7 @@ Quick start (sync):
                 project="atlas",
                 modality=DatasetModality.sequencing,
             )
-            .with_location("s3://bucket/path", asset_type=AssetType.folder)
+            .with_location("s3://bucket/path", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
             .with_governance(data_owner="team-x", is_phi=False)
             .with_sample(organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")])
             .submit()
@@ -62,6 +62,7 @@ from catalog_client.models import (
     DatasetResponse,
     DatasetSearchHit,
     DatasetSearchResponse,
+    DatasetSortOption,
     DatasetType,
     DatasetWithRelationsResponse,
     DataSummaryMetadata,
@@ -138,6 +139,7 @@ __all__ = [
     "DatasetResponse",
     "DatasetSearchHit",
     "DatasetSearchResponse",
+    "DatasetSortOption",
     "DatasetType",
     "DatasetWithRelationsResponse",
     "DataSummaryMetadata",

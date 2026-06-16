@@ -39,6 +39,14 @@ class AuditLogEventType(str, enum.Enum):
     lineage_removed = "lineage_removed"
 
 
+class DatasetSortOption(str, enum.Enum):
+    relevance = "relevance"
+    alphabetical = "alphabetical"
+    last_modified = "last_modified"
+    newest = "newest"
+    oldest = "oldest"
+
+
 class DatasetRef(NamedTuple):
     """Identifies a dataset by its human-readable coordinates."""
 

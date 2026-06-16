@@ -86,7 +86,7 @@ class RegistrationBuilder:
         location_uri: str,
         *,
         asset_type: AssetType,
-        storage_platform: StoragePlatform | None = None,
+        storage_platform: StoragePlatform,
         file_format: str | None = None,
         description: str | None = None,
         size_bytes: int | None = None,
