@@ -116,10 +116,10 @@ def test_add_dataset_to_collection(httpx_mock: HTTPXMock):
 
 def test_remove_dataset_from_collection(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
-        url=f"{BASE}collections/col-1/datasets/ds-1", json=COLLECTION_RESPONSE
+        url=f"{BASE}collections/col-1/datasets/ds-1", method="DELETE", status_code=204
     )
     result = _sync_client().remove_dataset("col-1", "ds-1")
-    assert result.id == "col-1"
+    assert result is None
 
 
 def test_update_collection(httpx_mock: HTTPXMock):
@@ -156,10 +156,12 @@ def test_add_collection_to_collection(httpx_mock: HTTPXMock):
 
 def test_remove_collection_from_collection(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
-        url=f"{BASE}collections/col-1/collections/col-2", json=COLLECTION_RESPONSE
+        url=f"{BASE}collections/col-1/collections/col-2",
+        method="DELETE",
+        status_code=204,
     )
     result = _sync_client().remove_collection("col-1", "col-2")
-    assert result.id == "col-1"
+    assert result is None
 
 
 async def test_list_collections_async(httpx_mock: HTTPXMock):

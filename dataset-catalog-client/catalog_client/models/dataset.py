@@ -31,6 +31,14 @@ class DatasetType(str, enum.Enum):
     processed = "processed"
 
 
+class AuditLogEventType(str, enum.Enum):
+    created = "created"
+    updated = "updated"
+    tombstoned = "tombstoned"
+    lineage_added = "lineage_added"
+    lineage_removed = "lineage_removed"
+
+
 class DatasetRef(NamedTuple):
     """Identifies a dataset by its human-readable coordinates."""
 
@@ -53,7 +61,8 @@ class _DatasetBase(BaseModel):
         default="1.0.0",
         description="Version string for the dataset (defaults to '1.0.0')",
     )
-    project: str = Field(
+    project: str | None = Field(
+        default=None,
         description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
@@ -171,3 +180,65 @@ DatasetWithRelationsResponse.model_rebuild(
         ).CollectionResponse,
     }
 )
+
+
+class DatasetSearchHit(BaseModel):
+    """Lightweight search result; fetch the full record via datasets.get(id)."""
+
+    id: str = Field(description="Unique system-generated ID for this dataset")
+    canonical_id: str = Field(description="Canonical identifier of the dataset")
+    version: str = Field(description="Version string of the dataset")
+    name: str = Field(description="Human-readable name of the dataset")
+    modality: str = Field(description="Data modality of the dataset")
+    dataset_type: str | None = Field(
+        default=None, description="Whether the dataset is raw or processed"
+    )
+    project: str | None = Field(
+        default=None, description="Initiative the dataset belongs to"
+    )
+    is_latest: bool = Field(
+        description="Whether this is the latest version of the dataset"
+    )
+    access_scope: str | None = Field(
+        default=None, description="Governance access scope of the dataset"
+    )
+    score: float | None = Field(
+        default=None, description="Relevance score for the search query"
+    )
+
+
+class FacetBucket(BaseModel):
+    """A single faceted value and its count."""
+
+    value: str = Field(description="The faceted field value")
+    count: int = Field(description="Number of matching datasets with this value")
+
+
+class DatasetSearchResponse(BaseModel):
+    """Search results with optional facet bucket counts."""
+
+    total: int = Field(description="Total number of matching datasets")
+    limit: int = Field(description="Maximum number of hits returned in this response")
+    offset: int = Field(description="Number of hits skipped before these results")
+    results: list[DatasetSearchHit] = Field(description="Search hits for this page")
+    facets: dict[str, list[FacetBucket]] | None = Field(
+        default=None, description="Bucket counts per requested facet field"
+    )
+
+
+class DatasetAuditLogResponse(BaseModel):
+    """A single audit-history entry for a dataset."""
+
+    id: str = Field(description="Unique system-generated ID for this audit entry")
+    dataset_id: str = Field(description="ID of the dataset this entry refers to")
+    event_type: AuditLogEventType = Field(description="Type of audit event")
+    actor: str | None = Field(
+        default=None, description="Token ID of the actor that triggered the event"
+    )
+    timestamp: datetime.datetime = Field(
+        description="Logical timestamp when the event occurred"
+    )
+    db_created_at: datetime.datetime = Field(
+        description="Timestamp when the audit row was written to the database"
+    )
+    snapshot: dict = Field(description="Record snapshot captured at the event")

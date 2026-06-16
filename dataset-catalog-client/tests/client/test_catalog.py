@@ -377,6 +377,7 @@ async def test_async_catalog_client_has_sub_clients():
 
 
 async def test_async_register_no_lineage(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)  # No existing datasets
     httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
     async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
         dataset_id = await client.register(_minimal_request())

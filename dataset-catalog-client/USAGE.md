@@ -154,7 +154,10 @@ The builder exposes further optional methods:
 | `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
 | `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed, failed, skipped check names) |
 | `.with_custom_metadata(**kwargs)` | Add arbitrary key-value pairs at the dataset-metadata level |
-| `.with_lineage(source, lineage_type=…)` | Record a lineage edge (UUID string or `DatasetRef`) |
+| `.with_doi(doi)` | Set the dataset DOI |
+| `.with_cross_db_references(refs)` | Set external DB references (list or `; `-joined string) |
+| `.with_metadata_schema(schemas)` | Set the `metadata_schema` list |
+| `.with_lineage(source, lineage_type=…, metadata=None)` | Record a lineage edge (UUID string or `DatasetRef`), optionally with edge metadata |
 | `.build()` | Return the `RegistrationRequest` without submitting |
 
 ### Handling duplicate datasets
@@ -197,7 +200,9 @@ page = client.datasets.list(
     version="1.0.0",                    # exact match filter
     modality=DatasetModality.sequencing,
     project="atlas",
+    access_scope="public",              # filter by governance access scope
     is_latest=True,
+    exclude_tombstoned=True,            # set False to include tombstoned records
     include_lineage=False,
     include_collections=False,
     offset=0,
@@ -207,6 +212,43 @@ page = client.datasets.list(
 print(f"{page.total} total results")
 for ds in page.results:
     print(ds.id, ds.name, ds.version)
+```
+
+### Search datasets
+
+Full-text and faceted search over the active index. Returns lightweight hits; fetch
+the full record with `datasets.get(id)`.
+
+```python
+results = client.datasets.search(
+    q="rna-seq liver",
+    modality=DatasetModality.sequencing,
+    organism="Homo sapiens",
+    facets=["modality", "project"],     # repeatable; returns bucket counts
+    sort="relevance",                   # relevance | alphabetical | last_modified | newest | oldest
+    offset=0,
+    limit=10,
+)
+for hit in results.results:
+    print(hit.id, hit.name, hit.score)
+if results.facets:
+    for value_count in results.facets["modality"]:
+        print(value_count.value, value_count.count)
+```
+
+### Dataset history
+
+```python
+from catalog_client import AuditLogEventType
+
+history = client.datasets.history(
+    "dataset-uuid",
+    event_type=AuditLogEventType.updated,  # optional filter
+    skip=0,
+    limit=10,
+)
+for entry in history.results:
+    print(entry.event_type, entry.actor, entry.timestamp)
 ```
 
 ### Get a single dataset
@@ -306,11 +348,38 @@ collection = client.collections.get("collection-uuid")
 
 ### Add / remove datasets
 
-Both operations are idempotent and return the updated `CollectionResponse`.
+`add_dataset` is idempotent and returns the updated `CollectionResponse`. `remove_dataset`
+returns `None` (the API responds 204 No Content).
 
 ```python
 col = client.collections.add_dataset(collection_id, dataset_id)
-col = client.collections.remove_dataset(collection_id, dataset_id)
+client.collections.remove_dataset(collection_id, dataset_id)  # returns None
+```
+
+### Child collections
+
+Collections can nest. `add_collection` returns the updated parent; `remove_collection`
+returns `None`.
+
+```python
+client.collections.add_collection(parent_id, child_id)
+client.collections.remove_collection(parent_id, child_id)  # returns None
+```
+
+### List entries / parents
+
+```python
+from catalog_client import CollectionChildType
+
+# Children (datasets and/or sub-collections); filter by entry_type
+entries = client.collections.list_entries(
+    collection_id, entry_type=CollectionChildType.dataset, offset=0, limit=100
+)
+for e in entries.results:
+    print(e.entry_type, e.entry.id)
+
+# Parent collections
+parents = client.collections.list_parents(collection_id, offset=0, limit=100)
 ```
 
 ---
@@ -337,9 +406,13 @@ edge = client.lineages.create(LineageEdgeRequest(
     source_dataset_id="source-uuid",
     destination_dataset_id="derived-uuid",
     lineage_type=LineageType.transformed_from,
+    metadata={"pipeline": "nf-core/rnaseq"},  # optional edge metadata
 ))
 print(edge.id)
 ```
+
+Lineage edges created during registration can also carry metadata via
+`builder.with_lineage(source, lineage_type=…, metadata={…})`.
 
 ### List / get / delete
 

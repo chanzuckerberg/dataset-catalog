@@ -5,6 +5,7 @@ from __future__ import annotations
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
     ChildCollectionEntryResponse,
+    CollectionChildType,
     CollectionRequest,
     CollectionResponse,
     DatasetEntryResponse,
@@ -63,9 +64,8 @@ class CollectionClient(_SyncBase):
         response = self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
         return CollectionResponse.model_validate(response.json())
 
-    def remove_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
-        response = self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
-        return CollectionResponse.model_validate(response.json())
+    def remove_dataset(self, collection_id: str, dataset_id: str) -> None:
+        self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
 
     def add_collection(
         self, collection_id: str, child_collection_id: str
@@ -75,13 +75,8 @@ class CollectionClient(_SyncBase):
         )
         return CollectionResponse.model_validate(response.json())
 
-    def remove_collection(
-        self, collection_id: str, child_collection_id: str
-    ) -> CollectionResponse:
-        response = self._delete(
-            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
-        )
-        return CollectionResponse.model_validate(response.json())
+    def remove_collection(self, collection_id: str, child_collection_id: str) -> None:
+        self._delete(f"{_PREFIX}/{collection_id}/collections/{child_collection_id}")
 
     def list_entries(
         self,
@@ -89,16 +84,17 @@ class CollectionClient(_SyncBase):
         *,
         offset: int = 0,
         limit: int = 100,
+        entry_type: CollectionChildType | None = None,
     ) -> PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse]:
         """Fetch one page of a collection's entries (datasets and child collections).
 
         Returns the raw mixed response. Callers that need only datasets should
-        filter results by ``entry_type == "dataset"``.
+        filter results by ``entry_type == "dataset"`` or pass ``entry_type``.
         """
-        response = self._get(
-            f"{_PREFIX}/{collection_id}/entries",
-            params={"offset": offset, "limit": min(limit, 100)},
-        )
+        params: dict = {"offset": offset, "limit": min(limit, 100)}
+        if entry_type is not None:
+            params["entry_type"] = entry_type.value
+        response = self._get(f"{_PREFIX}/{collection_id}/entries", params=params)
         raw = response.json()
         entries = [_parse_entry(item) for item in raw.get("results", [])]
         return PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse](
@@ -107,6 +103,19 @@ class CollectionClient(_SyncBase):
             offset=raw.get("offset", offset),
             results=entries,
         )
+
+    def list_parents(
+        self,
+        collection_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> PaginatedResponse[CollectionResponse]:
+        response = self._get(
+            f"{_PREFIX}/{collection_id}/parents",
+            params={"offset": offset, "limit": min(limit, 100)},
+        )
+        return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
 
 class AsyncCollectionClient(_AsyncBase):
@@ -154,13 +163,23 @@ class AsyncCollectionClient(_AsyncBase):
         response = await self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
         return CollectionResponse.model_validate(response.json())
 
-    async def remove_dataset(
-        self, collection_id: str, dataset_id: str
+    async def remove_dataset(self, collection_id: str, dataset_id: str) -> None:
+        await self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
+
+    async def add_collection(
+        self, collection_id: str, child_collection_id: str
     ) -> CollectionResponse:
-        response = await self._delete(
-            f"{_PREFIX}/{collection_id}/datasets/{dataset_id}"
+        response = await self._put(
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
         )
         return CollectionResponse.model_validate(response.json())
+
+    async def remove_collection(
+        self, collection_id: str, child_collection_id: str
+    ) -> None:
+        await self._delete(
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
+        )
 
     async def list_entries(
         self,
@@ -168,16 +187,17 @@ class AsyncCollectionClient(_AsyncBase):
         *,
         offset: int = 0,
         limit: int = 100,
+        entry_type: CollectionChildType | None = None,
     ) -> PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse]:
         """Fetch one page of a collection's entries (datasets and child collections).
 
         Returns the raw mixed response. Callers that need only datasets should
-        filter results by ``entry_type == "dataset"``.
+        filter results by ``entry_type == "dataset"`` or pass ``entry_type``.
         """
-        response = await self._get(
-            f"{_PREFIX}/{collection_id}/entries",
-            params={"offset": offset, "limit": min(limit, 100)},
-        )
+        params: dict = {"offset": offset, "limit": min(limit, 100)}
+        if entry_type is not None:
+            params["entry_type"] = entry_type.value
+        response = await self._get(f"{_PREFIX}/{collection_id}/entries", params=params)
         raw = response.json()
         entries = [_parse_entry(item) for item in raw.get("results", [])]
         return PaginatedResponse[DatasetEntryResponse | ChildCollectionEntryResponse](
@@ -186,3 +206,16 @@ class AsyncCollectionClient(_AsyncBase):
             offset=raw.get("offset", offset),
             results=entries,
         )
+
+    async def list_parents(
+        self,
+        collection_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> PaginatedResponse[CollectionResponse]:
+        response = await self._get(
+            f"{_PREFIX}/{collection_id}/parents",
+            params={"offset": offset, "limit": min(limit, 100)},
+        )
+        return PaginatedResponse[CollectionResponse].model_validate(response.json())
