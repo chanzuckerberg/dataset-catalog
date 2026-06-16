@@ -1,6 +1,15 @@
+import datetime
 from typing import Any
 
-from catalog_client.models.asset import AssetType, DataAssetRequest
+import pytest
+from pydantic import ValidationError
+
+from catalog_client.models.asset import (
+    AssetType,
+    DataAssetRequest,
+    DataAssetResponse,
+    StoragePlatform,
+)
 from catalog_client.models.dataset import (
     DatasetModality,
     DatasetRef,
@@ -20,7 +29,11 @@ def _minimal_create(**kwargs: Any) -> DatasetRequest:
         project="atlas",
         modality=DatasetModality.sequencing,
         locations=[
-            DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+            DataAssetRequest(
+                location_uri="s3://bucket/key",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.s3,
+            )
         ],
         governance=GovernanceMetadata(),
         metadata=DatasetMetadata(),
@@ -53,7 +66,11 @@ def test_dataset_create_requires_canonical_id():
             project="p",
             modality=DatasetModality.sequencing,
             locations=[
-                DataAssetRequest(location_uri="s3://x", asset_type=AssetType.file)
+                DataAssetRequest(
+                    location_uri="s3://x",
+                    asset_type=AssetType.file,
+                    storage_platform=StoragePlatform.s3,
+                )
             ],
             governance=GovernanceMetadata(),
             metadata=DatasetMetadata(),
@@ -61,11 +78,48 @@ def test_dataset_create_requires_canonical_id():
 
 
 def test_dataset_create_locations_min_length():
-    import pytest
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         _minimal_create(locations=[])
+
+
+def test_data_asset_request_requires_storage_platform():
+    with pytest.raises(ValidationError):
+        DataAssetRequest(location_uri="s3://bucket/key", asset_type=AssetType.file)
+
+
+def test_data_asset_response_tolerates_missing_storage_platform():
+    """The response model is lenient so legacy/external assets still parse."""
+    asset = DataAssetResponse.model_validate(
+        {
+            "id": "asset-1",
+            "location_uri": "s3://bucket/key",
+            "asset_type": "file",
+            "tombstoned": False,
+            "created_at": datetime.datetime(2024, 1, 1),
+            "last_modified_at": datetime.datetime(2024, 1, 1),
+            "dataset_id": "ds-1",
+        }
+    )
+    assert asset.storage_platform is None
+
+
+def test_dataset_create_project_optional():
+    ds = DatasetRequest(
+        canonical_id="ds-001",
+        name="Test Dataset",
+        version="1.0.0",
+        modality=DatasetModality.sequencing,
+        locations=[
+            DataAssetRequest(
+                location_uri="s3://bucket/key",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.s3,
+            )
+        ],
+        governance=GovernanceMetadata(),
+        metadata=DatasetMetadata(),
+    )
+    assert ds.project is None
 
 
 def test_dataset_create_is_latest_defaults_false():

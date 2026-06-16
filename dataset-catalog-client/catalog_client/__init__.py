@@ -13,7 +13,7 @@ Quick start (sync):
                 project="atlas",
                 modality=DatasetModality.sequencing,
             )
-            .with_location("s3://bucket/path", asset_type=AssetType.folder)
+            .with_location("s3://bucket/path", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
             .with_governance(data_owner="team-x", is_phi=False)
             .with_sample(organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")])
             .submit()
@@ -40,6 +40,7 @@ from catalog_client.exceptions import (
 )
 from catalog_client.models import (
     AssetType,
+    AuditLogEventType,
     BiologicalAnnotation,
     ChannelMetadata,
     ChannelNormalization,
@@ -51,6 +52,7 @@ from catalog_client.models import (
     DataAssetRequest,
     DataAssetResponse,
     DataQualityChecks,
+    DatasetAuditLogResponse,
     DatasetCreate,
     DatasetEntryResponse,
     DatasetMetadata,
@@ -58,10 +60,14 @@ from catalog_client.models import (
     DatasetRef,
     DatasetRequest,
     DatasetResponse,
+    DatasetSearchHit,
+    DatasetSearchResponse,
+    DatasetSortOption,
     DatasetType,
     DatasetWithRelationsResponse,
     DataSummaryMetadata,
     ExperimentMetadata,
+    FacetBucket,
     GovernanceMetadata,
     IntensityStatistics,
     LineageEdgeRequest,
@@ -111,6 +117,7 @@ __all__ = [
     "RegistrationRequest",
     # Models
     "AssetType",
+    "AuditLogEventType",
     "BiologicalAnnotation",
     "ChannelMetadata",
     "ChannelNormalization",
@@ -122,6 +129,7 @@ __all__ = [
     "DataAssetRequest",
     "DataAssetResponse",
     "DataQualityChecks",
+    "DatasetAuditLogResponse",
     "DatasetCreate",
     "DatasetEntryResponse",
     "DatasetMetadata",
@@ -129,10 +137,14 @@ __all__ = [
     "DatasetRef",
     "DatasetRequest",
     "DatasetResponse",
+    "DatasetSearchHit",
+    "DatasetSearchResponse",
+    "DatasetSortOption",
     "DatasetType",
     "DatasetWithRelationsResponse",
     "DataSummaryMetadata",
     "ExperimentMetadata",
+    "FacetBucket",
     "GovernanceMetadata",
     "IntensityStatistics",
     "LineageEdgeRequest",

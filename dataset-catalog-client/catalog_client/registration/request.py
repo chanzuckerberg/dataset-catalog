@@ -30,6 +30,7 @@ class LineageSpec:
     lineage_type: LineageType
     source_dataset_id: str | None = None
     source_ref: DatasetRef | None = None
+    metadata: dict | None = None
 
 
 @dataclass
@@ -55,6 +56,9 @@ class RegistrationRequest:
     dataset_type: DatasetType | None = None
     data_quality: DataQualityChecks | None = None
     is_latest: bool = True
+    doi: str | None = None
+    cross_db_references: list[str] | str | None = None
+    metadata_schema: list[str] | None = None
     lineage: list[LineageSpec] = field(default_factory=list)
 
     def to_dataset_request(self) -> DatasetRequest:
@@ -71,4 +75,7 @@ class RegistrationRequest:
             dataset_type=self.dataset_type,
             data_quality=self.data_quality,
             is_latest=self.is_latest,
+            doi=self.doi,
+            cross_db_references=self.cross_db_references,
+            metadata_schema=self.metadata_schema,
         )

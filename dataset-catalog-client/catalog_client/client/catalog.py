@@ -69,6 +69,7 @@ class CatalogClient:
                         source_dataset_id=source_id,
                         destination_dataset_id=dataset_id,
                         lineage_type=spec.lineage_type,
+                        metadata=spec.metadata,
                     )
                 )
 
@@ -120,6 +121,9 @@ class CatalogClient:
             raise ValueError(
                 "update_if_exists and error_on_duplicate cannot both be True"
             )
+
+        if dataset.project is None:
+            raise ValueError("project is required to register a dataset")
 
         dataset_ref = DatasetRef(
             canonical_id=dataset.canonical_id,
@@ -178,27 +182,38 @@ class AsyncCatalogClient:
         self.lineages = AsyncLineageClient(self._http)
         self.collections = AsyncCollectionClient(self._http)
 
-    async def register(self, request: RegistrationRequest) -> str:
-        """Register a new dataset and any lineage edges. Returns the new dataset_id."""
-        dataset = request.to_dataset_request()
-        response = await self.datasets.create(dataset)
-        dataset_id = response.id
+    async def register(
+        self,
+        request: RegistrationRequest | DatasetRequest,
+        update_if_exists: bool = False,
+        error_on_duplicate: bool = True,
+    ) -> str:
+        """Register a dataset and any lineage edges. Returns the dataset_id."""
+        if isinstance(request, RegistrationRequest):
+            dataset_request = request.to_dataset_request()
+        else:
+            dataset_request = request
+        dataset_id = await self._create_or_update(
+            dataset_request, update_if_exists, error_on_duplicate
+        )
 
-        for spec in request.lineage:
-            if spec.source_dataset_id is not None:
-                source_id = spec.source_dataset_id
-            elif spec.source_ref is not None:
-                source_id = await self._resolve_ref(spec.source_ref)
-            else:
-                continue
+        if isinstance(request, RegistrationRequest):
+            for spec in request.lineage:
+                if spec.source_dataset_id is not None:
+                    source_id = spec.source_dataset_id
+                elif spec.source_ref is not None:
+                    source_id = await self._resolve_ref(spec.source_ref)
+                else:
+                    continue
 
-            await self.lineages.create(
-                LineageEdgeRequest(
-                    source_dataset_id=source_id,
-                    destination_dataset_id=dataset_id,
-                    lineage_type=spec.lineage_type,
+                await self.lineages.create(
+                    LineageEdgeRequest(
+                        source_dataset_id=source_id,
+                        destination_dataset_id=dataset_id,
+                        lineage_type=spec.lineage_type,
+                        metadata=spec.metadata,
+                    )
                 )
-            )
 
         return dataset_id
 
@@ -207,6 +222,51 @@ class AsyncCatalogClient:
             return await self.datasets._resolve(ref)
         except NotFoundError as exc:
             raise LineageResolutionError(ref=ref, reason=str(exc)) from exc
+
+    async def _create_or_update(
+        self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
+    ) -> str:
+        """Create a new dataset or update an existing one based on parameters."""
+        if update_if_exists and error_on_duplicate:
+            raise ValueError(
+                "update_if_exists and error_on_duplicate cannot both be True"
+            )
+
+        if dataset.project is None:
+            raise ValueError("project is required to register a dataset")
+
+        dataset_ref = DatasetRef(
+            canonical_id=dataset.canonical_id,
+            version=dataset.version,
+            project=dataset.project,
+        )
+
+        results = await self.datasets.list(
+            canonical_id=dataset.canonical_id,
+            version=dataset.version,
+            project=dataset.project,
+            limit=10,
+        )
+        existing_datasets = results.results
+
+        if not existing_datasets:
+            response = await self.datasets.create(dataset)
+            return response.id
+
+        if error_on_duplicate:
+            raise DuplicateDatasetError(dataset_ref)
+
+        if len(existing_datasets) > 1:
+            raise CatalogError(
+                f"Multiple datasets found ({len(existing_datasets)}) for {dataset_ref!r}"
+            )
+
+        if update_if_exists:
+            existing_dataset = existing_datasets[0]
+            await self.datasets.update(existing_dataset.id, dataset)
+            return existing_dataset.id
+
+        return existing_datasets[0].id
 
     def new_registration(
         self,

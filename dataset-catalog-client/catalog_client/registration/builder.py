@@ -67,12 +67,26 @@ class RegistrationBuilder:
         self._request.dataset_type = dataset_type
         return self
 
+    def with_doi(self, doi: str) -> RegistrationBuilder:
+        self._request.doi = doi
+        return self
+
+    def with_cross_db_references(
+        self, cross_db_references: list[str] | str
+    ) -> RegistrationBuilder:
+        self._request.cross_db_references = cross_db_references
+        return self
+
+    def with_metadata_schema(self, metadata_schema: list[str]) -> RegistrationBuilder:
+        self._request.metadata_schema = metadata_schema
+        return self
+
     def with_location(
         self,
         location_uri: str,
         *,
         asset_type: AssetType,
-        storage_platform: StoragePlatform | None = None,
+        storage_platform: StoragePlatform,
         file_format: str | None = None,
         description: str | None = None,
         size_bytes: int | None = None,
@@ -169,12 +183,14 @@ class RegistrationBuilder:
         source: str | DatasetRef,
         *,
         lineage_type: LineageType,
+        metadata: dict | None = None,
     ) -> RegistrationBuilder:
         if isinstance(source, str):
             self._request.lineage.append(
                 LineageSpec(
                     lineage_type=lineage_type,
                     source_dataset_id=source,
+                    metadata=metadata,
                 )
             )
         else:
@@ -182,6 +198,7 @@ class RegistrationBuilder:
                 LineageSpec(
                     lineage_type=lineage_type,
                     source_ref=source,
+                    metadata=metadata,
                 )
             )
         return self

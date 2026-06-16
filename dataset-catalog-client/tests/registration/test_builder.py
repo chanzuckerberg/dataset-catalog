@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from catalog_client.models.asset import AssetType
+from catalog_client.models.asset import AssetType, StoragePlatform
 from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import OntologyEntry, TissueEntry
@@ -23,7 +23,11 @@ def _builder(**kwargs):
 def test_builder_build_returns_registration_request():
     req = (
         _builder()
-        .with_location("s3://bucket/key", asset_type=AssetType.file)
+        .with_location(
+            "s3://bucket/key",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3,
+        )
         .with_governance(data_owner="team-x", is_phi=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
@@ -48,8 +52,16 @@ def test_builder_build_returns_registration_request():
 def test_builder_multiple_locations():
     req = (
         _builder()
-        .with_location("s3://bucket/a", asset_type=AssetType.file)
-        .with_location("s3://bucket/b", asset_type=AssetType.folder)
+        .with_location(
+            "s3://bucket/a",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3,
+        )
+        .with_location(
+            "s3://bucket/b",
+            asset_type=AssetType.folder,
+            storage_platform=StoragePlatform.s3,
+        )
         .build()
     )
     assert len(req.locations) == 2
@@ -58,7 +70,9 @@ def test_builder_multiple_locations():
 def test_builder_with_lineage_uuid():
     req = (
         _builder()
-        .with_location("s3://x", asset_type=AssetType.file)
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
         .with_lineage("uuid-parent", lineage_type=LineageType.transformed_from)
         .build()
     )
@@ -71,7 +85,9 @@ def test_builder_with_lineage_ref():
     ref = DatasetRef("parent", "1.0.0", "atlas")
     req = (
         _builder()
-        .with_location("s3://x", asset_type=AssetType.file)
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
         .with_lineage(ref, lineage_type=LineageType.version_of)
         .build()
     )
@@ -79,10 +95,44 @@ def test_builder_with_lineage_ref():
     assert req.lineage[0].source_dataset_id is None
 
 
+def test_builder_with_lineage_metadata():
+    req = (
+        _builder()
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
+        .with_lineage(
+            "uuid-parent",
+            lineage_type=LineageType.transformed_from,
+            metadata={"pipeline": "nf-core"},
+        )
+        .build()
+    )
+    assert req.lineage[0].metadata == {"pipeline": "nf-core"}
+
+
+def test_builder_doi_cross_db_and_metadata_schema():
+    req = (
+        _builder()
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
+        .with_doi("10.1234/abc")
+        .with_cross_db_references(["SRA:X", "GEO:Y"])
+        .with_metadata_schema(["v1"])
+        .build()
+    )
+    assert req.doi == "10.1234/abc"
+    assert req.cross_db_references == ["SRA:X", "GEO:Y"]
+    assert req.metadata_schema == ["v1"]
+
+
 def test_builder_submit_calls_client_register():
     mock_client = MagicMock()
     mock_client.register.return_value = "new-dataset-id"
-    builder = _builder().with_location("s3://x", asset_type=AssetType.file)
+    builder = _builder().with_location(
+        "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+    )
     builder._client = mock_client
 
     result = builder.submit()
@@ -92,7 +142,13 @@ def test_builder_submit_calls_client_register():
 
 
 def test_builder_is_latest_defaults_true():
-    req = _builder().with_location("s3://x", asset_type=AssetType.file).build()
+    req = (
+        _builder()
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
+        .build()
+    )
     assert req.is_latest is True
 
 
@@ -101,7 +157,11 @@ def test_builder_custom_metadata_updates():
     # Build a registration with custom metadata at different levels
     req = (
         _builder()
-        .with_location("s3://bucket/key", asset_type=AssetType.file)
+        .with_location(
+            "s3://bucket/key",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3,
+        )
         # Set initial sample metadata with custom field
         .with_sample(
             tissue=[
@@ -161,7 +221,11 @@ def test_builder_with_custom_metadata_only():
     """Test that with_custom_metadata works when setting only custom fields."""
     req = (
         _builder()
-        .with_location("s3://bucket/key", asset_type=AssetType.file)
+        .with_location(
+            "s3://bucket/key",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3,
+        )
         .with_custom_metadata(
             custom_field="value1",
             metadata_object={"nested": "data"},
