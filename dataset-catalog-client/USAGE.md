@@ -386,8 +386,8 @@ parents = client.collections.list_parents(collection_id, offset=0, limit=100)
 
 ## Lineage
 
-Lineage edges are **immutable** directed relationships between two datasets. Use DELETE to
-tombstone an edge recorded in error.
+Lineage edges are directed relationships between two datasets. There is no update
+operation — use DELETE to tombstone an edge recorded in error and create a new one.
 
 ### Edge types
 
@@ -451,7 +451,7 @@ assets = [
         storage_platform=StoragePlatform.s3,
     ),
     DataAssetRequest(
-        location_uri="/hpc/shared/data/file2.txt",
+        location_uri="/sf_hpc/shared/data/file2.txt",
         asset_type=AssetType.file,
         storage_platform=StoragePlatform.sf_hpc,
     ),
@@ -492,18 +492,29 @@ assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=Tr
 assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=False)
 ```
 
-### Supported platforms
+### How a platform is chosen
 
-| Platform | Detection | Notes |
-|----------|-----------|-------|
-| **S3** | URI starts with `s3://` or `s3a://` | Attempts to use existing CRC32 checksums when `algorithm=None` |
-| **HPC** | URI contains `/hpc/` | Local filesystem access required |
-| **Bruno HPC** | URI contains `/bruno_hpc/` | Local filesystem access required |
-| **CoreWeave** | URI contains `/coreweave/` | Local filesystem access required |
+For each asset the platform is resolved in two steps:
+
+1. **Explicit `storage_platform`** — if set, it is used directly. Any value is supported
+   for checksumming **except** `external` and `other`, which are skipped.
+2. **URI fallback** — if `storage_platform` is not set, only S3 is auto-detected (URI
+   starting with `s3://` or `s3a://`); anything else is skipped.
+
+Always set `storage_platform` explicitly on filesystem assets (`sf_hpc`, `chi_hpc`,
+`ny_hpc`, `reef`, `kelp`) — the URI fallback only recognizes S3.
+
+### How a checksum is computed
+
+| Platform | How it's computed | Notes |
+|----------|-------------------|-------|
+| **S3** (`s3`) | Reuses an existing S3 checksum when available, otherwise downloads the object | Prefers existing CRC32 when `algorithm=None` |
+| **Filesystem** (`sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`) | Reads the file at `location_uri` and hashes it | Local filesystem access required; defaults to `blake3` |
+| **`external`, `other`** | Not computed | Skipped with a warning |
 
 **Current limitations:**
 - Only `AssetType.file` assets are supported. Folder assets (`AssetType.folder`) are skipped.
-- Assets on unsupported platforms (`external`, `other`) or unrecognized URIs will be skipped with warnings.
+- Assets on unsupported platforms (`external`, `other`) or paths without an explicit `storage_platform` that aren't S3 URIs are skipped with warnings.
 
 ### Error handling
 
@@ -624,6 +635,6 @@ except LineageResolutionError as e:
 | `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `unknown` |
 | `DatasetType` | `raw`, `processed` |
 | `AssetType` | `file`, `folder` |
-| `StoragePlatform` | `s3`, `bruno_hpc`, `hpc`, `coreweave`, `external`, `other` |
+| `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training` |

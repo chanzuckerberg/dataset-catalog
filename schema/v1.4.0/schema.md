@@ -185,7 +185,7 @@ level are permitted for domain-specific or team-specific needs.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `sub_modality` | string | No | More granular specification of the experimental procedure (e.g. `scRNA-seq`, `brightfield`, `bulk`). |
-| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. |
+| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. Recommended ontology: **EFO** (e.g. `EFO:0022605`). |
 | `machine_information` | json | No | Information about the instrument used for data generation. |
 | `experimental_protocols` | json | No | Protocol details for the experiment. |
 
@@ -193,13 +193,38 @@ level are permitted for domain-specific or team-specific needs.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `organism` | list[json] | No | Source organism(s). Each entry: `{ label, ontology_id }`. |
-| `tissue` | list[json] | No | Tissue(s) the biosamples were derived from. Each entry: `{ label, ontology_id, type }`. |
-| `development_stage` | list[json] | No | Development stage(s) of the organism or patient. Each entry: `{ label, ontology_id }`. |
-| `disease` | list[json] | No | Associated disease(s). Each entry: `{ label, ontology_id }`. |
-| `perturbation` | list[json] | No | Applied perturbation(s). |
+| `organism` | list[json] | No | Source organism(s). Each entry: `{ label, ontology_id }`. Recommended ontology: **NCBITaxon** (e.g. `NCBITaxon:9606` for human). |
+| `tissue` | list[json] | No | Tissue(s) the biosamples were derived from. Each entry: `{ label, ontology_id, type }`. Recommended ontology: **UBERON** for tissue; see [Recommended ontologies](#recommended-ontologies) for cell-line, cell-culture, and organelle cases. |
+| `development_stage` | list[json] | No | Development stage(s) of the organism or patient. Each entry: `{ label, ontology_id }`. Recommended ontology is organism-specific — see [Recommended ontologies](#recommended-ontologies). |
+| `disease` | list[json] | No | Associated disease(s). Each entry: `{ label, ontology_id }`. Recommended ontology: **MONDO**; use `PATO:0000461` for normal/healthy and `MONDO:0021178` for injury. |
+| `perturbation` | list[json] | No | Applied perturbation(s). Recommended structure: follow CELLxGENE's [`genetic_perturbations` schema](https://github.com/chanzuckerberg/single-cell-curation/blob/main/schema/7.1.0/schema.md#genetic_perturbations) — see [Recommended ontologies](#recommended-ontologies). |
 | `sample_parent` | json | No | Sample parentage and replication information. |
 | `sample_preparation_protocols` | json | No | Sample preparation protocol details. |
+
+#### Recommended ontologies
+
+To keep metadata interoperable, populate the `ontology_id` of each entry using the
+ontology recommended below. These follow the
+[CZI cross-modality standard](https://github.com/chanzuckerberg/data-guidance/blob/main/standards/cross-modality/1.1.0/schema.md);
+the `label` should be the ontology term's preferred label.
+
+| Field | Recommended ontology | Notes & special values |
+|---|---|---|
+| `organism` | **NCBITaxon** | e.g. `NCBITaxon:9606` (human), `NCBITaxon:10090` (mouse), `NCBITaxon:7955` (zebrafish), `NCBITaxon:7227` (Drosophila), `NCBITaxon:6239` (C. elegans). |
+| `assay` | **EFO** | Experimental Factor Ontology, e.g. `EFO:0022605`. |
+| `disease` | **MONDO** | Use `PATO:0000461` for normal/healthy and `MONDO:0021178` for injury. |
+| `development_stage` | organism-specific | **HsapDv** (human), **MmusDv** (mouse), **WBls** (C. elegans), **ZFS** (zebrafish), **FBdv** (Drosophila); `UBERON:0000105` (life cycle stage) for other organisms. Use `unknown` if unavailable and `na` for cell lines. |
+| `tissue` | depends on `type` | **UBERON** for tissue/organoid (or organism-specific **WBbt** / **ZFA** / **FBbt**); **CL** for cell culture; **Cellosaurus** (`CVCL_` prefix) for cell lines; `GO:0005575` (cellular_component) descendants for organelles. |
+
+The `tissue` entry's `type` field is a controlled value: one of `tissue`, `organoid`,
+`cell culture`, `cell line`, or `organelle`.
+
+For `perturbation`, follow CELLxGENE's
+[`genetic_perturbations` schema](https://github.com/chanzuckerberg/single-cell-curation/blob/main/schema/7.1.0/schema.md#genetic_perturbations)
+for the entry structure and its controlled vocabularies. Each record carries a `role`
+(`control` or experimental), a gene identifier, and a perturbation strategy from a
+fixed set (e.g. `CRISPR activation screen`, `CRISPR interference screen`,
+`CRISPR knockout mutant`, `CRISPR knockout screen`, `control`).
 
 #### Data summary metadata
 
