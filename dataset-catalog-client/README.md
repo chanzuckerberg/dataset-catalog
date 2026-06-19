@@ -79,9 +79,8 @@ See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/READ
 | Document | Description |
 |----------|-------------|
 | [USAGE.md](USAGE.md) | Full usage guide — datasets, collections, lineage, async, error handling |
-| [docs/catalog-entities.md](docs/catalog-entities.md) | Conceptual overview of Datasets, Data Assets, Collections, and Lineage |
-| [docs/dataset-model/dataset-schema.md](docs/dataset-model/dataset-schema.md) | Field-level reference for the `DatasetRequest` schema |
-| [docs/dataset-model/dataset-model-changelog.md](docs/dataset-model/dataset-model-changelog.md) | Schema version history and migration notes |
+| [schema/v1.4.0/schema.md](../schema/v1.4.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) |
+| [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:
