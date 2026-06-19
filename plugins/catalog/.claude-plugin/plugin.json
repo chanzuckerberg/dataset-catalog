@@ -1,0 +1,11 @@
+{
+  "name": "catalog",
+  "description": "Map dataset metadata onto the latest catalog schema and register datasets with catalog-client.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dataset Catalog Team",
+    "email": "data-eng@chanzuckerberg.com"
+  },
+  "repository": "https://github.com/chanzuckerberg/dataset-catalog",
+  "license": "MIT"
+}

@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 """Map source dataset metadata to the latest catalog schema (v1.4.0) and register it.
 
-This is the TEMPLATE the model-and-register-dataset skill produces. To use it
-for a real dataset:
+This is the TEMPLATE the catalog-register skill produces, and the
+HARNESS you run while building a mapping. To use it for a real dataset:
 
   1. Replace ``load_source()`` with your real loader (a CSV row, a LIMS export,
      a JSON blob — whatever the user has). ``SOURCE`` below is a stand-in.
   2. Adjust ``build_request()`` so every source field lands in the right schema
      slot. That function IS the field mapping — each line maps one piece of the
-     user's data onto a v1.4.0 builder call. See
-     docs/dataset-model/dataset-schema.md for the authoritative field reference.
-  3. Validate the mapping offline (no token, no network):
-        uv run python .claude/skills/model-and-register-dataset/register_dataset.py --dry-run
-  4. Register against the real catalog:
-        export CATALOG_API_URL=https://your-catalog.example.com
-        export CATALOG_API_TOKEN=...      # issue at <catalog>/docs -> /token/issue
-        uv run python .claude/skills/model-and-register-dataset/register_dataset.py --submit
+     user's data onto a v1.4.0 builder call.
 
-``--dry-run`` validates the model with the same Pydantic rules the API enforces
-and then exercises the full register() flow against an in-process fake catalog,
-so a green dry-run means the mapping is wire-valid and the submit path works.
+Commands (run while iterating on the mapping):
+
+  # print the LIVE schema field tree (authoritative, never stale):
+  uv run python .../register_dataset.py --fields
+
+  # validate the mapping + see which source fields you dropped (no token/network):
+  uv run python .../register_dataset.py --dry-run
+
+  # register against the real catalog:
+  export CATALOG_API_URL=https://your-catalog.example.com
+  export CATALOG_API_TOKEN=...        # issue at <catalog>/docs -> /token/issue
+  uv run python .../register_dataset.py --submit
+
+``--dry-run`` validates with the same Pydantic rules the API enforces, prints
+the payload, exercises the full register() flow against an in-process fake
+catalog, and reports mapping COVERAGE (which source fields were used, dropped,
+or silently left behind).
 """
 
 from __future__ import annotations
@@ -27,8 +34,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import typing
 
 import httpx
+from pydantic import BaseModel
 
 from catalog_client import (
     AssetType,
@@ -44,6 +53,7 @@ from catalog_client import (
 from catalog_client.client.collections_ import CollectionClient
 from catalog_client.client.datasets import DatasetClient
 from catalog_client.client.lineages import LineageClient
+from catalog_client.models.dataset import DatasetRequest
 
 # ===========================================================================
 # 1. SOURCE — the data the user already has (REPLACE with your real loader).
@@ -80,8 +90,12 @@ SOURCE = {
         {"name": "brightfield", "type": "labelfree"},
         {"name": "DAPI", "type": "fluorescence", "target": "nucleus", "marker": "DAPI"},
     ],
+    # source-specific attribute with no exact schema slot -> rides along as an extra
+    "imaging_protocol_id": "PROTO-2025-118",
     # quality
     "qc_passed": ["schema_valid", "checksum_match"],
+    # operational fields we deliberately do NOT carry into the catalog
+    "internal_row_id": 90432,
 }
 
 
@@ -90,18 +104,63 @@ def load_source() -> dict:
     return SOURCE
 
 
+class Source:
+    """Dict wrapper that records which keys the mapping reads.
+
+    Lets ``--dry-run`` report mapping coverage: any source field you never read
+    and never explicitly ``drop()`` is flagged as silently lost — the most
+    common mapping bug. Read with ``src["x"]`` / ``src.get("x")``; mark fields
+    you intentionally omit with ``src.drop("x", "y")``.
+    """
+
+    def __init__(self, data: dict) -> None:
+        self._data = dict(data)
+        self._used: set[str] = set()
+        self._dropped: set[str] = set()
+
+    def __getitem__(self, key: str):
+        self._used.add(key)
+        return self._data[key]
+
+    def get(self, key: str, default=None):
+        self._used.add(key)
+        return self._data.get(key, default)
+
+    def drop(self, *keys: str) -> None:
+        """Acknowledge source fields that are intentionally not mapped."""
+        self._dropped.update(keys)
+
+    def unmapped(self) -> list[str]:
+        return sorted(set(self._data) - self._used - self._dropped)
+
+    def stats(self) -> tuple[int, int, int]:
+        total = len(self._data)
+        return len(self._used & self._data.keys()), len(self._dropped), total
+
+
 # Map storage URI scheme -> StoragePlatform. Extend for your storage backends.
 def _storage_platform(uri: str) -> StoragePlatform:
     if uri.startswith("s3://"):
         return StoragePlatform.s3
+    if uri.startswith(("http://", "https://")):
+        return StoragePlatform.external
     return StoragePlatform.other
+
+
+def _ontology(entry: dict, *, id_key: str = "id") -> OntologyEntry:
+    """Normalize a source ontology dict to OntologyEntry.
+
+    Source systems name the id field differently (`id`, `ontology_term_id`,
+    `term_id`); the catalog field is always `ontology_id`.
+    """
+    return OntologyEntry(label=entry.get("label"), ontology_id=entry.get(id_key))
 
 
 # ===========================================================================
 # 2. build_request — THE MAPPING. Each line places a SOURCE field into the
 #    v1.4.0 schema via a builder call. Edit to fit the user's fields.
 # ===========================================================================
-def build_request(client: CatalogClient, src: dict):
+def build_request(client: CatalogClient, src: Source):
     builder = (
         client.new_registration(
             canonical_id=src["dataset_id"],  # -> canonical_id (signature)
@@ -132,19 +191,11 @@ def build_request(client: CatalogClient, src: dict):
         # metadata.experiment --------------------------------------------
         .with_experiment(
             sub_modality=src.get("sub_modality"),
-            assay=[
-                OntologyEntry(
-                    label=src["assay"]["label"], ontology_id=src["assay"]["id"]
-                )
-            ],
+            assay=[_ontology(src["assay"])],
         )
         # metadata.sample ------------------------------------------------
         .with_sample(
-            organism=[
-                OntologyEntry(
-                    label=src["species"]["label"], ontology_id=src["species"]["id"]
-                )
-            ],
+            organism=[_ontology(src["species"])],
             tissue=[
                 TissueEntry(
                     label=src["tissue"]["label"],
@@ -158,9 +209,18 @@ def build_request(client: CatalogClient, src: dict):
             cell_count=src.get("cell_count"),
             channels=[_map_channel(ch) for ch in src.get("channels", [])],
         )
+        # EXTRAS: source fields with no exact schema slot. Every metadata
+        # block has extra="allow", so unknown keys are preserved rather than
+        # dropped. Put dataset-level extras under a namespaced custom block.
+        .with_custom_metadata(
+            source_extras={"imaging_protocol_id": src.get("imaging_protocol_id")}
+        )
         # data_quality (checks_* accept any shape: list / count / dict) --
         .with_data_quality(checks_passed=src.get("qc_passed"), checks_failed=[])
     )
+
+    # Fields intentionally NOT carried into the catalog (operational only).
+    src.drop("internal_row_id")
     return builder
 
 
@@ -177,6 +237,51 @@ def _map_channel(ch: dict) -> ChannelMetadata:
         channel_type=ch.get("type"),
         biological_annotation=annotation,
     )
+
+
+# ===========================================================================
+# Live schema introspection (--fields). Reads the actual pydantic models, so
+# it never goes stale the way a hand-written doc can.
+# ===========================================================================
+def _type_name(annotation) -> str:
+    if isinstance(annotation, type):  # plain class or enum -> just its name
+        return annotation.__name__
+    return (
+        str(annotation)
+        .replace("catalog_client.models.", "")
+        .replace("typing.", "")
+        .replace("NoneType", "None")
+    )
+
+
+def _nested_models(annotation) -> list[type[BaseModel]]:
+    out: list[type[BaseModel]] = []
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        out.append(annotation)
+    for arg in typing.get_args(annotation):
+        out.extend(_nested_models(arg))
+    return out
+
+
+def print_schema_fields(
+    model: type[BaseModel] = DatasetRequest,
+    indent: int = 0,
+    seen: set[type] | None = None,
+) -> None:
+    seen = seen if seen is not None else set()
+    if indent == 0:
+        allows = model.model_config.get("extra") == "allow"
+        print(f"{model.__name__}{'  [extra=allow]' if allows else ''}")
+    for name, field in model.model_fields.items():
+        req = "*" if field.is_required() else " "
+        print(f"{'  ' * (indent + 1)}{req} {name}: {_type_name(field.annotation)}")
+        for nested in _nested_models(field.annotation):
+            if nested not in seen:
+                seen.add(nested)
+                allows = nested.model_config.get("extra") == "allow"
+                tag = "  [extra=allow]" if allows else ""
+                print(f"{'  ' * (indent + 2)}> {nested.__name__}{tag}")
+                print_schema_fields(nested, indent + 2, seen)
 
 
 # ===========================================================================
@@ -231,8 +336,25 @@ def _mock_client() -> CatalogClient:
     return client
 
 
+def _coverage(src: Source, payload: dict) -> None:
+    used, dropped, total = src.stats()
+    print(f"\n[coverage] {used} mapped + {dropped} dropped of {total} source fields")
+    unmapped = src.unmapped()
+    if unmapped:
+        print(f"  ⚠ SILENTLY LOST (read nowhere, not dropped): {', '.join(unmapped)}")
+        print("    -> map them, or src.drop(...) to acknowledge they're omitted")
+    else:
+        print("  ✓ every source field is mapped or explicitly dropped")
+    blocks = [
+        b
+        for b in ("experiment", "sample", "data_summary")
+        if payload.get("metadata", {}).get(b)
+    ]
+    print(f"  metadata blocks populated: {', '.join(blocks) or 'none'}")
+
+
 def dry_run() -> int:
-    src = load_source()
+    src = Source(load_source())
     client = _mock_client()
     builder = build_request(client, src)
 
@@ -246,8 +368,7 @@ def dry_run() -> int:
     print(
         f"[mapping valid] schema={payload['record_schema_version']}  "
         f"canonical_id={payload['canonical_id']}  "
-        f"locations={len(payload['locations'])}  "
-        f"channels={len(payload['metadata']['data_summary']['channels'])}"
+        f"locations={len(payload['locations'])}"
     )
     print(json.dumps(payload, indent=2))
 
@@ -256,6 +377,7 @@ def dry_run() -> int:
     print(
         f"\n[dry-run submit OK] would register -> dataset_id placeholder {dataset_id}"
     )
+    _coverage(src, payload)
     client.close()
     return 0
 
@@ -269,7 +391,7 @@ def submit_real() -> int:
             file=sys.stderr,
         )
         return 2
-    src = load_source()
+    src = Source(load_source())
     with CatalogClient(base_url=base_url, api_token=token) as client:
         dataset_id = build_request(client, src).submit()
     print(f"registered -> dataset_id={dataset_id}")
@@ -277,6 +399,9 @@ def submit_real() -> int:
 
 
 def main(argv: list[str]) -> int:
+    if "--fields" in argv:
+        print_schema_fields()
+        return 0
     if "--submit" in argv:
         return submit_real()
     # default: dry-run (safe; no token/network)
