@@ -20,7 +20,6 @@ how it behaves when updated, and the fields it carries.
 - [Lineage Edge](#lineage-edge)
 - [Collection](#collection)
 - [How the entities relate](#how-the-entities-relate)
-- [Full Dataset schema tree](#full-dataset-schema-tree)
 
 ---
 
@@ -31,10 +30,6 @@ how it behaves when updated, and the fields it carries.
 | **Required** | The field MUST be present on every write. |
 | **Optional** | The field MAY be omitted. |
 | **Signature field** | A field that participates in the record's identity. Changing it does not patch in place — see *Tombstone*. |
-| **Tombstone** | A soft delete. The record is retained for audit but marked deleted; it can no longer be updated. A new record is created in its place. |
-| **`record_version`** | An integer maintained by the catalog that increments on each in-place update of a record. |
-| **`is_latest`** | A boolean on Dataset records marking whether a record is the most recent version of its canonical identity. |
-
 ---
 
 ## Entities overview
@@ -91,7 +86,7 @@ tombstone, since that is just adding previously missing information.
 
 | Field | Type | Required | Description |
 |---|---|----------|---|
-| `storage_platform` | string | Yes      | Storage backend. Valid values: `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `globus`. |
+| `storage_platform` | string | Yes      | Storage backend. Valid values: `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`. |
 | `location_uri` | string | Yes      | Full URI with storage scheme (e.g. `s3://`, `gs://`, `https://`, `globus://`, `file://`). |
 | `asset_type` | string | Yes      | `file` or `folder`. |
 | `size_bytes` | integer | No       | Total size in bytes. For folder assets, the sum of all included files. |
@@ -162,7 +157,7 @@ and creates a new record.
 | `project` | string | Yes | The project this dataset belongs to (e.g. `CellXGene`, `CryoET`, `BCP`, `Dynacell`, `SRA`). |
 | `name` | string | Yes | Human-readable dataset name. |
 | `description` | string | No | Human-readable description of the dataset. |
-| `modality` | string | Yes | High-level data modality (e.g. `sequencing`, `imaging`, `mass_spec`). |
+| `modality` | string | Yes | High-level data modality (e.g. `sequencing`, `imaging`, `mass spec`). |
 | `dataset_type` | string | No | `raw` or `processed`. |
 | `is_latest` | boolean | Yes | `true` if this is the most recent version of the canonical dataset. Defaults to `true`. |
 | `doi` | string | No | Digital Object Identifier for the dataset if it exists. |
@@ -361,8 +356,10 @@ Study
     └── Run   ← datasets attach here
 ```
 
-There can be other types of collections, such as a `model_training` grouping. A dataset
-can belong to multiple types of collections (e.g. `model_training`, `run`, `other`).
+The hierarchy is expressed by nesting collections inside one another (a collection can
+contain sub-collections as well as datasets). The names `Study`, `Experiment`, and `Run`
+above are organizational labels carried in each collection's `name`, not `collection_type`
+values. A dataset can belong to multiple collections.
 
 ### Constraints
 
@@ -373,8 +370,8 @@ can belong to multiple types of collections (e.g. `model_training`, `run`, `othe
 
 ### Properties
 
-All collection levels share the same schema. The `collection_type` field identifies
-where a collection sits in the hierarchy.
+All collection levels share the same schema. Nesting expresses the hierarchy; the
+`collection_type` field records what kind of grouping the collection is.
 
 | Field | Type | Required | Description                                                                                                        |
 |---|---|---|--------------------------------------------------------------------------------------------------------------------|
@@ -382,7 +379,7 @@ where a collection sits in the hierarchy.
 | `version` | string | Yes | Version of the collection.                                                                                         |
 | `name` | string | Yes | Human-readable name.                                                                                               |
 | `collection_owner` | string | Yes | Person or team that owns the collection.                                                                           |
-| `collection_type` | string | Yes | Accepted values: `publication`, `training`, `other`.                                                               |
+| `collection_type` | string | No | Accepted values: `publication`, `training`.                                                               |
 | `description` | string | No | Human-readable description.                                                                                        |
 | `metadata` | json | No | Additional metadata.                                                                                               |
 | `doi` | string | No | DOI for a related publication.                                                                                     |
@@ -391,11 +388,11 @@ where a collection sits in the hierarchy.
 
 ### Examples
 
-- A `study` collection for a CellXGene publication.
-- An `experiment` collection for CryoET containing all the data in a CryoET Data
+- A `publication` collection for a CellXGene study.
+- A `publication` collection for CryoET containing all the data in a CryoET Data
   Portal dataset.
-- A `run` collection for a BCP including all the assets in an order from a CRO, plus
-  the related processed outcomes.
+- A `training` collection grouping the datasets used to train a model, including the
+  related processed outcomes.
 
 ---
 
@@ -416,106 +413,3 @@ Collection (Study → Experiment → Run)
 A dataset always has at least one data asset and exactly one governance block.
 Collections and lineage edges are optional — a dataset can exist without belonging to
 any collection and without any lineage edges.
-
----
-
-## Full Dataset schema tree
-
-```
-Dataset
-├── canonical_id*          (required, signature)
-├── version*               (required, signature)
-├── project*               (required, signature)
-├── name*                  (required)
-├── modality*              (required)
-├── description
-├── dataset_type
-├── is_latest*             (required, default true)
-├── doi
-├── cross_db_references
-├── record_schema_version
-├── metadata_schema[]
-│
-├── locations[]*           (required, min 1)
-│   └── DataAsset
-│       ├── location_uri*  (required, signature)
-│       ├── asset_type*    (required, signature)
-│       ├── size_bytes     (signature)
-│       ├── checksum        (signature)
-│       ├── checksum_alg    (signature)
-│       ├── encoding
-│       ├── file_format
-│       ├── description
-│       ├── storage_platform
-│       └── file_count
-│
-├── governance*            (required)
-│   └── GovernanceMetadata
-│       ├── access_scope    (default internal)
-│       ├── license
-│       ├── is_pii
-│       ├── is_phi
-│       ├── data_steward
-│       ├── data_owner
-│       ├── is_external_reference
-│       └── embargoed_until
-│
-├── data_quality
-│   └── DataQualityChecks
-│       ├── checks_passed
-│       ├── checks_failed
-│       └── checks_skipped
-│
-└── metadata*              (required)
-    └── DatasetMetadata
-        ├── experiment
-        │   └── ExperimentMetadata
-        │       ├── sub_modality
-        │       ├── assay[]                → { label, ontology_id }
-        │       ├── machine_information    (json)
-        │       └── experimental_protocols (json)
-        │
-        ├── sample
-        │   └── SampleMetadata
-        │       ├── organism[]             → { label, ontology_id }
-        │       ├── tissue[]               → { label, ontology_id, type }
-        │       ├── development_stage[]    → { label, ontology_id }
-        │       ├── disease[]              → { label, ontology_id }
-        │       ├── perturbation[]         (list[json])
-        │       ├── sample_parent          (json)
-        │       └── sample_preparation_protocols (json)
-        │
-        └── data_summary
-            └── DataSummaryMetadata
-                ├── cell_count
-                ├── read_count
-                ├── read_length
-                ├── read_confidence
-                ├── axes[]                 → { name, type, unit }
-                ├── resolution             → { spatial, temporal }
-                ├── dimension
-                ├── multiscales            (json)
-                ├── plate                  (json)
-                ├── well
-                ├── fov
-                ├── dca_schema_version
-                ├── channels[]
-                │   └── ChannelMetadata
-                │       ├── name
-                │       ├── index
-                │       ├── description
-                │       ├── channel_type
-                │       └── biological_annotation
-                │           └── BiologicalAnnotation
-                │               ├── biological_target
-                │               ├── marker_type
-                │               ├── marker
-                │               ├── cpg_labeled_structure
-                │               └── cpg_labeled_molecule
-                └── channel_normalization
-                    └── ChannelNormalization
-                        ├── dataset_statistics    → IntensityStatistics
-                        └── timepoint_statistics  → dict[str, IntensityStatistics]
-```
-
-`*` = required field

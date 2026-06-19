@@ -103,23 +103,24 @@ def test_data_asset_response_tolerates_missing_storage_platform():
     assert asset.storage_platform is None
 
 
-def test_dataset_create_project_optional():
-    ds = DatasetRequest(
-        canonical_id="ds-001",
-        name="Test Dataset",
-        version="1.0.0",
-        modality=DatasetModality.sequencing,
-        locations=[
-            DataAssetRequest(
-                location_uri="s3://bucket/key",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
-            )
-        ],
-        governance=GovernanceMetadata(),
-        metadata=DatasetMetadata(),
-    )
-    assert ds.project is None
+def test_dataset_create_project_required():
+    """project is a signature field and must be provided (schema v1.4.0)."""
+    with pytest.raises(ValidationError):
+        DatasetRequest(
+            canonical_id="ds-001",
+            name="Test Dataset",
+            version="1.0.0",
+            modality=DatasetModality.sequencing,
+            locations=[
+                DataAssetRequest(
+                    location_uri="s3://bucket/key",
+                    asset_type=AssetType.file,
+                    storage_platform=StoragePlatform.s3,
+                )
+            ],
+            governance=GovernanceMetadata(),
+            metadata=DatasetMetadata(),
+        )
 
 
 def test_dataset_create_is_latest_defaults_false():
