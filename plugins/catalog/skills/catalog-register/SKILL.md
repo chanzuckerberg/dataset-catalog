@@ -6,81 +6,51 @@ description: Map a user's existing dataset metadata onto the latest catalog sche
 # Map data to the schema & write a registration script (catalog-client)
 
 `catalog-client` is a Python SDK for the Scientific Dataset Catalog API. This
-skill helps you take **metadata a user already has** (a CSV row, a LIMS export,
-a JSON blob, a spreadsheet) and:
+skill takes **metadata a user already has** (a CSV row, a LIMS export, a JSON
+blob, a spreadsheet) and (1) **maps** each field onto the latest dataset schema
+(**v1.4.0**), then (2) **writes a registration script** the user runs to `POST`
+it to the catalog. Registration is one HTTPS `POST` to a remote catalog — no UI,
+no bundled server.
 
-1. **map** each field onto the latest dataset schema (**v1.4.0**), then
-2. **write a registration script** the user runs to `POST` it to the catalog.
+## Workflow
 
-There is no UI and no bundled server — registration is one HTTPS `POST` to a
-remote catalog. This skill ships as part of the **`catalog`** plugin; the
-bundled helper and schema reference are addressed via `${CLAUDE_PLUGIN_ROOT}`
-(set automatically when the plugin loads) so they resolve wherever the plugin is
-installed.
+[`register_dataset.py`](register_dataset.py) is both the **template** you hand
+the user and the **harness** you run; read `build_request()` first — it's the
+worked example (source dict → every v1.4.0 block). Paths below use
+`$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the plugin loads).
 
-## The workflow
-
-1. **See the live schema before mapping.** Don't trust memory or a doc that can
-   drift — print the actual model tree (required fields marked `*`, blocks that
-   accept extras marked `[extra=allow]`):
-   ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/skills/catalog-register/register_dataset.py" --fields
+1. **See the live schema first** — `python $P/register_dataset.py --fields`.
+   Reads the pydantic models, so it never goes stale; required fields are marked
+   `*`, blocks accepting extras `[extra=allow]`. Map onto these exact names.
+2. **Copy the template** to a working file; edit only `load_source()` (point at
+   the data) and `build_request()` (one builder call per source field).
+3. **Dry-run** (no token, no network) — `python $P/register_dataset.py --dry-run`.
+   Validates with the API's own Pydantic rules, prints the JSON payload,
+   mock-submits against an in-process fake catalog, and reports **coverage** —
+   every source field mapped, dropped, or *silently lost*. Iterate until clean:
    ```
-2. **Copy the template** `register_dataset.py` to a working file and edit two
-   things: `load_source()` (point it at the user's data) and `build_request()`
-   (the field mapping — one builder call per source field).
-3. **Dry-run: validate + check coverage** — no token, no network:
-   ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/skills/catalog-register/register_dataset.py" --dry-run
+   [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [coverage] 24 mapped + 1 dropped of 25 source fields
+     ✓ every source field is mapped or explicitly dropped
    ```
-   It validates with the same Pydantic rules the API enforces, prints the exact
-   JSON payload, runs the full `register()` flow against an in-process fake
-   catalog, **and reports coverage** — every source field that was mapped,
-   explicitly dropped, or *silently lost*. Iterate until coverage is clean.
-4. **Register for real** once the user has a token:
+4. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
    ```bash
-   export CATALOG_API_URL=https://your-catalog.example.com
-   export CATALOG_API_TOKEN=...        # issue at <catalog>/docs -> /token/issue
-   python "${CLAUDE_PLUGIN_ROOT}/skills/catalog-register/register_dataset.py" --submit
+   export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
+   python $P/register_dataset.py --submit
    ```
-
-## The harness / template
-
-[`register_dataset.py`](register_dataset.py) is both the **template** you give
-the user and the **mapping harness** you run. Read `build_request()` first — it
-is the worked mapping example (source dict → every v1.4.0 block). Three modes:
-
-- `--fields` — print the live schema tree (authoritative; reads the pydantic
-  models, so it never goes stale). Use it to find exact field names and which
-  blocks accept extras.
-- `--dry-run` — validate the mapping, print the payload, mock-submit, and report
-  coverage. Verified output:
-  ```
-  [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
-  { ...full JSON payload... }
-  [dry-run submit OK] would register -> dataset_id placeholder 00000000-0000-4000-8000-000000000000
-  [coverage] 24 mapped + 1 dropped of 25 source fields
-    ✓ every source field is mapped or explicitly dropped
-    metadata blocks populated: experiment, sample, data_summary
-  ```
-- `--submit` — register against the real catalog (needs the env vars above).
 
 ## Prerequisites
 
-The helper imports `catalog_client`, which installing the plugin does **not**
-provide. The Python interpreter that runs `register_dataset.py` must have it:
+`register_dataset.py` imports `catalog_client`, which the plugin does **not**
+install — the interpreter that runs it must already have it:
 
 ```bash
-# inside the dataset-catalog monorepo (dev):
-uv sync --all-groups          # then invoke with `uv run python ...`
-
-# anywhere else (standalone):
-pip install 'git+ssh://git@github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+uv sync --all-groups   # monorepo dev; then run via `uv run python ...`
+pip install 'git+ssh://git@github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'  # standalone
 ```
 
-Field-level schema reference travels with the plugin at
-`${CLAUDE_PLUGIN_ROOT}/skills/catalog-register/reference/dataset-schema.md`; the
-`--fields` command prints the same schema live from the installed models.
+`--fields` is the authoritative schema (live from the installed models); a
+static copy travels at `$P/reference/dataset-schema.md` for offline reference.
 
 ## Mapping cheat-sheet (source field → schema slot → builder call)
 
@@ -88,19 +58,19 @@ Field-level schema reference travels with the plugin at
 blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 `metadata`.
 
-| User's data | Schema slot | Builder call |
-|---|---|---|
-| stable external id | `canonical_id` (signature) | `new_registration(canonical_id=...)` |
-| version / project | `version`, `project` (signature) | `new_registration(version=..., project=...)` |
-| modality | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown` |
-| raw vs processed | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`) |
-| file/folder URI + checksum | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=...)` |
-| license / access / owner / PHI | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=...)` |
-| assay / instrument / sub-modality | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])` |
-| organism / tissue / disease | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])` |
-| cell/read counts, channels, dims | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)` |
-| QC results | `data_quality` | `.with_data_quality(checks_passed=..., checks_failed=...)` |
-| provenance link | lineage edge | `.with_lineage(source, lineage_type=LineageType...)` |
+| User's data                                       | Schema slot | Builder call |
+|---------------------------------------------------|---|---|
+| stable external id                                | `canonical_id` (signature) | `new_registration(canonical_id=...)` |
+| version / project                                 | `version`, `project` (signature) | `new_registration(version=..., project=...)` |
+| modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown` |
+| raw vs processed                                  | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`) |
+| file/folder URI + checksum                        | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=...)` |
+| license / access / owner / PHI                    | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=...)` |
+| assay / instrument / sub-modality                 | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])` |
+| organism / tissue / disease / developmental_stage | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])` |
+| cell/read counts, channels, dims                  | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)` |
+| QC results                                        | `data_quality` | `.with_data_quality(checks_passed=..., checks_failed=...)` |
+| provenance link                                   | lineage edge | `.with_lineage(source, lineage_type=LineageType...)` |
 
 Ontology values are `OntologyEntry(label=..., ontology_id=...)`; tissue adds
 `TissueEntry(..., type=...)`. Per-channel biology is
@@ -111,7 +81,7 @@ Ontology values are `OntologyEntry(label=..., ontology_id=...)`; tissue adds
 Don't drop a source field just because the schema has no named home for it.
 **Every metadata block has
 `extra="allow"`** (`DatasetMetadata`,
-`ExperimentMetadata`, `SampleMetadata`, `DataSummaryMetadata`, `ChannelMetadata`,
+`ExperimentMetadata`, `SampleMetadata`, `DataSummaryMetadata`
 … — confirm with `--fields`, look for `[extra=allow]`). Unknown keys are
 preserved, not rejected. So:
 
@@ -150,8 +120,11 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
 - **Infer the enums.** `modality` ∈ {`imaging`,`sequencing`,`mass spec`,`unknown`}
   and `dataset_type` ∈ {`raw`,`processed`} usually have to be *derived* from the
   source (assay type, file format, processing stage), not copied verbatim.
-- **Don't invent values.** If the source has no `license`/`checksum`/owner,
-  leave it unset — empty is honest; a fabricated value is a data-quality bug.
+- **Don't invent values.** If the source has no `checksum`/owner, leave it
+  unset — empty is honest; a fabricated value is a data-quality bug.
+- **`license`: ask, don't guess.** If you can't find license information in the
+  source, check with the user what it should be rather than leaving it blank or
+  fabricating one. Only set `license` to a value the user confirms.
 - **`access_scope` is always `"internal"`.** Hard-code it in `.with_governance(...)`;
   never map it from a source `visibility`/`public` field.
 - **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
@@ -181,7 +154,7 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
 - **Composite `canonical_id`: highest → lowest granularity, `/`-separated.**
   When no single stable id exists and you build one from multiple values, order
   the parts coarsest to finest and join with `/` (e.g.
-  `project/screen/plate/well/fov`, not reversed or `_`-joined). Use the same
+  `dataset/screen/plate/well/fov`, not reversed or `_`-joined). Use the same
   ordering for every record so ids sort and group sensibly.
 - **Keep signatures stable across re-runs.** `canonical_id` + `version` +
   `project` + each asset's signature fields define identity; pick them from
