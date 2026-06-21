@@ -95,7 +95,7 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 | modality | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown` |
 | raw vs processed | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`) |
 | file/folder URI + checksum | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=...)` |
-| license / access / owner / PHI | `governance` | `.with_governance(license=..., access_scope=..., data_owner=..., is_phi=...)` |
+| license / access / owner / PHI | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=...)` |
 | assay / instrument / sub-modality | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])` |
 | organism / tissue / disease | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])` |
 | cell/read counts, channels, dims | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)` |
@@ -117,11 +117,25 @@ preserved, not rejected. So:
 
 - Field is *sample-ish* (e.g. `sex`, `ethnicity`, `donor_id`) → pass it as an
   extra kwarg to `.with_sample(...)`.
+  - If that field names an **ontology concept** (`cell_line`, `cell_type`,
+    `cell_strain`, `organelle`, …), give it the same shape as the named sample
+    fields: a `list[OntologyEntry]` (`[OntologyEntry(label=..., ontology_id=...)]`),
+    not a bare string. Resolve `ontology_id` via OLS (see playbook) just like
+    `organism` / `tissue` / `disease`.
 - Field is *measurement-ish* (e.g. `feature_count`, `mean_genes_per_cell`) →
   extra kwarg to `.with_data_summary(...)`.
-- Field is dataset-level provenance/QC with no block → group it under a
-  namespaced key via `.with_custom_metadata(source_system={...})` so it stays
-  identifiable and doesn't collide with schema fields.
+- Field doesn't belong to `sample` / `experiment` / `data_summary` → put it
+  under the single `additional_metadata` key on the metadata block via
+  `.with_custom_metadata(additional_metadata={...})`. Keep everything that has
+  no named slot together under that one key rather than scattering top-level
+  custom keys.
+
+**Exception — `governance` is fixed-shape.** Never route extras into
+`.with_governance(...)`. Map only the schema's named fields (`license`,
+`data_sensitivity`, `access_scope`, `is_pii`, `is_phi`, `data_steward`,
+`data_owner`, `is_external_reference`, `embargoed_until`); a governance-ish
+source field with no matching name goes under `.with_custom_metadata(...)`, not
+into the governance block.
 
 This is how you get **lossless** mappings. The coverage report exists to make
 sure you made a *deliberate* choice for every field — mapped, extra, or
@@ -138,6 +152,37 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
   source (assay type, file format, processing stage), not copied verbatim.
 - **Don't invent values.** If the source has no `license`/`checksum`/owner,
   leave it unset — empty is honest; a fabricated value is a data-quality bug.
+- **`access_scope` is always `"internal"`.** Hard-code it in `.with_governance(...)`;
+  never map it from a source `visibility`/`public` field.
+- **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
+  **not** default them to `False` when the source is silent. Always confirm the
+  PII and PHI status with the user before setting either.
+- **Confirm `storage_platform` when it isn't obvious.** Don't infer it from the
+  path alone. A `/hpc/...` path is **not** always `sf_hpc` — there are three HPC
+  backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site. An `http(s)://` URI
+  is **not** always `external` — internal platforms can sit behind a URL. State
+  your assumption and confirm with the user before mapping. (Members: `s3`,
+  `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.)
+- **Resolve ontology labels via OLS.** When an ontology field gives only a
+  `label` and no id, look the term up in the EBI Ontology Lookup Service and use
+  the returned CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`):
+  `GET https://www.ebi.ac.uk/ols4/api/search?q=<label>&exact=true` — take the
+  top hit's `obo_id`/`curie` from the matching ontology. Don't fabricate ids;
+  if OLS returns no confident match, leave `ontology_id` unset and keep the label.
+- **Zarr paths: confirm granularity first.** When a data path is a `.zarr` store,
+  ask the user what level each *dataset record* should represent —
+  screen / plate / well / FOV. If they choose a coarser level (e.g. plate), also
+  ask whether each `location` (data asset) should point at the next level down
+  (e.g. one location per well/FOV) rather than the whole store. Map `locations`
+  accordingly — don't assume one dataset = one `.zarr` root.
+- **`version` is never null.** It's a required signature field (`str`, not
+  optional). If the source has no version, default it to `"1.0.0"` — use
+  `src.get("release") or "1.0.0"`, never pass `None`.
+- **Composite `canonical_id`: highest → lowest granularity, `/`-separated.**
+  When no single stable id exists and you build one from multiple values, order
+  the parts coarsest to finest and join with `/` (e.g.
+  `project/screen/plate/well/fov`, not reversed or `_`-joined). Use the same
+  ordering for every record so ids sort and group sensibly.
 - **Keep signatures stable across re-runs.** `canonical_id` + `version` +
   `project` + each asset's signature fields define identity; pick them from
   stable source IDs so re-running updates rather than duplicates.

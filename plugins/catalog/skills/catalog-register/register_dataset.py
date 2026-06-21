@@ -139,6 +139,11 @@ class Source:
 
 
 # Map storage URI scheme -> StoragePlatform. Extend for your storage backends.
+# WARNING: schemes are ambiguous. A "/hpc/..." path is not always sf_hpc (also
+# chi_hpc / ny_hpc), and an http(s):// URI is not always `external` (internal
+# platforms can sit behind a URL). Confirm the platform with the user when the
+# path alone doesn't make it obvious. Members: s3, sf_hpc, chi_hpc, ny_hpc,
+# reef, kelp, external, other.
 def _storage_platform(uri: str) -> StoragePlatform:
     if uri.startswith("s3://"):
         return StoragePlatform.s3
@@ -165,7 +170,7 @@ def build_request(client: CatalogClient, src: Source):
         client.new_registration(
             canonical_id=src["dataset_id"],  # -> canonical_id (signature)
             name=src["title"],  # -> name
-            version=src["release"],  # -> version (signature)
+            version=src.get("release") or "1.0.0",  # never null; default "1.0.0"
             project=src["program"],  # -> project (signature)
             modality=DatasetModality(src["modality"]),  # -> modality
         )
@@ -184,9 +189,12 @@ def build_request(client: CatalogClient, src: Source):
         # governance (required block) ------------------------------------
         .with_governance(
             license=src.get("license"),
-            access_scope=src.get("visibility"),  # "public" | "internal"
+            access_scope="internal",  # always "internal" — never map from source
             data_owner=src.get("owner_email"),
-            is_phi=src.get("has_phi", False),
+            # Never assume PII/PHI status. Leave None (unknown) when the source
+            # is silent — do NOT default to False. Confirm both with the user.
+            is_pii=src.get("has_pii"),
+            is_phi=src.get("has_phi"),
         )
         # metadata.experiment --------------------------------------------
         .with_experiment(
@@ -209,11 +217,12 @@ def build_request(client: CatalogClient, src: Source):
             cell_count=src.get("cell_count"),
             channels=[_map_channel(ch) for ch in src.get("channels", [])],
         )
-        # EXTRAS: source fields with no exact schema slot. Every metadata
-        # block has extra="allow", so unknown keys are preserved rather than
-        # dropped. Put dataset-level extras under a namespaced custom block.
+        # EXTRAS: source fields that don't fall into sample / experiment /
+        # data_summary. Every metadata block has extra="allow", so unknown keys
+        # are preserved rather than dropped. Group all such dataset-level extras
+        # under the single `additional_metadata` key in the metadata block.
         .with_custom_metadata(
-            source_extras={"imaging_protocol_id": src.get("imaging_protocol_id")}
+            additional_metadata={"imaging_protocol_id": src.get("imaging_protocol_id")}
         )
         # data_quality (checks_* accept any shape: list / count / dict) --
         .with_data_quality(checks_passed=src.get("qc_passed"), checks_failed=[])
