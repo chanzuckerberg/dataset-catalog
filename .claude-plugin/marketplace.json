@@ -1,8 +1,8 @@
 {
   "name": "dataset-catalog",
   "owner": {
-    "name": "Dataset Catalog Team",
-    "email": "mvenkatakrishnan@chanzuckerberg.com"
+    "name": "AI Data Engineering Team",
+    "email": "data-eng@chanzuckerberg.com"
   },
   "plugins": [
     {
