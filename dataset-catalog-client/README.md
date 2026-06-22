@@ -20,18 +20,25 @@ pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirect
  uv pip install 'git+ssh://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
-#### For CI/CD Pipelines
-When installing in automated pipelines, you'll need GitHub authentication. Set up a GitHub token with repository access:
+### Pin to a specific version
+
+The installs above track the latest commit on the default branch. For reproducible
+environments, pin to a released tag by adding `@<tag>` before `#subdirectory`. Release
+tags use the form `catalog-client-v<version>` (e.g. `catalog-client-v0.3.0`):
 
 ```bash
-# Set the GitHub token as an environment variable
-export GITHUB_TOKEN="your-github-token-here"
-
-# Install using the token for authentication
-pip install 'git+https://${GITHUB_TOKEN}@github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@catalog-client-v0.3.0#subdirectory=dataset-catalog-client'
 ```
 
-Make sure your GitHub token has appropriate permissions to access the repository.
+You can pin to any git ref the same way — a branch name or a full commit SHA:
+
+```bash
+# Pin to a commit
+pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@ccfec2008d225a919d1c6591f5d3649d112a5022#subdirectory=dataset-catalog-client'
+```
+
+See the [list of releases](https://github.com/chanzuckerberg/dataset-catalog/releases)
+for available versions.
 
 ## Getting an API Token
 
@@ -79,9 +86,8 @@ See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/READ
 | Document | Description |
 |----------|-------------|
 | [USAGE.md](USAGE.md) | Full usage guide — datasets, collections, lineage, async, error handling |
-| [docs/catalog-entities.md](docs/catalog-entities.md) | Conceptual overview of Datasets, Data Assets, Collections, and Lineage |
-| [docs/dataset-model/dataset-schema.md](docs/dataset-model/dataset-schema.md) | Field-level reference for the `DatasetRequest` schema |
-| [docs/dataset-model/dataset-model-changelog.md](docs/dataset-model/dataset-model-changelog.md) | Schema version history and migration notes |
+| [schema/v1.4.0/schema.md](../schema/v1.4.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) |
+| [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:

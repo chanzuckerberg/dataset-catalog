@@ -12,7 +12,7 @@ Want to integrate dataset catalog functionality into your Python workflows?
 
 ### 📋 **Understanding the Data Schema**
 Want to understand dataset metadata structure and relationships?
-→ **[Schema Documentation](schema/)** *(coming soon)*
+→ **[Schema Documentation](schema/README.md)**
 
 ### 🔧 **Contributing**
 Want to contribute to the codebase?
@@ -35,7 +35,7 @@ This will walk you through installation, getting an API token, and your first fe
 
 ### 🔗 **Related Projects**
 - **Dataset Catalog API** - The backend service this client connects to
-- **Schema Documentation** - *(coming soon)* Detailed data models and relationships
+- **[Schema Documentation](schema/README.md)** - Detailed data models and relationships
 
 ### 🤝 **Contributing**
 - **[Development Setup](dataset-catalog-client/README.md)** - Local development and testing

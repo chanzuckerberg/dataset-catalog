@@ -69,8 +69,7 @@ class _DatasetBase(BaseModel):
         default="1.0.0",
         description="Version string for the dataset (defaults to '1.0.0')",
     )
-    project: str | None = Field(
-        default=None,
+    project: str = Field(
         description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
