@@ -14,9 +14,22 @@ Want to integrate dataset catalog functionality into your Python workflows?
 Want to understand dataset metadata structure and relationships?
 → **[Schema Documentation](schema/README.md)**
 
+### 🤖 **Claude Code Plugin**
+Prefer to work in Claude Code? Install the `catalog` plugin.
+→ **[Installation](#claude-code-plugin)**
+
 ### 🔧 **Contributing**
 Want to contribute to the codebase?
 → **[Development Guide](dataset-catalog-client/README.md#installation)**
+
+## Claude Code Plugin
+
+This repo ships a Claude Code plugin, `catalog`, distributed through the `dataset-catalog` marketplace defined in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Install it from inside a Claude Code session:
+
+```
+/plugin marketplace add chanzuckerberg/dataset-catalog
+/plugin install catalog@dataset-catalog
+```
 
 ## Quick Start
 
