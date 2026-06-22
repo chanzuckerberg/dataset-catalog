@@ -2,7 +2,7 @@
   "name": "dataset-catalog",
   "owner": {
     "name": "AI Data Engineering Team",
-    "email": "data-eng@chanzuckerberg.com"
+    "email": "data-engineering@chanzuckerberg.com"
   },
   "plugins": [
     {
