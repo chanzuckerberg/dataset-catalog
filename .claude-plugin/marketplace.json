@@ -1,0 +1,14 @@
+{
+  "name": "dataset-catalog",
+  "owner": {
+    "name": "AI Data Engineering Team",
+    "email": "data-engineering@chanzuckerberg.com"
+  },
+  "plugins": [
+    {
+      "name": "catalog",
+      "source": "./plugins/catalog",
+      "description": "Tools for the Scientific Dataset Catalog: map metadata to the latest schema and register datasets with catalog-client."
+    }
+  ]
+}
