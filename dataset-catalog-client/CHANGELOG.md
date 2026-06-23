@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.3.0...catalog-client-v0.3.1) (2026-06-23)
+
+
+### Miscellaneous
+
+* **deps:** bump jupyter-server in /dataset-catalog-client ([#44](https://github.com/chanzuckerberg/dataset-catalog/issues/44)) ([6b64085](https://github.com/chanzuckerberg/dataset-catalog/commit/6b64085b1f57a53535b520c98822b5bb2851ebf1))
+
 ## [0.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.2.0...catalog-client-v0.3.0) (2026-06-16)
 
 
