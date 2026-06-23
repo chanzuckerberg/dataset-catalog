@@ -7,24 +7,45 @@ description: Map a user's existing dataset metadata onto the latest catalog sche
 
 `catalog-client` is a Python SDK for the Scientific Dataset Catalog API. This
 skill takes **metadata a user already has** (a CSV row, a LIMS export, a JSON
-blob, a spreadsheet) and (1) **maps** each field onto the latest dataset schema
-(**v1.4.0**), then (2) **writes a registration script** the user runs to `POST`
-it to the catalog. Registration is one HTTPS `POST` to a remote catalog — no UI,
-no bundled server.
+blob, a spreadsheet) and (1) **maps** each field onto the **current** dataset
+schema — the version marked `Current` in the `schema/` folder on GitHub,
+overlaid with the installed client's models (step 1 below) — then (2) **writes a
+registration script** the user runs to `POST` it to the catalog. Registration is
+one HTTPS `POST` to a remote catalog — no UI, no bundled server. Don't hard-code
+a version (e.g. "v1.4.0"); resolve it from the schema folder each time.
 
 ## Workflow
 
 [`register_dataset.py`](register_dataset.py) is both the **template** you hand
 the user and the **harness** you run; read `build_request()` first — it's the
-worked example (source dict → every v1.4.0 block). Paths below use
+worked example (source dict → every schema block). Paths below use
 `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the plugin loads).
 
-1. **See the live schema first** — `python $P/register_dataset.py --fields`.
+1. **Pull the current schema from GitHub, then overlay the live client.** Two
+   layers, in order:
+   - **GitHub (semantics + which version is current).** Fetch
+     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/README.md`
+     and read its *Versions* table — the row marked **Current** is the schema
+     version to register against (do **not** hard-code one; it changes). Then
+     fetch that version's doc,
+     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/<version>/schema.md`,
+     for the authoritative field-level definitions and meanings.
+   - **Installed client (what actually validates).** Overlay the GitHub doc with
+     `python $P/register_dataset.py --fields` (next step) — the live pydantic
+     models. The GitHub doc tells you what each field *means* and which version
+     is current; `--fields` is what the payload is validated against at
+     `--dry-run`. **The installed client wins on any conflict:** if its
+     `record_schema_version` default differs from the GitHub `Current` row, the
+     client is stale — upgrade/reinstall it (step in Prerequisites) so the two
+     agree before mapping. A static copy of one version travels offline at
+     `$P/reference/dataset-schema.md`, but GitHub is the source of truth for
+     *which* version is current.
+2. **See the live schema** — `python $P/register_dataset.py --fields`.
    Reads the pydantic models, so it never goes stale; required fields are marked
    `*`, blocks accepting extras `[extra=allow]`. Map onto these exact names.
-2. **Copy the template** to a working file; edit only `load_source()` (point at
+3. **Copy the template** to a working file; edit only `load_source()` (point at
    the data) and `build_request()` (one builder call per source field).
-3. **Dry-run** (no token, no network) — `python $P/register_dataset.py --dry-run`.
+4. **Dry-run** (no token, no network) — `python $P/register_dataset.py --dry-run`.
    Validates with the API's own Pydantic rules, prints the JSON payload,
    mock-submits against an in-process fake catalog, and reports **coverage** —
    every source field mapped, dropped, or *silently lost*. Iterate until clean:
@@ -33,7 +54,7 @@ worked example (source dict → every v1.4.0 block). Paths below use
    [coverage] 24 mapped + 1 dropped of 25 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
-4. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
+5. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
    ```bash
    export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
    python $P/register_dataset.py --submit
@@ -42,15 +63,46 @@ worked example (source dict → every v1.4.0 block). Paths below use
 ## Prerequisites
 
 `register_dataset.py` imports `catalog_client`, which the plugin does **not**
-install — the interpreter that runs it must already have it:
+install — the interpreter that runs it must already have it.
+
+**Before any `pip install`, ask the user whether to use a virtual environment,
+and create one if they agree.** Don't install into the system/global interpreter
+silently. Default to recommending a venv; only skip it if the user declines or is
+already inside an activated venv / the monorepo's managed environment.
+
+**Install a tagged release, never `main`.** Resolve the latest released
+`catalog-client` tag first (releases are tagged `catalog-client-v<X.Y.Z>`), then
+install that exact tag — `main` is unreleased and may not match any published
+schema version:
 
 ```bash
-uv sync --all-groups   # monorepo dev; then run via `uv run python ...`
-pip install 'git+ssh://git@github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'  # standalone
+# resolve the latest released tag (requires the gh CLI):
+TAG=$(gh release list --repo chanzuckerberg/dataset-catalog \
+  --json tagName,publishedAt \
+  --jq 'map(select(.tagName | startswith("catalog-client-v"))) | sort_by(.publishedAt) | reverse | .[0].tagName')
+echo "latest release: $TAG"   # e.g. catalog-client-v0.3.0
 ```
 
-`--fields` is the authoritative schema (live from the installed models); a
-static copy travels at `$P/reference/dataset-schema.md` for offline reference.
+```bash
+# 1. monorepo dev — uv manages the environment for you (no manual venv needed):
+uv sync --all-groups            # then run via `uv run python ...`
+
+# 2. standalone — create + activate a venv FIRST, then install the tagged release:
+python -m venv .venv            # or: uv venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
+```
+
+To upgrade a stale client so its `record_schema_version` matches the GitHub
+`Current` row (step 1), re-resolve `$TAG` and re-run the install with `--upgrade`
+inside the same venv. If the newest release still lags the `Current` schema, the
+release hasn't shipped yet — register against the installed release's version and
+flag the gap to the user rather than installing from `main`.
+
+`--fields` is the authoritative *runtime* schema (live from the installed
+models); the GitHub `schema/` folder (step 1) is authoritative for which version
+is current. A static copy travels at `$P/reference/dataset-schema.md` for offline
+reference.
 
 ## Mapping cheat-sheet (source field → schema slot → builder call)
 
