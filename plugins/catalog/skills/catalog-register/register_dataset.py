@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Map source dataset metadata to the current catalog schema and register it.
 
-The current schema version is not hard-coded: it is the one marked `Current` in
-the schema/ folder on GitHub, overlaid with the installed client's models (which
-carry that version as the `record_schema_version` default). See SKILL.md step 1.
+The schema version is not hard-coded in this template: it comes from the installed
+client's models (specifically the `DatasetRequest.record_schema_version` default).
+Cross-check that against the `Current` row in the schema/ folder on GitHub (SKILL.md step 1).
 
 This is the TEMPLATE the catalog-register skill produces, and the
 HARNESS you run while building a mapping. To use it for a real dataset:
