@@ -90,7 +90,7 @@ uv sync --all-groups            # then run via `uv run python ...`
 # 2. standalone — create + activate a venv FIRST, then install the tagged release:
 python -m venv .venv            # or: uv venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install "git+ssh://git@github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
+pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
 ```
 
 To upgrade a stale client so its `record_schema_version` matches the GitHub
