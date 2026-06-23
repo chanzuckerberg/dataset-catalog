@@ -18,7 +18,7 @@ a version (e.g. "v1.4.0"); resolve it from the schema folder each time.
 
 [`register_dataset.py`](register_dataset.py) is both the **template** you hand
 the user and the **harness** you run; read `build_request()` first — it's the
-worked example (source dict → every v1.4.0 block). Paths below use
+worked example (source dict → every schema block). Paths below use
 `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the plugin loads).
 
 1. **Pull the current schema from GitHub, then overlay the live client.** Two
