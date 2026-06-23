@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Map source dataset metadata to the latest catalog schema (v1.4.0) and register it.
+"""Map source dataset metadata to the current catalog schema and register it.
+
+The current schema version is not hard-coded: it is the one marked `Current` in
+the schema/ folder on GitHub, overlaid with the installed client's models (which
+carry that version as the `record_schema_version` default). See SKILL.md step 1.
 
 This is the TEMPLATE the catalog-register skill produces, and the
 HARNESS you run while building a mapping. To use it for a real dataset:
@@ -371,7 +375,11 @@ def dry_run() -> int:
     payload = (
         builder.build().to_dataset_request().model_dump(mode="json", exclude_none=True)
     )
-    assert payload["record_schema_version"] == "v1.4.0", payload.get(
+    # Don't pin a literal version: the current schema is whatever the installed
+    # client marks as the model default (cross-check against the `Current` row in
+    # the schema/ folder on GitHub — see SKILL.md step 1).
+    expected_version = DatasetRequest.model_fields["record_schema_version"].default
+    assert payload["record_schema_version"] == expected_version, payload.get(
         "record_schema_version"
     )
     print(
