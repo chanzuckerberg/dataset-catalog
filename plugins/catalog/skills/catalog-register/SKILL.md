@@ -142,8 +142,8 @@ preserved, not rejected. So:
   - If that field names an **ontology concept** (`cell_line`, `cell_type`,
     `cell_strain`, `organelle`, …), give it the same shape as the named sample
     fields: a `list[OntologyEntry]` (`[OntologyEntry(label=..., ontology_id=...)]`),
-    not a bare string. Resolve `ontology_id` via OLS (see playbook) just like
-    `organism` / `tissue` / `disease`.
+    not a bare string. Resolve `ontology_id` with the `ols` MCP server
+    (`searchClasses`; see playbook) just like `organism` / `tissue` / `disease`.
 - Field is *measurement-ish* (e.g. `feature_count`, `mean_genes_per_cell`) →
   extra kwarg to `.with_data_summary(...)`.
 - Field doesn't belong to `sample` / `experiment` / `data_summary` → put it
@@ -188,12 +188,19 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
   is **not** always `external` — internal platforms can sit behind a URL. State
   your assumption and confirm with the user before mapping. (Members: `s3`,
   `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.)
-- **Resolve ontology labels via OLS.** When an ontology field gives only a
-  `label` and no id, look the term up in the EBI Ontology Lookup Service and use
-  the returned CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`):
-  `GET https://www.ebi.ac.uk/ols4/api/search?q=<label>&exact=true` — take the
-  top hit's `obo_id`/`curie` from the matching ontology. Don't fabricate ids;
-  if OLS returns no confident match, leave `ontology_id` unset and keep the label.
+- **Resolve ontology labels via the OLS MCP server.** This plugin bundles the
+  EBI Ontology Lookup Service as an MCP server named `ols` (declared in
+  `.mcp.json`), so its tools are available to you directly — don't shell out to
+  `curl`/REST. When an ontology field gives only a `label` and no id, call the
+  `ols` server's **`searchClasses`** tool (`query=<label>`, plus
+  `ontologyId=<NCBITaxon|UBERON|EFO|...>` when you know the expected ontology to
+  disambiguate; fall back to the generic `search` tool otherwise). Take the top
+  match's CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`).
+  **Don't fabricate ids:** if no confident match comes back, leave `ontology_id`
+  unset and keep the label. If the `ols` server isn't connected (tools absent —
+  e.g. the plugin's MCP server failed to start), fall back to
+  `GET https://www.ebi.ac.uk/ols4/api/search?q=<label>&exact=true` and read the
+  top hit's `obo_id`.
 - **Zarr paths: confirm granularity first.** When a data path is a `.zarr` store,
   ask the user what level each *dataset record* should represent —
   screen / plate / well / FOV. If they choose a coarser level (e.g. plate), also
