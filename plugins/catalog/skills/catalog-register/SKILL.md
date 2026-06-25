@@ -37,9 +37,7 @@ worked example (source dict → every schema block). Paths below use
      `--dry-run`. **The installed client wins on any conflict:** if its
      `record_schema_version` default differs from the GitHub `Current` row, the
      client is stale — upgrade/reinstall it (step in Prerequisites) so the two
-     agree before mapping. A static copy of one version travels offline at
-     `$P/reference/dataset-schema.md`, but GitHub is the source of truth for
-     *which* version is current.
+     agree before mapping.
 2. **See the live schema** — `python $P/register_dataset.py --fields`.
    Reads the pydantic models, so it never goes stale; required fields are marked
    `*`, blocks accepting extras `[extra=allow]`. Map onto these exact names.
@@ -101,8 +99,7 @@ flag the gap to the user rather than installing from `main`.
 
 `--fields` is the authoritative *runtime* schema (live from the installed
 models); the GitHub `schema/` folder (step 1) is authoritative for which version
-is current. A static copy travels at `$P/reference/dataset-schema.md` for offline
-reference.
+is current.
 
 ## Mapping cheat-sheet (source field → schema slot → builder call)
 
@@ -225,10 +222,24 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
 ## Registering — the call the script makes
 
 `.submit()` runs a duplicate check (GET `/api/datasets/` on the signature) then
-creates (POST `/api/datasets/`), returning the new `dataset_id`. Flags:
+creates (POST `/api/datasets/`), returning the new `dataset_id`.
 
-- `submit(error_on_duplicate=False)` — return the existing id instead of raising `DuplicateDatasetError`.
-- `submit(update_if_exists=True)` — PATCH the existing record. Mutually exclusive with `error_on_duplicate=True`.
+**Confirm duplicate-handling with the user before `--submit`.** When a record
+with the same signature already exists, `.submit()` does one of three things,
+controlled by two flags — `error_on_duplicate` (default `True`) and
+`update_if_exists` (default `False`). **Only one may be `True`; setting both
+raises `ValueError`.** Ask the user which behavior they want; don't assume:
+
+- `submit()` (defaults) — **error.** Raise `DuplicateDatasetError` on a
+  duplicate. Safest default; use when each run should be a brand-new record.
+- `submit(error_on_duplicate=False)` — **skip.** Return the existing id
+  unchanged, no write.
+- `submit(error_on_duplicate=False, update_if_exists=True)` — **update.** PATCH
+  the existing record in place. (`update_if_exists=True` requires
+  `error_on_duplicate=False`, since the two can't both be `True`.)
+
+The template's `submit_real()` calls `.submit()` with defaults; edit that call
+to pass the flags the user chose.
 
 Get a token from the catalog's `/docs` → Token → `/token/issue`. Pass it via the
 `CATALOG_API_TOKEN` env var; never hard-code it.
@@ -278,5 +289,9 @@ cd dataset-catalog-client && uv run pytest -q   # 207 passing
 - `ValueError: 'x' is not a valid DatasetModality` → map the source value to a
   valid enum member (`imaging` / `sequencing` / `mass spec` / `unknown`).
 - `DuplicateDatasetError` on `--submit` → a dataset with the same signature
-  exists; use `error_on_duplicate=False` or `update_if_exists=True`.
+  exists; confirm intent with the user, then pass `error_on_duplicate=False` to
+  skip (return the existing id) or `error_on_duplicate=False, update_if_exists=True`
+  to update it in place (see *Registering*).
+- `ValueError: update_if_exists and error_on_duplicate cannot both be True` →
+  both flags were set; `update_if_exists=True` requires `error_on_duplicate=False`.
 - `AuthenticationError` (401) → bad/expired token; reissue at `/token/issue`.
