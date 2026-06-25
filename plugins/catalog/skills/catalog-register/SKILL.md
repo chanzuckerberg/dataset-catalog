@@ -1,77 +1,29 @@
 ---
 name: catalog-register
-description: Map a user's existing dataset metadata onto the latest catalog schema and write a runnable registration script using catalog-client. Use when asked to map/convert/ingest dataset metadata, fit data to the dataset schema, build a DatasetRequest, populate experiment/sample/data_summary/channel fields, or write/generate a script to register/create/submit a dataset to the Scientific Dataset Catalog.
+description: Maps a user's dataset metadata onto the latest catalog schema and creates a runnable registration script. Use when asked to map/convert/ingest dataset metadata, fit data to the dataset schema, populate experiment/sample/data_summary/channel fields, or create a script to register/submit a dataset to the Scientific Dataset Catalog.
 ---
 
-# Map data to the schema & write a registration script (catalog-client)
+# Register datasets to the Scientific Dataset Catalog
 
-`catalog-client` is a Python SDK for the Scientific Dataset Catalog API. This
-skill takes **metadata a user already has** (a CSV row, a LIMS export, a JSON
-blob, a spreadsheet) and (1) **maps** each field onto the **current** dataset
-schema — the version marked `Current` in the `schema/` folder on GitHub,
-overlaid with the installed client's models (step 1 below) — then (2) **writes a
-registration script** the user runs to `POST` it to the catalog. Registration is
-one HTTPS `POST` to a remote catalog — no UI, no bundled server. Don't hard-code
-a version (e.g. "v1.4.0"); resolve it from the schema folder each time.
+`catalog-client` is a Python SDK for the Scientific Dataset Catalog API.
+Takes **metadata a user already has** (CSV row, LIMS export, JSON blob, spreadsheet) and produces a **script** that:
 
-## Workflow
+1. **Maps** each field onto the **current** dataset schema, version marked `Current` in `schema/` on GitHub, overlaid with installed client models.
+2. **Writes a registration script** the user runs to register to the catalog.
 
-[`register_dataset.py`](register_dataset.py) is both the **template** you hand
-the user and the **harness** you run; read `build_request()` first — it's the
-worked example (source dict → every schema block). Paths below use
-`$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the plugin loads).
-
-1. **Pull the current schema from GitHub, then overlay the live client.** Two
-   layers, in order:
-   - **GitHub (semantics + which version is current).** Fetch
-     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/README.md`
-     and read its *Versions* table — the row marked **Current** is the schema
-     version to register against (do **not** hard-code one; it changes). Then
-     fetch that version's doc,
-     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/<version>/schema.md`,
-     for the authoritative field-level definitions and meanings.
-   - **Installed client (what actually validates).** Overlay the GitHub doc with
-     `python $P/register_dataset.py --fields` (next step) — the live pydantic
-     models. The GitHub doc tells you what each field *means* and which version
-     is current; `--fields` is what the payload is validated against at
-     `--dry-run`. **The installed client wins on any conflict:** if its
-     `record_schema_version` default differs from the GitHub `Current` row, the
-     client is stale — upgrade/reinstall it (step in Prerequisites) so the two
-     agree before mapping.
-2. **See the live schema** — `python $P/register_dataset.py --fields`.
-   Reads the pydantic models, so it never goes stale; required fields are marked
-   `*`, blocks accepting extras `[extra=allow]`. Map onto these exact names.
-3. **Copy the template** to a working file; edit only `load_source()` (point at
-   the data) and `build_request()` (one builder call per source field).
-4. **Dry-run** (no token, no network) — `python $P/register_dataset.py --dry-run`.
-   Validates with the API's own Pydantic rules, prints the JSON payload,
-   mock-submits against an in-process fake catalog, and reports **coverage** —
-   every source field mapped, dropped, or *silently lost*. Iterate until clean:
-   ```
-   [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 1 dropped of 25 source fields
-     ✓ every source field is mapped or explicitly dropped
-   ```
-5. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
-   ```bash
-   export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
-   python $P/register_dataset.py --submit
-   ```
+Registration is an HTTPS call to a remote catalog. No UI. No bundled server.
 
 ## Prerequisites
 
-`register_dataset.py` imports `catalog_client`, which the plugin does **not**
-install — the interpreter that runs it must already have it.
+### 1. Python Environment
+- Before any `pip install` or python command: ask user whether to use a virtual environment. Create one if they agree.
+- Never install into system/global interpreter silently.
+- Default: recommend venv. Skip only if user declines or already inside activated venv / monorepo managed environment.
 
-**Before any `pip install`, ask the user whether to use a virtual environment,
-and create one if they agree.** Don't install into the system/global interpreter
-silently. Default to recommending a venv; only skip it if the user declines or is
-already inside an activated venv / the monorepo's managed environment.
+### 2. catalog client dependency
+- `scripts/register_dataset.py` imports `catalog_client` not installed by plugin. Interpreter must already have it.
 
-**Install a tagged release, never `main`.** Resolve the latest released
-`catalog-client` tag first (releases are tagged `catalog-client-v<X.Y.Z>`), then
-install that exact tag — `main` is unreleased and may not match any published
-schema version:
+- **Install a tagged release, never `main`.** Resolve latest released `catalog-client` tag first (tagged `catalog-client-v<X.Y.Z>`), then install that exact tag. `main` is unreleased and may not match any published schema version:
 
 ```bash
 # resolve the latest released tag (requires the gh CLI):
@@ -80,6 +32,7 @@ TAG=$(gh release list --repo chanzuckerberg/dataset-catalog \
   --jq 'map(select(.tagName | startswith("catalog-client-v"))) | sort_by(.publishedAt) | reverse | .[0].tagName')
 echo "latest release: $TAG"   # e.g. catalog-client-v0.3.0
 ```
+
 
 ```bash
 # 1. monorepo dev — uv manages the environment for you (no manual venv needed):
@@ -91,15 +44,56 @@ source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
 ```
 
-To upgrade a stale client so its `record_schema_version` matches the GitHub
-`Current` row (step 1), re-resolve `$TAG` and re-run the install with `--upgrade`
-inside the same venv. If the newest release still lags the `Current` schema, the
-release hasn't shipped yet — register against the installed release's version and
-flag the gap to the user rather than installing from `main`.
+### Client vs schema version mismatch
+To upgrade stale client so `record_schema_version` matches GitHub `Current` row (step 1): re-resolve `$TAG`, re-run install with `--upgrade` in same venv.
+
+If newest release still lags `Current` schema: release hasn't shipped yet. Register against installed release's version. Flag gap to user. Do not install from `main`.
 
 `--fields` is the authoritative *runtime* schema (live from the installed
 models); the GitHub `schema/` folder (step 1) is authoritative for which version
 is current.
+
+
+## Workflow
+
+[`register_dataset.py`](scripts/register_dataset.py) is both the **template** to hand the user and the **harness** to run.
+
+Read `build_request()` first: worked example (source dict → every schema block).
+
+1. **Pull the current schema from GitHub, then overlay the live client.** Two
+   layers, in order:
+   - **GitHub (semantics + which version is current).** Fetch
+     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/README.md`
+     and read its *Versions* table — the row marked **Current** is the schema
+     version to register against. Then fetch that version's doc,
+     `https://raw.githubusercontent.com/chanzuckerberg/dataset-catalog/main/schema/<version>/schema.md`,
+     for the authoritative field-level definitions and meanings.
+   - **Installed client (what actually validates).** Overlay the GitHub doc with
+     `python $P/scripts/register_dataset.py --fields` (next step) — the live pydantic
+     models. The GitHub doc tells you what each field *means* and which version
+     is current; `--fields` is what the payload is validated against at
+     `--dry-run`. **The installed client wins on any conflict:** if its
+     `record_schema_version` default differs from the GitHub `Current` row, the
+     client is stale — upgrade/reinstall it (step in Prerequisites) so the two
+     agree before mapping.
+2. **See the live schema** — `python $P/scripts/register_dataset.py --fields`.
+   Reads the pydantic models, so it never goes stale; required fields are marked
+   `*`, blocks accepting extras `[extra=allow]`. Map onto these exact names.
+3. **Copy the template** to a working file; edit only `load_source()` (point at
+   the data) and `build_request()` (one builder call per source field).
+4. **Dry-run** (no token, no network) — `python $P/scripts/register_dataset.py --dry-run`.
+   Validates with the API's own Pydantic rules, prints the JSON payload,
+   mock-submits, and reports **coverage** — every source field mapped, dropped, or *silently lost*. Iterate until clean:
+   ```
+   [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [coverage] 24 mapped + 1 dropped of 25 source fields
+     ✓ every source field is mapped or explicitly dropped
+   ```
+5. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
+   ```bash
+   export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
+   python $P/scripts/register_dataset.py --submit
+   ```
 
 ## Mapping cheat-sheet (source field → schema slot → builder call)
 
@@ -107,98 +101,87 @@ is current.
 blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 `metadata`.
 
-| User's data                                       | Schema slot | Builder call |
-|---------------------------------------------------|---|---|
-| stable external id                                | `canonical_id` (signature) | `new_registration(canonical_id=...)` |
-| version / project                                 | `version`, `project` (signature) | `new_registration(version=..., project=...)` |
-| modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown` |
-| raw vs processed                                  | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`) |
-| file/folder URI + checksum                        | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=...)` |
-| license / access / owner / PHI                    | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=...)` |
-| assay / instrument / sub-modality                 | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])` |
-| organism / tissue / disease / developmental_stage | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])` |
-| cell/read counts, channels, dims                  | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)` |
-| QC results                                        | `data_quality` | `.with_data_quality(checks_passed=..., checks_failed=...)` |
-| provenance link                                   | lineage edge | `.with_lineage(source, lineage_type=LineageType...)` |
+| User's data                                       | Schema slot | Builder call                                                                                             |
+|---------------------------------------------------|---|----------------------------------------------------------------------------------------------------------|
+| stable external id                                | `canonical_id` (signature) | `new_registration(canonical_id=...)`                                                                     |
+| version / project                                 | `version`, `project` (signature) | `new_registration(version=..., project=...)`                                                             |
+| modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown`                     |
+| raw vs processed                                  | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`)                                                       |
+| file/folder URI + checksum /  size                | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=..., size_bytes=)` |
+| license / access / owner / PHI / PII              | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=..., is_pii=...)`         |
+| assay / instrument / sub-modality                 | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])`                                         |
+| organism / tissue / disease / developmental_stage | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])`                                 |
+| cell/read counts, channels, dims                  | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)`                               |
+| QC results                                        | `data_quality` | `.with_data_quality(checks_passed=..., checks_failed=...)`                                               |
+| provenance link                                   | lineage edge | `.with_lineage(source, lineage_type=LineageType...)`                                                     |
 
-Ontology values are `OntologyEntry(label=..., ontology_id=...)`; tissue adds
-`TissueEntry(..., type=...)`. Per-channel biology is
-`ChannelMetadata(..., biological_annotation=BiologicalAnnotation(...))`.
+- Ontology values are `OntologyEntry(label=..., ontology_id=...)`;
+- tissue adds `TissueEntry(..., type=...)`.
+- Per-channel biology is `ChannelMetadata(..., biological_annotation=BiologicalAnnotation(...))`.
 
-## Extras — source fields with no exact slot
+## Extras: source fields with no exact slot
 
-Don't drop a source field just because the schema has no named home for it.
-**Every metadata block has
-`extra="allow"`** (`DatasetMetadata`,
-`ExperimentMetadata`, `SampleMetadata`, `DataSummaryMetadata`
-… — confirm with `--fields`, look for `[extra=allow]`). Unknown keys are
-preserved, not rejected. So:
+1. Don't drop source field just because schema has no named slot. Unknown keys preserved, not rejected.
+**Most metadata block has `extra="allow"`** confirm with `--fields`, look for `[extra=allow]`.
+   - `DatasetMetadata`
+   - `ExperimentMetadata`
+   - `SampleMetadata`
+   - `DataSummaryMetadata`
 
-- Field is *sample-ish* (e.g. `sex`, `ethnicity`, `donor_id`) → pass it as an
-  extra kwarg to `.with_sample(...)`.
-  - If that field names an **ontology concept** (`cell_line`, `cell_type`,
-    `cell_strain`, `organelle`, …), give it the same shape as the named sample
-    fields: a `list[OntologyEntry]` (`[OntologyEntry(label=..., ontology_id=...)]`),
-    not a bare string. Resolve `ontology_id` with the `ols` MCP server
-    (`searchClasses`; see playbook) just like `organism` / `tissue` / `disease`.
-- Field is *measurement-ish* (e.g. `feature_count`, `mean_genes_per_cell`) →
-  extra kwarg to `.with_data_summary(...)`.
-- Field doesn't belong to `sample` / `experiment` / `data_summary` → put it
-  under the single `additional_metadata` key on the metadata block via
-  `.with_custom_metadata(additional_metadata={...})`. Keep everything that has
-  no named slot together under that one key rather than scattering top-level
-  custom keys.
+2. **Sample information**: field is about sample (e.g. `sex`, `ethnicity`, `donor_id`): pass as extra kwarg to `.with_sample(...)`.
+   - If field names an **ontology concept** (`cell_line`, `cell_type`, `cell_strain`, `organelle`, …): give it same shape as named sample fields: `list[OntologyEntry]` (`[OntologyEntry(label=..., ontology_id=...)]`), not bare string.
+   - Resolve `ontology_id` with `ols` MCP server (`searchClasses`; see playbook), same as `organism` / `tissue` / `disease`.
 
-**Exception — `governance` is fixed-shape.** Never route extras into
-`.with_governance(...)`. Map only the schema's named fields (`license`,
-`data_sensitivity`, `access_scope`, `is_pii`, `is_phi`, `data_steward`,
-`data_owner`, `is_external_reference`, `embargoed_until`); a governance-ish
-source field with no matching name goes under `.with_custom_metadata(...)`, not
-into the governance block.
+3. **Data Summary**: Field provides *measurement* on the data (e.g. `feature_count`, `mean_genes_per_cell`) → extra kwarg to `.with_data_summary(...)`.
+4. **Experiment**: Field describes the experiment (e.g. `assay_target`, `instrument_model`) → extra kwarg to `.with_experiment(...)`.
+5. Field doesn't belong to `sample` / `experiment` / `data_summary` → put it under the single `additional_metadata` key on the metadata block via
+  `.with_custom_metadata(additional_metadata={...})`.
+   - Keep everything that has no named slot together under that one key rather than scattering top-level custom keys.
 
-This is how you get **lossless** mappings. The coverage report exists to make
-sure you made a *deliberate* choice for every field — mapped, extra, or
-`src.drop(...)` — rather than losing it by omission.
+### Exception
+1. `governance` is fixed-shape. Never route extras into `.with_governance(...)`.
+   - Map only the schema's named fields (`license`, `access_scope`, `is_pii`, `is_phi`,
+      `data_steward`, `data_owner`, `is_external_reference`, `embargoed_until`);
+   - a governance-ish source field with no matching name goes under `.with_custom_metadata(...)`, not into the governance block.
+
+Goal: **lossless** mappings. Coverage report ensures every field is a deliberate choice: mapped, extra, or `src.drop(...)`. No silent omissions.
+
 
 ## Mapping playbook (heuristics)
 
-- **Read `--fields` first.** Map onto real field names; never guess
+1. **Read `--fields` first.** Map onto real field names; never guess
   (`ontology_id` not `ontology_term_id`, `type` not `tissue_type`).
-- **Normalize, don't copy.** Source key names rarely match. Write small
+2. **Normalize, don't copy.** Source key names rarely match. Write small
   helpers (`_ontology()`, `_storage_platform()`) instead of inlining renames.
-- **Infer the enums.** `modality` ∈ {`imaging`,`sequencing`,`mass spec`,`unknown`}
-  and `dataset_type` ∈ {`raw`,`processed`} usually have to be *derived* from the
-  source (assay type, file format, processing stage), not copied verbatim.
-- **Don't invent values.** If the source has no `checksum`/owner, leave it
-  unset — empty is honest; a fabricated value is a data-quality bug.
-- **`license`: ask, don't guess.** If you can't find license information in the
+3. **Infer the enums.**
+  - `modality` ∈ {`imaging`,`sequencing`,`mass spec`,`unknown`}
+  - `dataset_type` ∈ {`raw`,`processed`} usually have to be *derived* from the source (assay type, file format, processing stage), not copied verbatim.
+4. **Don't invent values.** If the source has no `checksum`/owner, leave it
+unset — empty is honest; a fabricated value is a data-quality bug.
+5. **`license`: ask, don't guess.** If you can't find license information in the
   source, check with the user what it should be rather than leaving it blank or
   fabricating one. Only set `license` to a value the user confirms.
-- **`access_scope` is always `"internal"`.** Hard-code it in `.with_governance(...)`;
-  never map it from a source `visibility`/`public` field.
-- **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
+6. **`access_scope` is always `"internal"`.** Hard-code it in `.with_governance(...)`; never map it from a source.
+7. **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
   **not** default them to `False` when the source is silent. Always confirm the
   PII and PHI status with the user before setting either.
-- **Confirm `storage_platform` when it isn't obvious.** Don't infer it from the
-  path alone. A `/hpc/...` path is **not** always `sf_hpc` — there are three HPC
-  backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site. An `http(s)://` URI
-  is **not** always `external` — internal platforms can sit behind a URL. State
-  your assumption and confirm with the user before mapping. (Members: `s3`,
-  `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.)
-- **Resolve ontology labels via the OLS MCP server.** This plugin bundles the
-  EBI Ontology Lookup Service as an MCP server named `ols` (declared in
-  `.mcp.json`), so its tools are available to you directly — don't shell out to
-  `curl`/REST. When an ontology field gives only a `label` and no id, call the
-  `ols` server's **`searchClasses`** tool (`query=<label>`, plus
-  `ontologyId=<NCBITaxon|UBERON|EFO|...>` when you know the expected ontology to
-  disambiguate; fall back to the generic `search` tool otherwise). Take the top
-  match's CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`).
-  **Don't fabricate ids:** if no confident match comes back, leave `ontology_id`
-  unset and keep the label. If the `ols` server isn't connected (tools absent —
-  e.g. the plugin's MCP server failed to start), fall back to
-  `GET https://www.ebi.ac.uk/ols4/api/search?q=<label>&exact=true` and read the
-  top hit's `obo_id`.
-- **Zarr paths: confirm granularity first.** When a data path is a `.zarr` store,
+8. **Confirm `storage_platform` when it isn't obvious.**Don't infer it from the path alone.
+   - A `/hpc/...` path is **not** always `sf_hpc` — there are three HPC
+        backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site.
+   - An `http(s)://` URI is **not** always `external` — internal platforms can sit behind a URL.
+   - State your assumption and confirm with the user before mapping. (Members: `s3`,
+        `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.) Validate this with the client.
+9. **Resolve ontology labels via the OLS MCP server.** This plugin bundles the
+  EBI Ontology Lookup Service as an MCP server named `ols`, so its tools are available directly.
+   - Don't shell out to `curl`/REST. When an ontology field gives only a `label` and no id, call the
+     `ols` server's **`searchClasses`** tool (`query=<label>`, plus
+     `ontologyId=<NCBITaxon|UBERON|EFO|...>` when you know the expected ontology to
+     disambiguate; fall back to the generic `search` tool otherwise). Take the top
+     match's CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`) only if the label is an exact match (case-insensitive) to the returned `label` or its `synonyms`.
+   - If the `ols` server isn't connected skip this.
+   - **Don't fabricate ids:** if no confident match comes back, leave `ontology_id`
+     unset and keep the label.
+10. **Zarr paths: confirm granularity first.** When a data path is a `.zarr` store,
   ask the user what level each *dataset record* should represent —
   screen / plate / well / FOV. If they choose a coarser level (e.g. plate), also
   ask whether each `location` (data asset) should point at the next level down
@@ -217,41 +200,23 @@ sure you made a *deliberate* choice for every field — mapped, extra, or
   stable source IDs so re-running updates rather than duplicates.
 - **Coverage must be clean before `--submit`.** Resolve every "SILENTLY LOST"
   field. If a field truly shouldn't be carried, `src.drop(...)` it so the
-  decision is explicit and visible to the next person.
+  decision is explicit and visible to the user.
 
 ## Registering — the call the script makes
+`.submit()` runs duplicate check (GET `/api/datasets/` on signature) then creates (POST `/api/datasets/`), returning new `dataset_id`.
 
-`.submit()` runs a duplicate check (GET `/api/datasets/` on the signature) then
-creates (POST `/api/datasets/`), returning the new `dataset_id`.
+**Confirm duplicate-handling with user before `--submit`.** When record with same signature exists, `.submit()` behavior is controlled by `error_on_duplicate` (default `True`) and `update_if_exists` (default `False`). **Only one may be `True`; both raises `ValueError`.**
 
-**Confirm duplicate-handling with the user before `--submit`.** When a record
-with the same signature already exists, `.submit()` does one of three things,
-controlled by two flags — `error_on_duplicate` (default `True`) and
-`update_if_exists` (default `False`). **Only one may be `True`; setting both
-raises `ValueError`.** Ask the user which behavior they want; don't assume:
+| Call | Behavior |
+|------|----------|
+| `submit()` | **error** — raise `DuplicateDatasetError`. Use when each run should be new record. |
+| `submit(error_on_duplicate=False)` | **skip** — return existing id, no write. |
+| `submit(error_on_duplicate=False, update_if_exists=True)` | **update** — PATCH existing record in place. |
 
-- `submit()` (defaults) — **error.** Raise `DuplicateDatasetError` on a
-  duplicate. Safest default; use when each run should be a brand-new record.
-- `submit(error_on_duplicate=False)` — **skip.** Return the existing id
-  unchanged, no write.
-- `submit(error_on_duplicate=False, update_if_exists=True)` — **update.** PATCH
-  the existing record in place. (`update_if_exists=True` requires
-  `error_on_duplicate=False`, since the two can't both be `True`.)
+Template's `submit_real()` calls `.submit()` with defaults. Edit that call to pass flags user chose.
 
-The template's `submit_real()` calls `.submit()` with defaults; edit that call
-to pass the flags the user chose.
+Get token from catalog's `/docs` → Token → `/token/issue`. Pass via `CATALOG_API_TOKEN` env var. Never hard-code.
 
-Get a token from the catalog's `/docs` → Token → `/token/issue`. Pass it via the
-`CATALOG_API_TOKEN` env var; never hard-code it.
-
-## Test (monorepo dev only)
-
-The skill source lives in the `dataset-catalog` monorepo under
-`plugins/catalog/`. To exercise the client it maps onto:
-
-```bash
-cd dataset-catalog-client && uv run pytest -q   # 207 passing
-```
 
 ## Gotchas
 
