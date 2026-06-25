@@ -16,8 +16,10 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      # Scope wheel publishing to the client component only — a plugin-only
+      # release must not trigger a client wheel upload.
+      client_release_created: ${{ steps.release.outputs['dataset-catalog-client--release_created'] }}
+      client_tag_name: ${{ steps.release.outputs['dataset-catalog-client--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -28,7 +30,7 @@ jobs:
 
   build-wheel:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.client_release_created == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,5 +45,5 @@ jobs:
       - name: Upload wheel to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          tag_name: ${{ needs.release-please.outputs.client_tag_name }}
           files: dataset-catalog-client/dist/*.whl
