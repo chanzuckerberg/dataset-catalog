@@ -12,7 +12,7 @@ HARNESS you run while building a mapping. To use it for a real dataset:
      a JSON blob — whatever the user has). ``SOURCE`` below is a stand-in.
   2. Adjust ``build_request()`` so every source field lands in the right schema
      slot. That function IS the field mapping — each line maps one piece of the
-     user's data onto a v1.4.0 builder call.
+     user's data onto a builder call.
 
 Commands (run while iterating on the mapping):
 
@@ -167,7 +167,7 @@ def _ontology(entry: dict, *, id_key: str = "id") -> OntologyEntry:
 
 # ===========================================================================
 # 2. build_request — THE MAPPING. Each line places a SOURCE field into the
-#    v1.4.0 schema via a builder call. Edit to fit the user's fields.
+#    schema via a builder call. Edit to fit the user's fields.
 # ===========================================================================
 def build_request(client: CatalogClient, src: Source):
     builder = (
