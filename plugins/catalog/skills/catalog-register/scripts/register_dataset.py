@@ -276,6 +276,10 @@ def _nested_models(annotation) -> list[type[BaseModel]]:
     return out
 
 
+def _extra_allow_tag(model: type[BaseModel]) -> str:
+    return "  [extra=allow]" if model.model_config.get("extra") == "allow" else ""
+
+
 def print_schema_fields(
     model: type[BaseModel] = DatasetRequest,
     indent: int = 0,
@@ -283,17 +287,16 @@ def print_schema_fields(
 ) -> None:
     seen = seen if seen is not None else set()
     if indent == 0:
-        allows = model.model_config.get("extra") == "allow"
-        print(f"{model.__name__}{'  [extra=allow]' if allows else ''}")
+        print(f"{model.__name__}{_extra_allow_tag(model)}")
     for name, field in model.model_fields.items():
         req = "*" if field.is_required() else " "
         print(f"{'  ' * (indent + 1)}{req} {name}: {_type_name(field.annotation)}")
         for nested in _nested_models(field.annotation):
             if nested not in seen:
                 seen.add(nested)
-                allows = nested.model_config.get("extra") == "allow"
-                tag = "  [extra=allow]" if allows else ""
-                print(f"{'  ' * (indent + 2)}> {nested.__name__}{tag}")
+                print(
+                    f"{'  ' * (indent + 2)}> {nested.__name__}{_extra_allow_tag(nested)}"
+                )
                 print_schema_fields(nested, indent + 2, seen)
 
 

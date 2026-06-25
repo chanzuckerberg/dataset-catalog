@@ -60,6 +60,8 @@ is current.
 
 Read `build_request()` first: worked example (source dict → every schema block).
 
+Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the plugin loads).
+
 1. **Pull the current schema from GitHub, then overlay the live client.** Two
    layers, in order:
    - **GitHub (semantics + which version is current).** Fetch
@@ -142,6 +144,7 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 1. `governance` is fixed-shape. Never route extras into `.with_governance(...)`.
    - Map only the schema's named fields (`license`, `access_scope`, `is_pii`, `is_phi`,
       `data_steward`, `data_owner`, `is_external_reference`, `embargoed_until`);
+   - **Skip `data_sensitivity`.** It is a named governance field, but leave it unset — do not map a source value onto it, and do not route it to `.with_custom_metadata(...)` either.
    - a governance-ish source field with no matching name goes under `.with_custom_metadata(...)`, not into the governance block.
 
 Goal: **lossless** mappings. Coverage report ensures every field is a deliberate choice: mapped, extra, or `src.drop(...)`. No silent omissions.
