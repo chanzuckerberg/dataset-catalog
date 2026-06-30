@@ -1,6 +1,6 @@
 {
   "name": "catalog",
-  "description": "Map scientific dataset metadata onto the latest catalog schema and register datasets with catalog-client.",
+  "description": "A plugin for simplifying the interactions with the scientific dataset catalog",
   "version": "0.1.0",
   "author": {
     "name": "Manasa Venkatakrishnan",

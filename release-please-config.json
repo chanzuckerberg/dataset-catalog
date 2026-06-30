@@ -10,6 +10,24 @@
         {"type": "doc", "section": "Documentation", "hidden": false},
         {"type": "test", "section": "Tests", "hidden": false}
       ]
+    },
+    "plugins/catalog": {
+      "package-name": "catalog-plugin",
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
+      ],
+      "changelog-sections": [
+        {"type": "feat", "section": "Features"},
+        {"type": "fix", "section": "Bug Fixes"},
+        {"type": "chore", "section": "Miscellaneous", "hidden": false},
+        {"type": "doc", "section": "Documentation", "hidden": false},
+        {"type": "test", "section": "Tests", "hidden": false}
+      ]
     }
   }
 }
