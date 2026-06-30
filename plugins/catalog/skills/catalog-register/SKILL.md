@@ -123,8 +123,8 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 
 ## Extras: source fields with no exact slot
 
-1. Don't drop source field just because schema has no named slot. Unknown keys preserved, not rejected.
-**Most metadata block has `extra="allow"`** confirm with `--fields`, look for `[extra=allow]`.
+1. Don't drop a source field just because the schema has no named slot. Unknown keys are preserved, not rejected.
+   **Most metadata blocks have `extra="allow"`**; confirm with `--fields` (look for `[extra=allow]`).
    - `DatasetMetadata`
    - `ExperimentMetadata`
    - `SampleMetadata`
