@@ -148,7 +148,7 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
    - A source field about access, licensing, ownership, compliance, or data
      sensitivity (e.g. `confidentiality`, `usage_restrictions`, `data_use_agreement`,
      `consent`, `retention_policy`) that does **not** match one of the named fields
-     above goes under `.with_custom_metadata(...)`, not into the `governance` block.
+     above goes into `.with_custom_metadata(...)`, not under the `governance` block.
 
 Goal: **lossless** mappings. Coverage report ensures every field is a deliberate choice: mapped, extra, or `src.drop(...)`. No silent omissions.
 
