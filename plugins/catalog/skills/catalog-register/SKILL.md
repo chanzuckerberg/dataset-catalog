@@ -174,8 +174,7 @@ unset — empty is honest; a fabricated value is a data-quality bug.
    - An `http(s)://` URI is **not** always `external` — internal platforms can sit behind a URL.
    - State your assumption and confirm with the user before mapping. (Members: `s3`,
         `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.) Validate this with the client.
-9. **Resolve ontology labels via the OLS MCP server.** This plugin bundles the
-  EBI Ontology Lookup Service as an MCP server named `ols`, so its tools are available directly.
+9. **Resolve ontology labels via the OLS MCP server.** This plugin configures an MCP server named `ols` that points at the EBI Ontology Lookup Service, so its tools are available directly.
    - Don't shell out to `curl`/REST. When an ontology field gives only a `label` and no id, call the
      `ols` server's **`searchClasses`** tool (`query=<label>`, plus
      `ontologyId=<NCBITaxon|UBERON|EFO|...>` when you know the expected ontology to
