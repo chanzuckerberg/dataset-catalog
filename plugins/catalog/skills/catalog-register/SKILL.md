@@ -145,7 +145,10 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
    - Map only the schema's named fields (`license`, `access_scope`, `is_pii`, `is_phi`,
       `data_steward`, `data_owner`, `is_external_reference`, `embargoed_until`);
    - **Skip `data_sensitivity`.** It is a named governance field, but leave it unset — do not map a source value onto it, and do not route it to `.with_custom_metadata(...)` either.
-   - a governance-ish source field with no matching name goes under `.with_custom_metadata(...)`, not into the governance block.
+   - A source field about access, licensing, ownership, compliance, or data
+     sensitivity (e.g. `confidentiality`, `usage_restrictions`, `data_use_agreement`,
+     `consent`, `retention_policy`) that does **not** match one of the named fields
+     above goes under `.with_custom_metadata(...)`, not into the `governance` block.
 
 Goal: **lossless** mappings. Coverage report ensures every field is a deliberate choice: mapped, extra, or `src.drop(...)`. No silent omissions.
 
@@ -181,6 +184,19 @@ unset — empty is honest; a fabricated value is a data-quality bug.
      disambiguate; fall back to the generic `search` tool otherwise). Take the top
      match's CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`) only if the label is an exact match (case-insensitive) to the returned `label` or its `synonyms`.
    - If the `ols` server isn't connected skip this.
+   - **Non-200 / error response from `ols`.** If a `searchClasses`/`search` call
+     comes back as an error rather than a result set (HTTP 4xx/5xx, rate-limit
+     `429`, timeout, or a malformed/empty body), treat it as *unresolved*, not as
+     a reason to stop the whole mapping:
+     - **Transient** (`429`, `5xx`, timeout): retry the same call **once**. If it
+       still errors, give up on that label.
+     - **Terminal** (`4xx` other than `429`, or an unparseable response): don't
+       retry — the query or server is the problem, not luck.
+     - In either case fall back to the next two rules: keep the source `label`,
+       leave `ontology_id` unset, and **never** fabricate or partially guess a
+       CURIE from a failed lookup.
+     - Note the unresolved label to the user (e.g. in the coverage summary) so the
+       gap is visible and they can supply the id by hand.
    - **Don't fabricate ids:** if no confident match comes back, leave `ontology_id`
      unset and keep the label.
 10. **Zarr paths: confirm granularity first.** When a data path is a `.zarr` store,
