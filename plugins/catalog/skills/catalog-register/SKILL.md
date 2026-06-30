@@ -168,7 +168,7 @@ unset — empty is honest; a fabricated value is a data-quality bug.
 7. **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
   **not** default them to `False` when the source is silent. Always confirm the
   PII and PHI status with the user before setting either.
-8. **Confirm `storage_platform` when it isn't obvious.**Don't infer it from the path alone.
+8. **Confirm `storage_platform` when it isn't obvious.** Don't infer it from the path alone.
    - A `/hpc/...` path is **not** always `sf_hpc` — there are three HPC
         backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site.
    - An `http(s)://` URI is **not** always `external` — internal platforms can sit behind a URL.
