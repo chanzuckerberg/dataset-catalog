@@ -115,15 +115,16 @@ and modality-specific metadata all live at the dataset level.
 
 ### Dataset types
 
-**Raw** are data produced by a single experimental acquisition — one pass through
+**Raw** are data produced by a single experimental acquisition from a machine — one pass through
 an instrument or pipeline under consistent conditions (same organism, same assay, same
 modality). If two groups of files came from the same run under the same conditions,
 they go in one dataset. If anything changes between them, register them separately.
 
 **Processed** are always new datasets. When an existing dataset is processed,
 the output goes in a new dataset record linked back to its source via a lineage edge.
-The original is never modified. A processed dataset can be derived from multiple source
-datasets across different samples, assays, or modalities.
+The original is never modified. Any qualitative change to the raw dataset such as preprocessing,
+makes it a processed dataset. A processed dataset can be derived from multiple source datasets
+across different samples, assays, or modalities.
 
 The `dataset_type` field records this distinction as `raw` or `processed`.
 
@@ -182,12 +183,12 @@ level are permitted for domain-specific or team-specific needs.
 
 #### Experimental metadata
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `sub_modality` | string | No | More granular specification of the experimental procedure (e.g. `scRNA-seq`, `brightfield`, `bulk`). |
-| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. Recommended ontology: **EFO** (e.g. `EFO:0022605`). |
-| `machine_information` | json | No | Information about the instrument used for data generation. |
-| `experimental_protocols` | json | No | Protocol details for the experiment. |
+| Field | Type | Required | Description                                                                                                                                                   |
+|---|---|---|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `sub_modality` | string | No | More granular specification of the experimental procedure (e.g. `scRNA-seq`, `brightfield`, `bulk`).                                                          |
+| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. Recommended ontology: **EFO** (e.g. `EFO:0022605`), **FBBI** (eg. `FBbi:00100015`). |
+| `machine_information` | json | No | Information about the instrument used for data generation.                                                                                                    |
+| `experimental_protocols` | json | No | Protocol details for the experiment.                                                                                                                          |
 
 #### Sample metadata
 

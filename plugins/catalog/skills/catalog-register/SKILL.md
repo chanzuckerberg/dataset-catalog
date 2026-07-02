@@ -205,6 +205,30 @@ unset — empty is honest; a fabricated value is a data-quality bug.
   ask whether each `location` (data asset) should point at the next level down
   (e.g. one location per well/FOV) rather than the whole store. Map `locations`
   accordingly — don't assume one dataset = one `.zarr` root.
+11. **Derive `organism` / `tissue` / `disease` only when *formally entailed* by an
+  existing source value — confirm before coding, never hallucinate.** Sample
+  fields like organism, tissue and disease are frequently absent as their own column
+  yet fully determined by another column. A `cell_line` / `cell_type` pins down
+  both the species and the tissue of origin. You may fill such a field **only**
+  when the value is *derived*, never guessed.
+   - **Formal derivation, not intuition.** The target must be *entailed* by an
+     authority, not inferred by feel. The mechanism is the OLS hierarchy from
+     rule 9: resolve the source label (e.g. `cell_type="A549"` → `EFO:0001086`),
+     then read its ancestors. If an unambiguous ancestor pins the field
+     (`A549` → parent `Homo sapiens cell line` ⇒ `organism = Homo sapiens /
+     NCBITaxon:9606`).
+   - **Ambiguous ⇒ leave unset.** If the source value does not *uniquely*
+     determine the target — e.g. a cell *type* aligns with models in multiple species — do **not** derive. Leave it unset
+     and note it; never pick the "likely" option.
+   - **Confirm with the user before writing the derivation into code.**
+     Derivation is a mapping *decision*, not a lookup. Show the user the rule you intend to encode as source field → target field, the entailing authority (which ancestor/lookup), and
+     exactly which rows will stay unset because they're ambiguous. Get
+     explicit approval. Only then code it. Don't silently bake in a derivation.
+   - **Cell lines belong in `tissue`.** When you do derive, a cell line's
+     canonical slot is `sample.tissue = [TissueEntry(label=<line>,
+     ontology_id=<resolved id>, type="cell line")]` — not an ad-hoc `cell_line`
+     extra. Its anatomical tissue-of-origin (e.g. A549 → lung / UBERON) is a
+     *further* derivation, held to the same entailment + confirmation bar.
 - **`version` is never null.** It's a required signature field (`str`, not
   optional). If the source has no version, default it to `"1.0.0"` — use
   `src.get("release") or "1.0.0"`, never pass `None`.
@@ -244,7 +268,7 @@ Get token from catalog's `/docs` → Token → `/token/issue`. Pass via `CATALOG
   here with a precise error, before any network call.
 - **`record_schema_version` is auto-set.** Don't map a source field
   onto it; the model defaults it.
-- **`dataset_type` values are `raw` / `processed`** (`DatasetType.raw`) — not `primary`.
+- **`dataset_type` values are `raw` / `processed`** (`DatasetType.raw`)
 - **`data_quality.checks_*` accept any shape** (`Any`): a count, a list of
   names, or a nested dict all validate.
 - **`extra="allow"` cuts both ways.** Unknown keys are preserved (great for
@@ -262,6 +286,7 @@ Get token from catalog's `/docs` → Token → `/token/issue`. Pass via `CATALOG
 - **No live server on a clean machine.** `--dry-run` swaps the client's internal
   `_http` for an `httpx.MockTransport` fake catalog (`_mock_client` in the
   template) so you can validate the full submit path without a token.
+- Don't ask user for sensitive tokens or credentials.
 
 ## Troubleshooting
 
@@ -277,4 +302,4 @@ Get token from catalog's `/docs` → Token → `/token/issue`. Pass via `CATALOG
   to update it in place (see *Registering*).
 - `ValueError: update_if_exists and error_on_duplicate cannot both be True` →
   both flags were set; `update_if_exists=True` requires `error_on_duplicate=False`.
-- `AuthenticationError` (401) → bad/expired token; reissue at `/token/issue`.
+- `AuthenticationError` (401) → bad/expired token; ask user to reissue at `/token` page.
