@@ -183,12 +183,12 @@ level are permitted for domain-specific or team-specific needs.
 
 #### Experimental metadata
 
-| Field | Type | Required | Description                                                                                                                                                   |
-|---|---|---|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `sub_modality` | string | No | More granular specification of the experimental procedure (e.g. `scRNA-seq`, `brightfield`, `bulk`).                                                          |
-| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. Recommended ontology: **EFO** (e.g. `EFO:0022605`), **FBBI** (eg. `FBbi:00100015`). |
-| `machine_information` | json | No | Information about the instrument used for data generation.                                                                                                    |
-| `experimental_protocols` | json | No | Protocol details for the experiment.                                                                                                                          |
+| Field | Type | Required | Description                                                                                                                                                     |
+|---|---|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `sub_modality` | string | No | More granular specification of the experimental procedure (e.g. `scRNA-seq`, `brightfield`, `bulk`).                                                            |
+| `assay` | list[json] | No | Assay(s) used to produce the dataset. Each entry: `{ label, ontology_id }`. Recommended ontology: **EFO** (e.g. `EFO:0022605`), **FBbi** (eg. `FBbi:00100015`). |
+| `machine_information` | json | No | Information about the instrument used for data generation.                                                                                                      |
+| `experimental_protocols` | json | No | Protocol details for the experiment.                                                                                                                            |
 
 #### Sample metadata
 
@@ -209,13 +209,13 @@ ontology recommended below. These follow the
 [CZI cross-modality standard](https://github.com/chanzuckerberg/data-guidance/blob/main/standards/cross-modality/1.1.0/schema.md);
 the `label` should be the ontology term's preferred label.
 
-| Field | Recommended ontology | Notes & special values |
-|---|---|---|
-| `organism` | **NCBITaxon** | e.g. `NCBITaxon:9606` (human), `NCBITaxon:10090` (mouse), `NCBITaxon:7955` (zebrafish), `NCBITaxon:7227` (Drosophila), `NCBITaxon:6239` (C. elegans). |
-| `assay` | **EFO** | Experimental Factor Ontology, e.g. `EFO:0022605`. |
-| `disease` | **MONDO** | Use `PATO:0000461` for normal/healthy and `MONDO:0021178` for injury. |
-| `development_stage` | organism-specific | **HsapDv** (human), **MmusDv** (mouse), **WBls** (C. elegans), **ZFS** (zebrafish), **FBdv** (Drosophila); `UBERON:0000105` (life cycle stage) for other organisms. Use `unknown` if unavailable and `na` for cell lines. |
-| `tissue` | depends on `type` | **UBERON** for tissue/organoid (or organism-specific **WBbt** / **ZFA** / **FBbt**); **CL** for cell culture; **Cellosaurus** (`CVCL_` prefix) for cell lines; `GO:0005575` (cellular_component) descendants for organelles. |
+| Field | Recommended ontology | Notes & special values                                                                                                                                                                                                       |
+|---|--------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `organism` | **NCBITaxon**      | e.g. `NCBITaxon:9606` (human), `NCBITaxon:10090` (mouse), `NCBITaxon:7955` (zebrafish), `NCBITaxon:7227` (Drosophila), `NCBITaxon:6239` (C. elegans).                                                                        |
+| `assay` | modality-specific  | Default: Experimental Factor Ontology, e.g. `EFO:0022605`, for imaging use Biological Imaging Methods Ontology eg: `FBbi:00000243`                                                                                                          |
+| `disease` | **MONDO**          | Use `PATO:0000461` for normal/healthy and `MONDO:0021178` for injury.                                                                                                                                                        |
+| `development_stage` | organism-specific  | **HsapDv** (human), **MmusDv** (mouse), **WBls** (C. elegans), **ZFS** (zebrafish), **FBdv** (Drosophila); `UBERON:0000105` (life cycle stage) for other organisms. Use `unknown` if unavailable and `na` for cell lines.    |
+| `tissue` | depends on `type`  | **UBERON** for tissue/organoid (or organism-specific **WBbt** / **ZFA** / **FBbt**); **CL** for cell culture; **Cellosaurus** (`CVCL_` prefix) for cell lines; `GO:0005575` (cellular_component) descendants for organelles. |
 
 The `tissue` entry's `type` field is a controlled value: one of `tissue`, `organoid`,
 `cell culture`, `cell line`, or `organelle`.
