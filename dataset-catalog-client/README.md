@@ -81,6 +81,22 @@ print(f"{result.stats.total_rows} rows from {result.stats.total_datasets} datase
 
 See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) for the full manifest generation guide.
 
+## Command-line interface
+
+Installing the package also installs a read-only `catalog` command for querying the catalog from the shell:
+
+```bash
+export CATALOG_API_URL=https://your-catalog.example.com
+export CATALOG_API_TOKEN=your-token
+
+catalog search --q "brightfield" --organism "Homo sapiens"
+catalog facets --fields organism,tissue,assay,project
+catalog get <dataset-uuid> --lineage
+catalog lineage <dataset-uuid> --direction up
+```
+
+Output is a human-readable table on a terminal and JSON when piped (override with `-o table|json`). See the [CLI section of USAGE.md](USAGE.md#command-line-interface) for all subcommands, flags, and exit codes.
+
 ## Documentation
 
 | Document | Description |

@@ -28,6 +28,83 @@ An async variant is also available — see [Async usage](#async-usage).
 
 ---
 
+## Command-line interface
+
+Installing the package also installs a read-only `catalog` command for querying
+the catalog from the shell. It only issues GET requests — creating, updating,
+and deleting always go through the Python API.
+
+Configure it via the environment:
+
+```bash
+export CATALOG_API_URL=https://your-catalog.example.com
+export CATALOG_API_TOKEN=your-token-here
+```
+
+Each subcommand prints a human-readable **table** when stdout is a terminal and
+**JSON** when the output is piped or redirected — so interactive use is readable
+and `... | jq` still works unchanged. Force either format with `-o/--output
+table|json`.
+
+```bash
+# Full-text + faceted search (lightweight hits; latest versions only by default)
+catalog search --q "brightfield" --organism "Homo sapiens" --limit 5
+
+# Discover the actual filter vocabulary before filtering (value + count per field)
+catalog facets --fields organism,tissue,assay,project
+
+# One full record, by UUID or by coordinates
+catalog get 6f9d1c2e-...-uuid --lineage --collections
+catalog get my-dataset --version 1.0.0 --project atlas
+
+# Exact-coordinate listing (compact summaries; --full for complete records)
+catalog list --project atlas --canonical-id my-dataset --all-versions
+
+# Walk provenance up (ancestors), down (derived datasets), or both
+catalog lineage 6f9d1c2e-...-uuid --direction up --depth 3
+
+# Browse collections
+catalog collections list
+catalog collections entries <collection-uuid>
+catalog collections parents <collection-uuid>
+```
+
+Useful flags:
+
+- `-o/--output` (all subcommands) — `table` or `json`; defaults to `table` on a terminal, `json` when piped.
+- `--all-versions` (`search`, `list`, `facets`) — include superseded versions; by default only `is_latest` records are returned.
+- `--sort` (`search`) — `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest`. Defaults to `relevance` when `--q` is given, `last_modified` otherwise.
+- `--facets` (`search`) — request bucket counts alongside hits, e.g. `--facets organism,tissue`.
+- `--type` (`lineage`) — restrict the walk to one edge type (`version_of`, `transformed_from`, `copy_of`).
+
+Example `facets` output (`-o json`):
+
+```json
+{
+  "total": 42,
+  "facets": {
+    "organism": [
+      { "value": "Homo sapiens", "count": 30 },
+      { "value": "Mus musculus", "count": 12 }
+    ]
+  }
+}
+```
+
+On failure the command prints `error: <message>` to stderr and exits with a
+code you can branch on in scripts:
+
+| Code | Meaning |
+|------|---------|
+| `0`  | success |
+| `1`  | other client error |
+| `2`  | usage / configuration error (bad flags, missing env vars) |
+| `3`  | authentication error (401 — check `CATALOG_API_TOKEN`) |
+| `4`  | not found (404) |
+| `5`  | server or connection error (5xx / network) |
+
+---
+
 ## Datasets
 
 ### Create a dataset
