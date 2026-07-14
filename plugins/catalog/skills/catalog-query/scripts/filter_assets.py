@@ -37,6 +37,7 @@ from catalog_client.exceptions import CatalogError
 from catalog_client.models.asset import AssetType
 from catalog_client.models.dataset import DatasetModality
 
+EXIT_ERROR = 1
 EXIT_USAGE = 2
 
 
@@ -53,28 +54,20 @@ def _client() -> CatalogClient:
     return CatalogClient(base_url=url, api_token=token)
 
 
-def _modality(value: str | None) -> DatasetModality | None:
-    if value is None:
-        return None
-    try:
-        return DatasetModality(value)
-    except ValueError:
-        members = ", ".join(m.value for m in DatasetModality)
-        _usage_error(f"invalid --modality {value!r}; expected one of: {members}")
+def _enum_value(value: Any) -> Any:
+    """Unwrap an enum member to its ``.value``; pass plain strings through."""
+    return getattr(value, "value", value)
 
 
 def _iter_datasets(client: CatalogClient, scan_limit: int, **filters: Any) -> Iterator:
     """Yield up to ``scan_limit`` dataset records, warning if more matched."""
     seen = 0
-    offset = 0
     while seen < scan_limit:
         page = client.datasets.list(
-            offset=offset, limit=min(100, scan_limit - seen), **filters
+            offset=seen, limit=min(100, scan_limit - seen), **filters
         )
-        for dataset in page.results:
-            yield dataset
-            seen += 1
-        offset += len(page.results)
+        yield from page.results
+        seen += len(page.results)
         if not page.results:
             return
         if seen >= scan_limit and page.total > scan_limit:
@@ -86,23 +79,26 @@ def _iter_datasets(client: CatalogClient, scan_limit: int, **filters: Any) -> It
             return
 
 
+def _iter_assets(datasets: Iterator) -> Iterator:
+    """Flatten dataset records into ``(dataset, asset)`` pairs."""
+    for dataset in datasets:
+        for asset in dataset.locations:
+            yield dataset, asset
+
+
+def _contains(needle: str | None, field: str | None) -> bool:
+    """True if ``needle`` (already lowercased) is None or a substring of ``field``."""
+    return needle is None or needle in (field or "").lower()
+
+
 def _asset_matches(
     asset: Any, description: str | None, file_format: str | None, asset_type: str | None
 ) -> bool:
-    if description is not None:
-        text = asset.description or ""
-        if description.lower() not in text.lower():
-            return False
-    if file_format is not None:
-        text = asset.file_format or ""
-        if file_format.lower() not in text.lower():
-            return False
-    if (
-        asset_type is not None
-        and getattr(asset.asset_type, "value", None) != asset_type
-    ):
-        return False
-    return True
+    return (
+        _contains(description, asset.description)
+        and _contains(file_format, asset.file_format)
+        and (asset_type is None or _enum_value(asset.asset_type) == asset_type)
+    )
 
 
 def _asset_row(dataset: Any, asset: Any) -> dict:
@@ -111,11 +107,9 @@ def _asset_row(dataset: Any, asset: Any) -> dict:
         "canonical_id": dataset.canonical_id,
         "version": dataset.version,
         "asset_id": asset.id,
-        "asset_type": getattr(asset.asset_type, "value", asset.asset_type),
+        "asset_type": _enum_value(asset.asset_type),
         "file_format": asset.file_format,
-        "storage_platform": getattr(
-            asset.storage_platform, "value", asset.storage_platform
-        ),
+        "storage_platform": _enum_value(asset.storage_platform),
         "location_uri": asset.location_uri,
         "description": asset.description,
     }
@@ -164,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--asset-type", choices=[m.value for m in AssetType])
     parser.add_argument("--project")
-    parser.add_argument("--modality")
+    parser.add_argument("--modality", choices=[m.value for m in DatasetModality])
     parser.add_argument("--canonical-id")
     parser.add_argument("--access-scope")
     parser.add_argument(
@@ -201,31 +195,29 @@ def main(argv: list[str] | None = None) -> None:
         filters["canonical_id"] = args.canonical_id
     if args.access_scope:
         filters["access_scope"] = args.access_scope
-    modality = _modality(args.modality)
-    if modality is not None:
-        filters["modality"] = modality
+    if args.modality:
+        filters["modality"] = DatasetModality(args.modality)
+
+    description = args.description.lower() if args.description else None
+    file_format = args.file_format.lower() if args.file_format else None
 
     rows: list[dict] = []
     try:
         with _client() as client:
-            for dataset in _iter_datasets(client, args.scan_limit, **filters):
-                for asset in dataset.locations:
-                    if _asset_matches(
-                        asset, args.description, args.file_format, args.asset_type
-                    ):
-                        rows.append(_asset_row(dataset, asset))
-                        if len(rows) >= args.limit:
-                            break
-                if len(rows) >= args.limit:
-                    print(
-                        f"note: stopped at --limit {args.limit} matching assets; "
-                        "raise --limit for more.",
-                        file=sys.stderr,
-                    )
-                    break
+            datasets = _iter_datasets(client, args.scan_limit, **filters)
+            for dataset, asset in _iter_assets(datasets):
+                if _asset_matches(asset, description, file_format, args.asset_type):
+                    rows.append(_asset_row(dataset, asset))
+                    if len(rows) >= args.limit:
+                        print(
+                            f"note: stopped at --limit {args.limit} matching assets; "
+                            "raise --limit for more.",
+                            file=sys.stderr,
+                        )
+                        break
     except CatalogError as exc:
         print(f"error: request failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(EXIT_ERROR)
 
     if args.output == "json":
         print(json.dumps({"count": len(rows), "assets": rows}, indent=2, default=str))
