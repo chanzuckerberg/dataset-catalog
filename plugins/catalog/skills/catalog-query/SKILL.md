@@ -22,12 +22,44 @@ description: Reads and queries the Scientific Dataset Catalog — free-text data
 - **Token**: read from `CATALOG_API_TOKEN`; never hard-code it. The REST auth header is
   `X-catalog-api-token`; only paths under `/api/` accept it.
 
-## Quickest: the `catalog` CLI
+## Install the client (CLI + SDK)
 
-Installing the client (below) also installs a read-only `catalog` console script. It reads the same
-`CATALOG_API_URL` / `CATALOG_API_TOKEN` env vars, prints an aligned table on a terminal and JSON when
-piped (`-o json` to force), and exits non-zero on error (3 auth, 4 not-found, 5 server). Prefer it for
-one-off lookups; drop to the SDK when you need to script logic over the results.
+Querying goes through the **`catalog` CLI or the `catalog_client` SDK** — both ship in one package, so a
+single install gives you both. Direct REST is a last-resort fallback. Prefer the CLI for one-off
+lookups and the SDK when you need to script logic over the results.
+
+- Before any `pip install`: ask the user whether to use a virtual environment; never install into the
+  system interpreter silently. Skip only inside an already-activated venv or a monorepo-managed env.
+- **Install a tagged release, never `main`** — `main` is unreleased and may not match a published
+  schema. Resolve the latest `catalog-client-v<X.Y.Z>` tag first, then install that exact tag:
+
+```bash
+# resolve the latest released tag (requires the gh CLI):
+TAG=$(gh release list --repo chanzuckerberg/dataset-catalog \
+  --json tagName,publishedAt \
+  --jq 'map(select(.tagName | startswith("catalog-client-v"))) | sort_by(.publishedAt) | reverse | .[0].tagName')
+echo "latest release: $TAG"   # e.g. catalog-client-v0.4.0
+```
+
+```bash
+# monorepo dev — uv manages the environment (no manual venv needed):
+uv sync --all-groups            # then run via `uv run python ...` / `uv run catalog ...`
+
+# standalone — create + activate a venv FIRST, then install the tagged release:
+python -m venv .venv            # or: uv venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
+```
+
+This installs the `catalog_client` package (importable SDK) and the read-only `catalog` console script.
+Requires Python ≥3.12.
+
+## Preferred: the `catalog` CLI
+
+The read-only `catalog` console script reads the same `CATALOG_API_URL` / `CATALOG_API_TOKEN` env vars,
+prints an aligned table on a terminal and JSON when piped (`-o json` to force), and exits non-zero on
+error (3 auth, 4 not-found, 5 server). Prefer it for one-off lookups; drop to the SDK when you need to
+script logic over the results.
 
 ```bash
 catalog search --q liver --modality sequencing --facets project --limit 10
@@ -44,11 +76,8 @@ flags. The CLI has no asset-description filter — for that use the bundled
 
 ## Preferred for scripting: the catalog-client SDK
 
-Typed pydantic models, correct param handling, all endpoints. Install a pinned release (never `main`):
-
-```bash
-pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@catalog-client-v0.3.0#subdirectory=dataset-catalog-client'
-```
+Typed pydantic models, correct param handling, all endpoints — reach for it when you need to iterate,
+join, or post-process results in code (install it via the section above):
 
 ```python
 import os
@@ -64,7 +93,7 @@ with CatalogClient(base_url=os.environ["CATALOG_API_URL"],
 ```
 
 Constructor is `CatalogClient(base_url, api_token, timeout=30.0)`; `AsyncCatalogClient` mirrors it under
-`async with`. Sub-clients: `.datasets`, `.collections`, `.lineages`. Requires Python ≥3.12.
+`async with`. Sub-clients: `.datasets`, `.collections`, `.lineages`.
 
 ## Fallback: direct REST (no install)
 
@@ -184,7 +213,7 @@ must fetch dataset records and filter their `locations` client-side. The bundled
 
 ```bash
 # assets whose description mentions "segmentation mask", within one project
-python scripts/filter_assets.py --description "segmentation mask" --project CellXGene
+python scripts/filter_assets.py --description "segmentation mask" --project cryoet
 
 # combine with format / type filters; JSON out
 python scripts/filter_assets.py --description mask --file-format tiff --modality imaging -o json
