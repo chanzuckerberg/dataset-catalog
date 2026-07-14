@@ -428,7 +428,6 @@ def build_parser() -> argparse.ArgumentParser:
         prog="catalog",
         description="Query the Scientific Dataset Catalog (read-only).",
     )
-    # Shared across subcommands: output format, added after each subcommand name.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "-o",
