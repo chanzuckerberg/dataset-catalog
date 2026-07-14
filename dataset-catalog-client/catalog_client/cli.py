@@ -267,6 +267,7 @@ def cmd_lineage(args: argparse.Namespace) -> None:
     nodes: set[str] = {args.dataset_id}
     frontier: set[str] = {args.dataset_id}
     with _client() as client:
+    # TODO: unoptimized graph traversal needs revisiting
         for _ in range(args.depth):
             discovered: set[str] = set()
             for ds_id in frontier:
