@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.3.0...catalog-client-v0.4.0) (2026-07-14)
+
+
+### Features
+
+* **client:** add read-only catalog-client CLI ([#55](https://github.com/chanzuckerberg/dataset-catalog/issues/55)) ([e6db799](https://github.com/chanzuckerberg/dataset-catalog/commit/e6db799f897470629a050450093f935165bde967))
+
+
+### Miscellaneous
+
+* **deps:** bump jupyter-server in /dataset-catalog-client ([#44](https://github.com/chanzuckerberg/dataset-catalog/issues/44)) ([6b64085](https://github.com/chanzuckerberg/dataset-catalog/commit/6b64085b1f57a53535b520c98822b5bb2851ebf1))
+* **deps:** bump mistune from 3.2.1 to 3.3.0 in /dataset-catalog-client ([#54](https://github.com/chanzuckerberg/dataset-catalog/issues/54)) ([116b163](https://github.com/chanzuckerberg/dataset-catalog/commit/116b1635ae21cfeb6c0863c0e8649b062d2dbac4))
+* **deps:** bump urllib3 from 2.6.3 to 2.7.0 in /dataset-catalog-client ([#34](https://github.com/chanzuckerberg/dataset-catalog/issues/34)) ([81524d7](https://github.com/chanzuckerberg/dataset-catalog/commit/81524d723945795ec78dda59de13b071fffbb36c))
+
 ## [0.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.2.0...catalog-client-v0.3.0) (2026-06-16)
 
 
