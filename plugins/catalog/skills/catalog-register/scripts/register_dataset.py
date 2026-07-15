@@ -24,7 +24,7 @@ Commands (run while iterating on the mapping):
 
   # register against the real catalog:
   export CATALOG_API_URL=https://your-catalog.example.com
-  export CATALOG_API_TOKEN=...        # issue at <catalog>/docs -> /token/issue
+  export CATALOG_API_TOKEN=...        # issue at <catalog>/tokens (logged-in browser)
   uv run python .../register_dataset.py --submit
 
 ``--dry-run`` validates with the same Pydantic rules the API enforces, prints

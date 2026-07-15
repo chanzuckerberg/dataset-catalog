@@ -44,10 +44,9 @@ for available versions.
 
 Before using the client, you need to generate an API token:
 
-1. Navigate to your catalog instance's API documentation (typically at `https://datacatalog.staging-sci-data.staging.czi.team/docs`)
-2. Find the **Token** section in the API documentation
-3. Use the `/token/issue` endpoint in the docs interface to generate a new API token
-4. Copy the generated token and use it in the `api_token` parameter when creating the client
+1. Open your catalog instance's token page in a logged-in browser (typically at `https://datacatalog.staging-sci-data.staging.czi.team/tokens`; the page is SSO-gated)
+2. Generate a new API token
+3. Copy the generated token and use it in the `api_token` parameter when creating the client
 
 Store your token securely as it provides access to your catalog instance.
 
