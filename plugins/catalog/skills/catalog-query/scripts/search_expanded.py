@@ -114,9 +114,11 @@ def _ols_top_class(term: str, ontology: str | None) -> dict | None:
 # too generic to search on. Dropped from ancestor walks. Note: OLS reports these
 # under the importing ontology (UBERON etc.), so they must be filtered by ID
 # namespace, not by `ontology_name`.
-_UPPER_ONTOLOGY_PREFIXES = frozenset(
-    {"BFO", "CARO", "COB", "OBI", "IAO", "UBERON:0000000"}
-)
+_UPPER_ONTOLOGY_PREFIXES = frozenset({"BFO", "CARO", "COB", "OBI", "IAO"})
+
+# Generic root terms that live in an otherwise-useful namespace (so they can't be
+# dropped by prefix) — matched by full OBO id. UBERON:0000000 is UBERON's own root.
+_GENERIC_TERM_IDS = frozenset({"UBERON:0000000"})
 
 
 def _term_prefix(term: dict) -> str:
@@ -126,6 +128,14 @@ def _term_prefix(term: dict) -> str:
         return obo_id.split(":", 1)[0].upper()
     tail = (term.get("iri") or "").rsplit("/", 1)[-1]
     return tail.split("_", 1)[0].upper() if "_" in tail else ""
+
+
+def _is_upper_ontology(term: dict) -> bool:
+    """True if an OLS term is too generic to search on (upper-ontology root)."""
+    return (
+        _term_prefix(term) in _UPPER_ONTOLOGY_PREFIXES
+        or (term.get("obo_id") or "").upper() in _GENERIC_TERM_IDS
+    )
 
 
 def _ols_related(
@@ -152,7 +162,7 @@ def _ols_related(
     for term in terms:
         if not term.get("label"):
             continue
-        if drop_upper and _term_prefix(term) in _UPPER_ONTOLOGY_PREFIXES:
+        if drop_upper and _is_upper_ontology(term):
             continue
         labels.append(term["label"])
     return labels
@@ -272,7 +282,15 @@ def _resolve_terms(args: argparse.Namespace) -> list[str]:
 
     # --terms (or --no-expand) means the caller already chose the terms — no OLS.
     if args.terms or args.no_expand:
-        return _dedup_preserving(explicit, args.max_terms)
+        distinct = _dedup_preserving(explicit, len(explicit))
+        if len(distinct) > args.max_terms:
+            _warn(
+                f"{len(distinct)} distinct terms given but --max-terms is "
+                f"{args.max_terms}; searching only the first {args.max_terms} "
+                f"({', '.join(distinct[: args.max_terms])}). "
+                "Raise --max-terms to search them all."
+            )
+        return distinct[: args.max_terms]
     # Standalone fallback: expand the single --q term against OLS4 REST.
     return _ols_expand(
         args.q,
