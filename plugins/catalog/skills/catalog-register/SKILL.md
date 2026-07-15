@@ -91,7 +91,7 @@ Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the
    [coverage] 24 mapped + 1 dropped of 25 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
-5. **Submit** once the user has a token (issue at `<catalog>/docs -> /token/issue`):
+5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser):
    ```bash
    export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
    python $P/scripts/register_dataset.py --submit
@@ -257,7 +257,7 @@ unset — empty is honest; a fabricated value is a data-quality bug.
 
 Template's `submit_real()` calls `.submit()` with defaults. Edit that call to pass flags user chose.
 
-Get token from catalog's `/docs` → Token → `/token/issue`. Pass via `CATALOG_API_TOKEN` env var. Never hard-code.
+Get token from catalog's `/tokens` page (open in a logged-in browser; SSO-gated). Pass via `CATALOG_API_TOKEN` env var. Never hard-code.
 
 
 ## Gotchas

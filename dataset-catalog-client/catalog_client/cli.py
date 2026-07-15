@@ -6,7 +6,7 @@ when piped; override with ``--output/-o``.
 
 Configuration comes from the environment:
     CATALOG_API_URL    base URL of the catalog (e.g. https://catalog.example.com)
-    CATALOG_API_TOKEN  API token (issue one at <catalog>/docs -> /token/issue)
+    CATALOG_API_TOKEN  API token (issue one at <catalog>/tokens in a logged-in browser)
 
 Subcommands:
     search       full-text + faceted search over datasets
