@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.2.0...catalog-plugin-v0.3.0) (2026-07-15)
+
+
+### Features
+
+* no-install REST read path, OLS expansion, and catalog-reader subagent ([#56](https://github.com/chanzuckerberg/dataset-catalog/issues/56)) ([4348b19](https://github.com/chanzuckerberg/dataset-catalog/commit/4348b19945931bd889dff91421954d11c0af17e3))
+
 ## [0.2.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.1.0...catalog-plugin-v0.2.0) (2026-07-14)
 
 
