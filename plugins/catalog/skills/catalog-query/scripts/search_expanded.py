@@ -274,11 +274,13 @@ def _print_table(rows: list[dict]) -> None:
 
 def _resolve_terms(args: argparse.Namespace) -> list[str]:
     """Decide the term list: explicit --terms win; else OLS-expand --q (fallback)."""
-    explicit: list[str] = []
-    if args.q:
-        explicit.append(args.q)
     if args.terms:
-        explicit.extend(part for part in args.terms.split(",") if part.strip())
+        # --terms is the explicit, already-chosen list; it takes precedence over --q.
+        if args.q:
+            _warn("--terms supplied; ignoring --q (--terms is the explicit term list).")
+        explicit = [part.strip() for part in args.terms.split(",") if part.strip()]
+    else:
+        explicit = [args.q] if args.q else []
 
     # --terms (or --no-expand) means the caller already chose the terms — no OLS.
     if args.terms or args.no_expand:
@@ -311,7 +313,9 @@ def main(argv: list[str] | None = None) -> None:
         "--terms",
         help="comma-separated terms to search (e.g. from the ols MCP); skips OLS",
     )
-    parser.add_argument("--q", help="single base term (OLS-expanded if --terms absent)")
+    parser.add_argument(
+        "--q", help="single base term, OLS-expanded (ignored if --terms is given)"
+    )
     parser.add_argument(
         "--ontology",
         help="fallback OLS scope for --q (e.g. uberon, cl, efo, mondo)",

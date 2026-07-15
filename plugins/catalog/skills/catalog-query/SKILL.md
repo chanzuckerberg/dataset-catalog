@@ -21,9 +21,9 @@ typed post-processing, and whatever extra filters the latest client adds.
 Every command below assumes the following are already true. Check them first; don't discover a missing
 one three steps into a query.
 
-1. **Config is set.** Both `CATALOG_API_URL` and `CATALOG_API_TOKEN` must be in the environment.
-   - **URL:** if `CATALOG_API_URL` is unset, default to the production instance
-     `https://datacatalog.prod-sci-data.prod.czi.team/`.
+1. **Config is set.** `CATALOG_API_TOKEN` must be in the environment; `CATALOG_API_URL` is optional.
+   - **URL:** if `CATALOG_API_URL` is unset, it defaults to the production instance
+     `https://datacatalog.prod-sci-data.prod.czi.team/` — set it only to target another instance.
    - **Token:** if `CATALOG_API_TOKEN` is unset, it cannot be minted headlessly — it is issued through an
      SSO-gated page that needs a human. Open the token page in the user's (already logged-in) default
      browser so they can generate one:

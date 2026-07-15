@@ -1,8 +1,10 @@
 # Installing the catalog client (CLI + SDK)
 
-Querying goes through the **`catalog` CLI or the `catalog_client` SDK** — both ship in one package, so a
-single install gives you both. Direct REST ([reference/rest.md](rest.md)) is a last-resort fallback with
-no install.
+The **`catalog` CLI and the `catalog_client` SDK** ship in one package, so a single install gives you
+both. You need this install only for their conveniences — automated fan-out/union, page iteration, typed
+post-processing. The common reads (search, list, get) run on the Python standard library with **no
+install** (see the Quick start in `SKILL.md` and [reference/rest.md](rest.md)); that stdlib REST path is
+the default for simple reads, not a fallback.
 
 - Before any `pip install`: ask the user whether to use a virtual environment; never install into the
   system interpreter silently. Skip only inside an already-activated venv or a monorepo-managed env.
