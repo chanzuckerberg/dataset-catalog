@@ -55,7 +55,9 @@ BASE = (os.environ.get("CATALOG_API_URL") or "https://datacatalog.prod-sci-data.
 HEADERS = {"X-catalog-api-token": os.environ["CATALOG_API_TOKEN"]}  # token stays in env, never on argv
 
 def api_get(path, **params):
-    query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    # doseq=True is REQUIRED: a list value must repeat the key (facets=tissue&facets=modality),
+    # NOT comma-join. Passing facets="tissue,modality" is the #1 cause of HTTP 422 here.
+    query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
     url = f"{BASE}{path}" + (f"?{query}" if query else "")
     with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS)) as r:
         return json.load(r)
@@ -68,6 +70,9 @@ api_get("/api/datasets/", project="CellXGene", limit=100)
 
 # 3. fetch one full record by UUID (add include_lineage="true" / include_collections="true" to embed)
 api_get("/api/datasets/<dataset-uuid>")
+
+# 4. discover a facet's controlled vocabulary — facets is a LIST (doseq=True repeats the key)
+api_get("/api/datasets/search/", facets=["tissue", "modality"], limit=1)["facets"]
 ```
 
 `api_get` returns parsed JSON (a dict). Endpoints, every filter, pagination, and the full record shape
@@ -102,19 +107,29 @@ monorepo `uv`) are in **[reference/install.md](reference/install.md)**.
   adds term-match reporting, fan-out caps, and the client's filters. It uses the SDK when installed and
   otherwise the same stdlib REST calls, so it runs with no install too.
 
-## Delegate heavy queries to the `catalog-reader` agent
+## Delegate to the `catalog-reader` agent by default
 
-For large or multi-pass reads — an ontology-broadened search unioned across many terms, a wide project
-listing, a deep lineage trace — delegate to the plugin's **`catalog-reader` subagent**. It runs the
-queries in its own context and returns only the distilled result (the datasets that matched, their ids
-and the requested fields), so paginated JSON and full-record dumps never land in the main conversation.
-Run a trivial one-off lookup inline instead — spawning an agent for a single `get` is not worth the
-overhead.
+**Default to delegating the query to the plugin's `catalog-reader` subagent.** It runs the queries in its
+own context and returns only the distilled result (the datasets that matched, their ids and the requested
+fields), so paginated JSON, facet dumps, and full-record output never land in the main conversation. Hand
+it the task in words ("find raw sequencing datasets in blood, broken down by project") and let it do the
+facet discovery, filtering, and pagination.
 
-One caveat on ontology expansion: the `ols` MCP is a *session* connection and is **not reliably reachable
-inside a subagent**. So expand the biological term in the main context with the `ols` MCP first, then hand
-the expanded terms to the agent (it runs `search_expanded.py --terms …`). If you delegate a bare term
-instead, the agent falls back to the script's OLS4 REST expansion (`--q --ontology …`).
+Delegate whenever a query **could** touch more than one record or one page — searches, facet discovery,
+project/collection listings, lineage traces, any client-side filtering (e.g. `dataset_type`, which is a
+facet, not a server filter, so it forces a paginated sweep). You usually can't tell up front that a query
+is small: a two-facet search that looks trivial can turn into paging thousands of records. When in doubt,
+delegate — an over-delegated `get` costs a little overhead; an inline sweep floods this context with JSON
+and invites the retry-in-the-open failures this skill exists to prevent.
+
+**Run inline only** for a genuinely bounded single call: one `get` by known UUID/`canonical_id`, or one
+`search`/facet call you will read once and not paginate. And **always run ontology expansion inline**
+(next section) — the `ols` MCP is a session connection the subagent can't reach; expand agent-side, then
+hand the expanded terms to `catalog-reader`.
+
+(If you delegate a *bare* biological term without expanding it first, the agent falls back to the script's
+OLS4 REST expansion — `search_expanded.py --q --ontology …` — which covers label + synonyms only, so
+recall is thinner than an `ols` MCP expansion done agent-side.)
 
 ## Search: broaden biological terms (ols MCP + `search_expanded.py`)
 
@@ -126,10 +141,23 @@ free-text `q=` index over name/metadata. They are not interchangeable:
 
 - **If the term names a facet dimension** (e.g. "blood" is a tissue, "10x" an assay), prefer the **facet
   filter** — `catalog search --tissue blood`, or in REST `&tissue=blood` on the search route — which is
-  an exact match against a curated value and far more precise than free text. But facet values are a **controlled vocabulary**: confirm the exact
-  spelling with `catalog facets --fields tissue` first (the list route silently ignores an unknown
-  filter, so a wrong value reads as "matched everything"), and note that OLS synonyms/subtypes are *not*
-  guaranteed to be valid facet values.
+  an exact match against a curated value and far more precise than free text. Two rules, in order:
+  1. **Confirm the exact spelling first — facet values are a controlled vocabulary.** In REST that means a
+     `search` call with the facet field(s) read off the response's `facets` object (there is **no**
+     `/api/datasets/facets/` endpoint; see [reference/rest.md](reference/rest.md)). Use this exact call and
+     do **not** improvise the encoding — `facets` is a **repeated** param, so pass it as a **list** through
+     the `doseq=True` helper; comma-joining it (`facets="tissue,modality"`) returns HTTP 422:
+     ```python
+     # api_get is the doseq=True helper from Quick start
+     api_get("/api/datasets/search/", facets=["tissue", "modality"], limit=1)["facets"]
+     ```
+     Confirm the value is real before you filter on it: the list route **silently ignores** an unknown
+     filter, so a wrong value reads as "matched everything". OLS synonyms/subtypes are *not* guaranteed to
+     be valid facet values.
+  2. **Filter on the facet alone — do not also pass the same word as free-text `q=`.** Stacking
+     `q="blood"` on top of `tissue="blood"` double-filters: a record only survives if the literal word
+     "blood" also appears in indexed text, which silently craters recall (in one run, 33 hits instead of
+     the real 1970). Use `q=` only for a *different* concept than the facet, or not at all.
 - **If the concept is not a facet, or the facet vocabulary doesn't cover the synonyms/subtypes you need
   for recall**, fall back to free-text `q=` expansion (below). You can also combine the two — a facet
   filter to scope, `--terms` for recall within it — but only union free-text passes when the facet alone
@@ -189,6 +217,10 @@ catalog list --project CellXGene --modality imaging --limit 100
 catalog lineage <dataset-uuid> --direction up --depth 3
 catalog collections entries <collection-uuid>
 ```
+
+`catalog facets` has no REST endpoint behind it — it is a `search` call with `facets=<field>` params,
+reading the response's `facets`. There is no `/api/datasets/facets/`; the no-install recipe is in
+[reference/rest.md](reference/rest.md).
 
 Subcommands: `search`, `facets`, `get`, `list`, `lineage`, `collections`. Run `catalog <cmd> -h` for
 flags. Prefer `catalog search` for plain queries and `search_expanded.py` when recall matters. The

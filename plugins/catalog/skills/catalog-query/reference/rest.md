@@ -38,6 +38,9 @@ List-style responses are `{total, limit, offset, results:[…]}`; `search` retur
 
 `id` ≠ `canonical_id`: `/api/datasets/{id}` wants the UUID; filter by `canonical_id=` to resolve one.
 
+**There is no facets endpoint.** Do **not** call `/api/datasets/facets/` (or `/api/facets/`) — it does not
+exist. Facet counts are returned by `search`; see [Facets](#facets-no-dedicated-endpoint) below.
+
 ## Search vs. list — pick the right one
 
 **Free-text → `/api/datasets/search/`.** Query param `q`, plus filters `modality`, `project`,
@@ -52,6 +55,55 @@ page through for completeness.
 **Exact-match filtering → `/api/datasets/`.** Keyword filters `canonical_id`, `version`, `modality`,
 `project`, `access_scope`, `is_latest`, plus toggles `exclude_tombstoned` (default true),
 `include_lineage`, `include_collections` (default false — set true to inline them), `offset`, `limit`.
+
+### Facets (no dedicated endpoint)
+
+Facet counts are a **property of the search response**, not a separate route — there is no
+`/api/datasets/facets/`. To count a field's values (i.e. discover its controlled vocabulary), call
+`/api/datasets/search/` with one or more `facets=<field>` params and read the `facets` object off the
+response. `facets` is a **repeated** query param (`facets=organism&facets=tissue`), *not* a comma-joined
+string, so build the query with `doseq=True`:
+
+```python
+# BASE / H as in the Direct REST snippet above
+import json, urllib.parse, urllib.request
+qs = urllib.parse.urlencode({"facets": ["organism", "tissue", "assay"], "limit": 1}, doseq=True)
+req = urllib.request.Request(f"{BASE}/api/datasets/search/?{qs}", headers=H)
+with urllib.request.urlopen(req) as r:
+    facets = json.load(r)["facets"]
+# facets == {"organism": [{"value": "Homo sapiens", "count": 42}, ...], "tissue": [...], ...}
+```
+
+`GET /api/datasets/search/?facets=organism&facets=tissue&facets=assay&limit=1` is the raw form; scope the
+counts to a subset by adding the usual search filters (`q`, `modality`, `project`, …). The `catalog facets
+--fields organism,tissue` CLI command is exactly this call. Buckets are **capped** at the top ~20–50 per
+field (see the cap note above), so facets give the head, not the full distinct set.
+
+**Fields you can facet on.** The client does **not** validate facet field names (it forwards whatever you
+pass), and this repo ships no schema enumerating them — the server is the authority. The safe candidates
+are the search route's categorical filter dimensions:
+
+| Field | Notes |
+|-------|-------|
+| `modality` | `imaging \| sequencing \| mass spec \| unknown` — confirmed facetable |
+| `dataset_type` | `raw \| processed` — a search facet, **not** a list filter |
+| `organism` | confirmed facetable |
+| `tissue` | |
+| `assay` | |
+| `disease` | |
+| `sub_modality` | |
+| `development_stage` | |
+| `project` | |
+| `access_scope` | |
+
+`modality` and `organism` are exercised by the client's tests; the rest are the remaining search filters,
+so they are expected to facet but are **not verified here**. An unsupported field name doesn't error — it
+simply won't appear in the response's `facets` object. So confirm any field empirically: request it and
+check whether a bucket list comes back (or read the SSO-gated `/openapi.json` for the definitive set).
+
+> Note: the `api_get` helper in the skill's Quick start already urlencodes with `doseq=True`, so pass
+> `facets` as a **list** — `api_get(..., facets=["tissue", "modality"])` — and it repeats the key for you.
+> Never comma-join (`facets="tissue,modality"`) — that is the usual cause of a 422 on this route.
 
 ### Gotchas
 - **`limit` caps at 100** on list routes (`limit>100` → HTTP 422); page with `offset`.
