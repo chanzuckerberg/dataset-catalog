@@ -122,7 +122,7 @@ def _asset_row(dataset: Any, asset: Any) -> dict:
 
 
 def _truncate(value: Any, width: int) -> str:
-    text = "" if value is None else str(value)
+    text = "" if value is None else str(value).strip()
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
