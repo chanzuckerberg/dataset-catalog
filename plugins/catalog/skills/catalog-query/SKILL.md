@@ -172,9 +172,19 @@ Catalog search matches only the **text that was indexed** — a dataset tagged "
 `q=liver`. Raising recall is a two-part job, split by *who can do what*:
 
 1. **Expand the term via the plugin's `ols` MCP server** (EBI Ontology Lookup Service). Call its tools
-   directly — `search`/`searchClasses` to resolve the term to a class (label, synonyms), `getDescendants`
-   for subtypes. This must happen agent-side: the `ols` MCP is a session connection, and a subprocess
-   like the script below can't reach it.
+   directly, agent-side (the `ols` MCP is a session connection a subprocess can't reach), and gather
+   related terms from several relations:
+   - `search`/`searchClasses` — resolve the term to a class (canonical **label + synonyms**). Always do this.
+   - `getChildren` — the **immediate children** (one level down): the direct subtypes, e.g. `blood` →
+     `arterial/venous/capillary/placental blood`. Prefer this when you want tight, obviously-related
+     subtypes rather than the whole subtree.
+   - `getDescendants` — the **full subtype subtree**, when you want maximum subtype recall.
+   - `getAncestors` — **broader parent terms**, e.g. `blood` → `haemolymphatic fluid` → `bodily fluid`.
+     **Only expand ancestors when the starting term is already super granular** — a deep, specific leaf
+     class (e.g. `CD8-positive, alpha-beta memory T cell`), whose immediate parents are still meaningful.
+     For a term that is already broad (like `blood`), the very first hop is generic, so ancestors add
+     only noise — skip them. Even for a granular term, prune hard: the walk climbs toward upper-ontology
+     terms (`material entity`, `anatomical entity`) that match everything (see the precision note below).
 2. **Union the passes by dataset `id`** — run one search per expanded term and merge, deduped on `id`, so
    a dataset matching several synonyms is reported once. Same result either way:
    - **No install** — reuse `api_get` from Quick start; one call per term, union by `id` (`urllib`
@@ -195,13 +205,23 @@ Catalog search matches only the **text that was indexed** — a dataset tagged "
      python scripts/search_expanded.py --terms "liver,hepatic,hepatocyte" --modality sequencing
      ```
 
+**Precision guardrail — prune before you union.** Free-text `q=` is **OR-tokenized**: a multi-word term
+matches on *any* of its tokens, and recall is dominated by its most generic word. `q="red blood cell"`
+is really `red OR blood OR cell`, so it drags in every dataset whose text merely contains `cell` (e.g.
+"Billion **Cell** Project") — false positives that masquerade as recall. This bites hardest with
+**ancestors** (which resolve to broad terms) and any expansion term reduced to a generic single token.
+So: search **single, specific tokens**; drop generic ones (`cell`, `blood`, `tissue`, `entity`); and
+sanity-check a broadened hit by confirming the record text genuinely relates before trusting the count.
+
 **Standalone fallback (no agent/MCP):** run with `--q` instead of `--terms` and the script expands the
 term itself against the public OLS4 REST API — the same EBI service the MCP fronts — scoped with
-`--ontology` (`uberon`/`cl`/`efo`/`mondo`) and optionally `--subtypes`. If OLS is unreachable it warns
-and searches the bare term. Use `--no-expand` to search verbatim.
+`--ontology` (`uberon`/`cl`/`efo`/`mondo`) and any of `--children` (immediate subtypes), `--subtypes`
+(full descendant subtree), `--ancestors` (broader terms; upper-ontology roots like `entity` are dropped
+automatically, but still prune the remaining generic terms). If OLS is unreachable it warns and searches
+the bare term. Use `--no-expand` to search verbatim.
 
 ```bash
-python scripts/search_expanded.py --q liver --ontology uberon --subtypes   # self-expand, no MCP
+python scripts/search_expanded.py --q liver --ontology uberon --children --ancestors   # self-expand, no MCP
 ```
 
 Cap fan-out with `--max-terms` (default 8), and narrow with the same dataset filters as `catalog search`

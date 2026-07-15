@@ -19,10 +19,12 @@ Where do the terms come from? Two paths:
 
   2. FALLBACK — run standalone with ``--q`` and no ``--terms``, and the script
      expands the term itself against the public OLS4 REST API (same EBI service
-     the MCP fronts). Use this when there's no agent/MCP in the loop. If OLS is
-     unreachable it warns and searches the bare term.
+     the MCP fronts). Use this when there's no agent/MCP in the loop. Beyond label
+     + synonyms, opt into hierarchy: ``--children`` (immediate subtypes),
+     ``--subtypes`` (full descendant subtree), ``--ancestors`` (broader terms).
+     If OLS is unreachable it warns and searches the bare term.
 
-         python search_expanded.py --q liver --ontology uberon --subtypes
+         python search_expanded.py --q liver --ontology uberon --children --ancestors
 
 Configuration comes from the environment (same as the ``catalog`` CLI):
     CATALOG_API_URL    base URL of the catalog
@@ -108,8 +110,34 @@ def _ols_top_class(term: str, ontology: str | None) -> dict | None:
     return docs[0] if docs else None
 
 
-def _ols_descendants(doc: dict, max_terms: int) -> list[str]:
-    """Fetch subtype labels for an OLS class (best-effort, capped)."""
+# Upper-ontology namespaces whose classes ("entity", "material entity", …) are
+# too generic to search on. Dropped from ancestor walks. Note: OLS reports these
+# under the importing ontology (UBERON etc.), so they must be filtered by ID
+# namespace, not by `ontology_name`.
+_UPPER_ONTOLOGY_PREFIXES = frozenset(
+    {"BFO", "CARO", "COB", "OBI", "IAO", "UBERON:0000000"}
+)
+
+
+def _term_prefix(term: dict) -> str:
+    """ID namespace of an OLS term (e.g. 'BFO' from 'BFO:0000001'), upper-cased."""
+    obo_id = term.get("obo_id") or ""
+    if ":" in obo_id:
+        return obo_id.split(":", 1)[0].upper()
+    tail = (term.get("iri") or "").rsplit("/", 1)[-1]
+    return tail.split("_", 1)[0].upper() if "_" in tail else ""
+
+
+def _ols_related(
+    doc: dict, relation: str, max_terms: int, *, drop_upper: bool = False
+) -> list[str]:
+    """Fetch labels of a hierarchical relation for an OLS class (best-effort, capped).
+
+    ``relation`` is an OLS4 term sub-resource: ``children`` (immediate subtypes),
+    ``descendants`` (full subtype subtree), or ``ancestors`` (broader terms).
+    ``drop_upper`` skips generic upper-ontology classes (BFO ``entity`` etc.) — used
+    for ancestor walks, which otherwise climb all the way to the ontology root.
+    """
     ontology = doc.get("ontology_name")
     iri = doc.get("iri")
     if not ontology or not iri:
@@ -117,16 +145,29 @@ def _ols_descendants(doc: dict, max_terms: int) -> list[str]:
     # OLS requires the IRI double-URL-encoded in the path segment.
     encoded = urllib.parse.quote(urllib.parse.quote(iri, safe=""), safe="")
     data = _ols_get(
-        f"ontologies/{ontology}/terms/{encoded}/descendants", {"size": max_terms}
+        f"ontologies/{ontology}/terms/{encoded}/{relation}", {"size": max_terms}
     )
     terms = ((data or {}).get("_embedded") or {}).get("terms") or []
-    return [t["label"] for t in terms if t.get("label")]
+    labels: list[str] = []
+    for term in terms:
+        if not term.get("label"):
+            continue
+        if drop_upper and _term_prefix(term) in _UPPER_ONTOLOGY_PREFIXES:
+            continue
+        labels.append(term["label"])
+    return labels
 
 
 def _ols_expand(
-    term: str, ontology: str | None, subtypes: bool, max_terms: int
+    term: str,
+    ontology: str | None,
+    subtypes: bool,
+    children: bool,
+    ancestors: bool,
+    max_terms: int,
 ) -> list[str]:
-    """Return ``term`` plus its OLS label/synonyms (and subtypes if requested)."""
+    """Return ``term`` plus its OLS label/synonyms, and — if requested — its
+    immediate children, full subtype subtree, and/or broader ancestors."""
     candidates = [term]
     doc = _ols_top_class(term, ontology)
     if doc is None:
@@ -135,8 +176,18 @@ def _ols_expand(
     if doc.get("label"):
         candidates.append(doc["label"])
     candidates.extend(doc.get("synonym") or [])
+    if children:
+        candidates.extend(_ols_related(doc, "children", max_terms))
     if subtypes:
-        candidates.extend(_ols_descendants(doc, max_terms))
+        candidates.extend(_ols_related(doc, "descendants", max_terms))
+    if ancestors:
+        broader = _ols_related(doc, "ancestors", max_terms, drop_upper=True)
+        if broader:
+            _warn(
+                "ancestors broaden recall at the cost of precision; drop generic "
+                "single-word terms before searching (they match unrelated records)."
+            )
+        candidates.extend(broader)
     return _dedup_preserving(candidates, max_terms)
 
 
@@ -223,7 +274,14 @@ def _resolve_terms(args: argparse.Namespace) -> list[str]:
     if args.terms or args.no_expand:
         return _dedup_preserving(explicit, args.max_terms)
     # Standalone fallback: expand the single --q term against OLS4 REST.
-    return _ols_expand(args.q, args.ontology, args.subtypes, args.max_terms)
+    return _ols_expand(
+        args.q,
+        args.ontology,
+        args.subtypes,
+        args.children,
+        args.ancestors,
+        args.max_terms,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -241,9 +299,23 @@ def main(argv: list[str] | None = None) -> None:
         help="fallback OLS scope for --q (e.g. uberon, cl, efo, mondo)",
     )
     parser.add_argument(
+        "--children",
+        action="store_true",
+        help="fallback: also fan out into the --q term's immediate OLS children "
+        "(direct subtypes, one level down)",
+    )
+    parser.add_argument(
         "--subtypes",
         action="store_true",
-        help="fallback: also fan out into the --q term's OLS subtypes",
+        help="fallback: also fan out into the --q term's OLS subtypes "
+        "(full descendant subtree)",
+    )
+    parser.add_argument(
+        "--ancestors",
+        action="store_true",
+        help="fallback: also fan out into the --q term's OLS ancestors (broader "
+        "terms; best only when --q is already super granular — for a broad term "
+        "the ancestors are generic; raises recall but lowers precision)",
     )
     parser.add_argument(
         "--no-expand",

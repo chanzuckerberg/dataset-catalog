@@ -148,8 +148,9 @@ tombstoned, created_at, last_modified_at`, plus:
 
 Term expansion happens **agent-side via the `ols` MCP**, then the terms go to `scripts/search_expanded.py
 --terms …` for the multi-pass union (a subprocess can't reach the session's MCP connection). The script's
-`--q` path is a REST fallback that only covers label + synonyms (+ subtypes); use the MCP tools directly
-for anything richer — a specific hierarchy walk, embedding neighbours, etc.
+`--q` path is a REST fallback that covers label + synonyms and, on request, immediate children
+(`--children`), the full subtype subtree (`--subtypes`), and broader ancestors (`--ancestors`); use the
+MCP tools directly for anything richer — a specific hierarchy walk, embedding neighbours, etc.
 
 The plugin ships the **OLS MCP server** (`ols`, EBI Ontology Lookup Service) at
 `https://www.ebi.ac.uk/ols4/api/mcp`. Use its tools directly — no install, no token:
@@ -158,16 +159,27 @@ The plugin ships the **OLS MCP server** (`ols`, EBI Ontology Lookup Service) at
 |----------|-----------|
 | `search` / `searchClasses` | Resolve a term → matching ontology classes (label, IRI, `obo_id`, synonyms). Start here. |
 | `fetch` | Pull one class by the id `search` returned (full synonym list, definition). |
-| `getChildren` / `getDescendants` | Expand a broad term into its subtypes (e.g. "brain" → its sub-regions). |
+| `getChildren` | **Immediate children** — direct subtypes one level down (e.g. `blood` → arterial/venous/capillary/placental blood). Tightest hierarchy expansion. |
+| `getDescendants` | **Full subtype subtree** — every subtype below the term (e.g. "brain" → all sub-regions). Broadest subtype recall. |
+| `getAncestors` | **Broader parent terms** (e.g. `blood` → haemolymphatic fluid → bodily fluid). Only expand when the starting term is **already super granular** (a deep leaf class whose parents are still meaningful); for an already-broad term the first hop is generic, so skip it. Raises recall, lowers precision — prune generic terms. |
 | `searchWithEmbeddingModel` / `getSimilarClasses` | Semantic / embedding neighbours when exact + synonym passes come up thin. |
 
 Workflow: `search` the term with the `ols` MCP (scope to `uberon`/`cl`/`efo`/`mondo` when known) →
-collect label + synonyms (optionally `getDescendants` for subtypes) → run one search per term and
-**union by dataset `id`** → tell the user which expanded terms were searched. `scripts/search_expanded.py
---terms "t1,t2,…"` automates that union if the client is installed; with no install, do it in Python —
-one `GET /api/datasets/search/?q=<term>` per term (stdlib `urllib`, as above), deduped by `id`.
+collect label + synonyms, and as needed `getChildren` (immediate subtypes), `getDescendants` (full
+subtree), or `getAncestors` (broader terms) → run one search per term and **union by dataset `id`** →
+tell the user which expanded terms were searched. `scripts/search_expanded.py --terms "t1,t2,…"`
+automates that union if the client is installed; with no install, do it in Python — one
+`GET /api/datasets/search/?q=<term>` per term (stdlib `urllib`, as above), deduped by `id`.
+
+**Precision caveat:** free-text `q=` is OR-tokenized, so a multi-word term matches on any single token
+and recall is dominated by its most generic word (`q="red blood cell"` ≈ `red OR blood OR cell`). Search
+single, specific tokens; drop generic ones (`cell`, `blood`, `tissue`, `entity`). This is why ancestors
+need pruning — they resolve to exactly those broad terms.
 
 If the `ols` MCP tools are unavailable, `search_expanded.py --q <term>` falls back to the OLS4 REST API
 (no auth) internally:
 `GET https://www.ebi.ac.uk/ols4/api/search?q=<term>&fieldList=label,obo_id,synonym,ontology_name&rows=5`
-— reading `response.docs[].label` and `synonym[]`.
+— reading `response.docs[].label` and `synonym[]`. With `--children`/`--subtypes`/`--ancestors` it then
+walks `GET /ontologies/{ontology}/terms/{double-url-encoded-iri}/{children|descendants|ancestors}`,
+reading `_embedded.terms[].label` (for ancestors, upper-ontology classes are dropped by ID namespace —
+`BFO`/`CARO`/`COB`/… — since OLS reports them under the importing ontology, not their own).
