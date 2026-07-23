@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.3.0...catalog-plugin-v0.4.0) (2026-07-23)
+
+
+### Features
+
+* **plugin:** Make the skills more specific and simple to use ([#61](https://github.com/chanzuckerberg/dataset-catalog/issues/61)) ([c9a16ac](https://github.com/chanzuckerberg/dataset-catalog/commit/c9a16ac41d4fd32370d31820904065a8051f2629))
+
 ## [0.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.2.0...catalog-plugin-v0.3.0) (2026-07-15)
 
 

@@ -1,7 +1,7 @@
 {
   "name": "catalog",
   "description": "A plugin for simplifying the interactions with the scientific dataset catalog: register datasets (catalog-register), read and analyze them (catalog-read), and run high-recall ontology-expanded search (catalog-search).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "Manasa Venkatakrishnan",
     "email": "mvenkatakrishnan@chanzuckerberg.com"

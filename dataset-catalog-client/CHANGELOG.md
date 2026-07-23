@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.5.0...catalog-client-v0.5.1) (2026-07-23)
+
+
+### Miscellaneous
+
+* **deps:** bump cryptography in /dataset-catalog-client ([#43](https://github.com/chanzuckerberg/dataset-catalog/issues/43)) ([fdb3766](https://github.com/chanzuckerberg/dataset-catalog/commit/fdb37662a7ccbae27ab89efce404667898a97e2b))
+
 ## [0.5.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.4.0...catalog-client-v0.5.0) (2026-07-15)
 
 
