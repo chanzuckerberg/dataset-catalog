@@ -21,6 +21,12 @@ except (json.JSONDecodeError, ValueError):
 
 cmd = data.get("tool_input", {}).get("command", "")
 
+# Defer anything with shell chaining, piping, redirection, a newline, or command
+# substitution: a substring match on the first command can't vouch for a second
+# one smuggled in after `;`, `&&`, `|`, `>`, or `$(...)`.
+if re.search(r"[;&|<>`\n]|\$\(", cmd):
+    sys.exit(0)
+
 # Never auto-approve a write: the register script, or an inline HTTP call that
 # carries a body / non-GET method.
 mutates = (
@@ -30,11 +36,12 @@ mutates = (
 )
 
 reads = (
-    re.search(r"\bcatalog\s+(search|get|list|facets|lineage|collections)\b", cmd)
+    re.search(r"\bcatalog\s+(search|get|list|facets|lineage)\b", cmd)
+    # collections is a resource with mutating subcommands; allow only its reads.
+    or re.search(r"\bcatalog\s+collections\s+(list|get)\b", cmd)
     or re.search(r"\bcatalog\s+--version\b", cmd)
-    or "preflight.py" in cmd
-    or "search_expanded.py" in cmd
-    or "ols.py" in cmd
+    # bundled read-only scripts, anchored to the scripts/ dir (not a bare filename).
+    or re.search(r"scripts/(preflight|search_expanded|ols)\.py\b", cmd)
     # stdlib REST GET against the catalog: token/host present, no mutation
     or ("urlopen" in cmd and ("X-catalog-api-token" in cmd or "CATALOG_API" in cmd))
 )

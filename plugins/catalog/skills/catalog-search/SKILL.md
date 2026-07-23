@@ -1,7 +1,7 @@
 ---
 name: catalog-search
 description: Advanced high-recall search of the Scientific Dataset Catalog. Expands a term through its synonyms and the OLS ontology hierarchy, runs one search per term, and unions the results by dataset id to round up matches a single query misses (a dataset tagged "hepatic" will not surface for q=liver). Higher overhead than catalog-read — use when recall matters. For plain lookups, bounded lists, or analysis, use catalog-read instead.
-allowed-tools: Bash, Read
+allowed-tools: Bash, Read, Task
 ---
 
 # High-recall search of the Scientific Dataset Catalog

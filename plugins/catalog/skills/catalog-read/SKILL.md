@@ -1,7 +1,7 @@
 ---
 name: catalog-read
 description: Read and analyze the Scientific Dataset Catalog (read-only) — get a dataset by UUID or canonical ID, list a project, browse collections, discover facet values, trace lineage, and aggregate, summarize, compare, or visualize across results. This is the everyday default for known-item lookups and bounded reads. For high-recall search that expands a term through synonyms and the ontology hierarchy, use catalog-search instead.
-allowed-tools: Bash, Read, Write, Skill
+allowed-tools: Bash, Read, Write, Skill, Task
 ---
 
 # Read and analyze the Scientific Dataset Catalog

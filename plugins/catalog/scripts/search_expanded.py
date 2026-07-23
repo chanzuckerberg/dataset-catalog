@@ -150,15 +150,24 @@ FACET_FIELDS = (
 )
 
 
+# Set true by _search_pass whenever a pass fills --limit. A union or overlap
+# built on a truncated pass can undercount, so any total derived from it is
+# unverified — surfaced in the output alongside the count. Reset at each main().
+_truncated = False
+
+
 def _search_pass(client: Any, term: str, field: str, filters: dict, limit: int) -> list:
     """One search pass keyed on ``field`` (``q`` for free-text, else a facet).
 
-    Warns when the pass fills ``limit`` exactly: that almost certainly means the
-    hits were truncated, so a union or overlap built on them silently undercounts
-    — the failure mode behind an unverified "N + M" total.
+    Warns (and flags the run unverified) when the pass fills ``limit`` exactly:
+    that almost certainly means the hits were truncated, so a union or overlap
+    built on them silently undercounts — the failure mode behind an unverified
+    "N + M" total.
     """
     results = client.datasets.search(**{field: term}, limit=limit, **filters).results
     if len(results) >= limit:
+        global _truncated
+        _truncated = True
         _warn(
             f"{field}={term!r} filled --limit ({limit}); the pass is likely "
             "truncated, so the union/overlap can undercount. Raise --limit."
@@ -249,6 +258,9 @@ def _overlap_report(
         "overlap_with_base": len(overlap_ids),
         "added_only": len(added_ids),
         "grand_total": base_total + len(added_ids),
+        # true if any union or overlap pass filled --limit: added_only (and thus
+        # grand_total) can then over-count, so the total is not exact.
+        "unverified": _truncated,
     }
 
 
@@ -409,6 +421,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-o", "--output", choices=["table", "json"], default=None)
     args = parser.parse_args(argv)
 
+    global _truncated
+    _truncated = False  # reset per run; _search_pass flips it on a filled --limit
+
     if not args.q and not args.terms:
         usage_error("give --terms (preferred, from the ols MCP / ols.py) or --q.")
     if args.max_terms < 1:
@@ -479,6 +494,7 @@ def main(argv: list[str] | None = None) -> None:
             if not terms:
                 usage_error("no search terms after expansion.")
             rows = _union_hits(client, terms, union_field, filters, args.limit)
+            union_unverified = _truncated  # captured before overlap adds its passes
             overlap = (
                 _overlap_report(
                     client,
@@ -505,6 +521,8 @@ def main(argv: list[str] | None = None) -> None:
             "searched_terms": terms,
             "term_hits": contributions,
             "count": len(rows),
+            # a pass filled --limit: the union undercounts, so count is not exact.
+            "count_unverified": union_unverified,
             "datasets": rows,
         }
         if overlap is not None:
@@ -517,13 +535,19 @@ def main(argv: list[str] | None = None) -> None:
             "per-term hits: "
             + ", ".join(f"{term} ({contributions[term]})" for term in terms)
         )
-        print(f"unioned {len(rows)} distinct datasets")
+        union_note = (
+            "  [unverified: a pass filled --limit; raise --limit]"
+            if union_unverified
+            else ""
+        )
+        print(f"unioned {len(rows)} distinct datasets{union_note}")
         if overlap is not None:
+            grand_note = "  [unverified]" if overlap["unverified"] else ""
             print(
                 f"\nbase bucket {overlap['base_facet']}: {overlap['base_total']}\n"
                 f"  overlap with base:        {overlap['overlap_with_base']}\n"
                 f"  added by broadening:      {overlap['added_only']}\n"
-                f"  grand total (base+added): {overlap['grand_total']}"
+                f"  grand total (base+added): {overlap['grand_total']}{grand_note}"
             )
         print()
         _print_table(rows)
