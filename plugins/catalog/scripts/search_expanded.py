@@ -428,6 +428,8 @@ def main(argv: list[str] | None = None) -> None:
         usage_error("give --terms (preferred, from the ols MCP / ols.py) or --q.")
     if args.max_terms < 1:
         usage_error("--max-terms must be at least 1.")
+    if args.limit < 1:
+        usage_error("--limit must be at least 1.")
     if args.no_expand and not args.q and not args.terms:
         usage_error("--no-expand needs --q or --terms to search.")
     if args.output is None:
