@@ -76,7 +76,7 @@ From inside a Claude Code session:
 
 ```
 /plugin marketplace update dataset-catalog
-/plugin
+/plugin        # opens the plugin menu — pick "Update" for catalog@dataset-catalog
 ```
 
 Or from your terminal:
