@@ -1,281 +1,304 @@
 ---
 name: catalog-query
-description: Read-only querying of the Scientific Dataset Catalog — free-text dataset search (optionally broadened with ontology terms via the bundled `ols.py` handler), look-ups by id or canonical_id, project dataset listings, collection browsing, and lineage tracing. Use when asked to search or find datasets, fetch a dataset by id/canonical_id, list a project's datasets, browse collections, or trace lineage.
+description: Read-only querying of the Scientific Dataset Catalog. Use for dataset search, dataset lookup by UUID or canonical ID, project listings, facet discovery, collection browsing, ontology-broadened search, and lineage tracing.
+allowed-tools: Bash, Read
 ---
 
 # Query the Scientific Dataset Catalog
 
-This skill covers the **read path** of the Scientific Dataset Catalog — search, list, get of datasets,
-collections, lineage.
+Use this skill for read-only Catalog operations:
 
-The common reads — **search, list, get by id** for datasets — are plain HTTP GETs and need **no
-install**: call the REST API from Python's standard library (`urllib`, see [Quick start](#quick-start)),
-which reads the token from the environment so it never lands on a command line. Even **ontology-broadened
-search** works with no install — expand the term with the bundled `ols.py` handler, then run one search
-per term and union the hits by dataset `id` yourself. Install the `catalog` CLI or the `catalog_client` SDK for the
-conveniences: the bundled `search_expanded.py` automates that fan-out and union, plus page iteration,
-typed post-processing, and whatever extra filters the latest client adds.
+* search datasets
+* get a dataset by UUID or canonical ID
+* list project datasets
+* discover facet values
+* browse collections
+* trace lineage
+* broaden biological searches with ontology terms
 
-## Preflight — do this before any query
+Use direct REST for ordinary reads. It uses Python’s standard library and requires no installation.
 
-Every command below assumes the following are already true. Check them first; don't discover a missing
-one three steps into a query.
+Use the CLI, SDK, or bundled scripts only when their conveniences help.
 
-1. **Config is set — verify with the shared preflight (once).** Run the plugin's preflight script; it's
-   read-only and the plugin's hook auto-approves it, so there's no permission prompt and no ad-hoc env
-   check to run yourself:
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py"          # or --no-ping to skip the network check
-   ```
-   It confirms `CATALOG_API_URL` (defaults to production if unset) and that `CATALOG_API_TOKEN` is set
-   **and actually works** (one authed GET — catches an expired token up front). Exit 0 means ready; exit 2
-   prints what to fix. If the token is unset it cannot be minted headlessly — it is issued through an
-   SSO-gated page that needs a human. Open the token page in the user's (already logged-in) default
-   browser so they can generate one:
-     ```bash
-     URL="${CATALOG_API_URL:-https://datacatalog.prod-sci-data.prod.czi.team}"
-     open "${URL%/}/tokens"          # macOS; Linux: xdg-open …  Windows: start "" …
-     ```
-     Then ask the user to copy the token into their **Claude Code env settings** (the `env` block in
-     `settings.json` — the `update-config` skill can do this) rather than pasting it into the chat, and
-     never inline it into a command: that keeps the secret out of the transcript and logs. Once it's set,
-     re-run this check and proceed.
-2. **Install only what the task needs.** The REST path (get/list/search) runs on Python's standard
-   library — nothing to install. The `catalog` CLI and the `catalog_client` SDK add conveniences but need
-   the package installed (confirm with `catalog --version` or `python -c "import catalog_client"`, and if
-   missing install a tagged release, [Install](#install)); `search_expanded.py` *uses* the SDK when it's
-   installed and otherwise falls back to the same stdlib REST calls. Don't install just to run a read.
+## 1. Run preflight
 
-## Quick start
+Before querying, run:
 
-The three common reads are plain `GET`s under `/api/`, authed with the `X-catalog-api-token` header, and
-run on the **Python standard library — no install**. The token is read from the environment and sent as a
-header, so it never appears on a command line (the reason we don't use `curl`). Set `CATALOG_API_URL` +
-`CATALOG_API_TOKEN` (see [Configure](#configure)), then:
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py"
+```
+
+Use `--no-ping` only when the network check should be skipped.
+
+The script verifies:
+
+* the Catalog base URL
+* that `CATALOG_API_TOKEN` is set
+* that the token successfully authenticates
+
+Exit code `0` means ready. Exit code `2` explains what must be fixed.
+
+If the token is missing or expired, open the token page in the user’s logged-in browser:
+
+```bash
+BASE="${CATALOG_API_URL:-https://datacatalog.prod-sci-data.prod.czi.team}"
+open "${BASE%/}/tokens"
+```
+
+Use `xdg-open` on Linux or `start ""` on Windows.
+
+Ask the user to save the token in the Claude Code `settings.json` environment block. Do not ask them to paste it into chat, and never place it directly in a command.
+
+## 2. Choose the smallest useful surface
+
+### Direct REST
+
+Default for bounded search, list, get, and facet calls.
+
+* no installation
+* token remains in the environment
+* best for one or a few calls
+
+See [reference/rest.md](reference/rest.md) for endpoints, filters, pagination, response shapes, and API gotchas.
+
+### `catalog-reader` subagent
+
+Default when the operation may require multiple calls or pagination.
+
+Delegate:
+
+* searches that may span pages
+* project or collection listings
+* facet discovery involving several fields
+* ontology-expanded searches
+* lineage traversal
+* client-side filtering
+* any query whose result size is uncertain
+
+Run inline only for a clearly bounded call, such as fetching one known UUID.
+
+Before delegating, tell the user what is being searched and the expected scope. When the agent returns, lead with the total number of matches.
+
+### CLI, SDK, and scripts
+
+Use when helpful:
+
+* `catalog` for terminal-oriented lookups
+* `catalog_client` for typed Python processing
+* `search_expanded.py` for ontology expansion, fan-out, union, and match reporting
+* `ols.py` for distilled OLS term lookup and hierarchy expansion
+
+The scripts can use standard-library REST when the client package is absent. Do not install the package merely to perform a read.
+
+Installation instructions are in [reference/install.md](reference/install.md). Install a tagged release, never `main`.
+
+## 3. Choose facet filtering or free-text search
+
+Before broadening a term, decide whether it belongs to a controlled facet.
+
+Common facet dimensions include:
+
+* `organism`
+* `tissue`
+* `assay`
+* `disease`
+* `sub_modality`
+* `development_stage`
+* `modality`
+* `project`
+* `access_scope`
+
+### Prefer a facet when the concept fits one
+
+For example:
+
+* “blood” may be a tissue
+* “10x” may be an assay
+* “sequencing” is a modality
+
+First retrieve the facet buckets and confirm the exact stored value:
 
 ```python
-import json, os, urllib.parse, urllib.request
-
-BASE = (os.environ.get("CATALOG_API_URL") or "https://datacatalog.prod-sci-data.prod.czi.team").rstrip("/")
-HEADERS = {"X-catalog-api-token": os.environ["CATALOG_API_TOKEN"]}  # token stays in env, never on argv
-
-def api_get(path, **params):
-    # doseq=True is REQUIRED: a list value must repeat the key (facets=tissue&facets=modality),
-    # NOT comma-join. Passing facets="tissue,modality" is the #1 cause of HTTP 422 here.
-    query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
-    url = f"{BASE}{path}" + (f"?{query}" if query else "")
-    with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS)) as r:
-        return json.load(r)
-
-# 1. search datasets — free text + optional facet filters (e.g. modality, project, tissue)
-api_get("/api/datasets/search/", q="liver", modality="sequencing", limit=10)
-
-# 2. list a project's datasets — exact-match filters; paginate with offset (limit caps at 100)
-api_get("/api/datasets/", project="CellXGene", limit=100)
-
-# 3. fetch one full record by UUID (add include_lineage="true" / include_collections="true" to embed)
-api_get("/api/datasets/<dataset-uuid>")
-
-# 4. discover a facet's controlled vocabulary — facets is a LIST (doseq=True repeats the key)
-api_get("/api/datasets/search/", facets=["tissue", "modality"], limit=1)["facets"]
-```
-
-`api_get` returns parsed JSON (a dict). Endpoints, every filter, pagination, and the full record shape
-are in [reference/rest.md](reference/rest.md). Ontology-broadened search is also no-install — see
-*Search: broaden biological terms* below. Reach for the CLI/SDK/script when you want the automated union,
-page iteration, or typed post-processing.
-
-## Configure
-
-- **Base URL** is instance-specific; read it from `CATALOG_API_URL`. Default (production):
-  `https://datacatalog.prod-sci-data.prod.czi.team/`.
-- **Token**: read from `CATALOG_API_TOKEN`; never hard-code it. Issue one at `<base_url>/tokens` — open
-  it in a logged-in browser (the page is SSO-gated) — then store it in your Claude Code env settings.
-
-## Install
-
-Needed only for the CLI/SDK/script — the REST path above needs none of this. The `catalog` CLI and the
-`catalog_client` SDK ship in one package; the bundled `search_expanded.py` needs only that package plus
-the standard library. Install a **tagged release, never `main`**. Full steps (tag resolution, venv,
-monorepo `uv`) are in **[reference/install.md](reference/install.md)**.
-
-## Which surface to use
-
-- **Direct REST (Python `urllib`)** — the default for simple get/list/search; no install, token stays in
-  the env (never on a command line). See [Quick start](#quick-start) and [reference/rest.md](reference/rest.md).
-- **`catalog` CLI** — installed convenience for one-off lookups: aligned table on a terminal, JSON when
-  piped (`-o json` to force); exits non-zero on error (3 auth, 4 not-found, 5 server).
-- **`catalog_client` SDK** — when you need to iterate, join, or post-process results in code. Typed
-  pydantic models, all endpoints.
-- **Bundled script** — `search_expanded.py` automates ontology-broadened search (the multi-term fan-out
-  + union by `id`) in one call. You can do the same by hand in Python; the script just wraps it and
-  adds term-match reporting, fan-out caps, and the client's filters. It uses the SDK when installed and
-  otherwise the same stdlib REST calls, so it runs with no install too.
-
-## Delegate to the `catalog-reader` agent by default
-
-**Default to delegating the query to the plugin's `catalog-reader` subagent.** It runs the queries in its
-own context and returns only the distilled result (the datasets that matched, their ids and the requested
-fields), so paginated JSON, facet dumps, and full-record output never land in the main conversation. Hand
-it the task in words ("find raw sequencing datasets in blood, broken down by project") and let it do the
-facet discovery, filtering, and pagination.
-
-Delegate whenever a query **could** touch more than one record or one page — searches, facet discovery,
-project/collection listings, lineage traces, any client-side filtering (e.g. `dataset_type`, which is a
-facet, not a server filter, so it forces a paginated sweep). You usually can't tell up front that a query
-is small: a two-facet search that looks trivial can turn into paging thousands of records. When in doubt,
-delegate — an over-delegated `get` costs a little overhead; an inline sweep floods this context with JSON
-and invites the retry-in-the-open failures this skill exists to prevent.
-
-**Run inline only** for a genuinely bounded single call: one `get` by known UUID/`canonical_id`, or one
-`search`/facet call you will read once and not paginate.
-
-**Ontology expansion (next section): prefer the bundled `ols.py` handler over the `ols` MCP.** `ols.py`
-prints only distilled term rows, so — unlike the MCP, which returns the full OLS payload into whatever
-context calls it — the raw JSON never lands in the conversation. And because it's a plain subprocess (not
-a session connection), it runs *inside* the `catalog-reader` subagent too, which the MCP cannot reach. So
-you can either delegate a bare biological term and let `catalog-reader` expand with `ols.py` and search in
-one shot, or expand agent-side first and hand it `--terms`. Reach for the `ols` MCP only as a last resort:
-it floods context and can't run in the subagent.
-
-## Search: broaden biological terms (`ols.py` + `search_expanded.py`)
-
-### First: is this a facet filter or a free-text term?
-
-Before expanding anything, decide *where* the term belongs. The catalog has controlled facet dimensions
-— `organism`, `tissue`, `assay`, `disease`, `sub_modality`, `development_stage`, `modality` — and a
-free-text `q=` index over name/metadata. They are not interchangeable:
-
-- **If the term names a facet dimension** (e.g. "blood" is a tissue, "10x" an assay), prefer the **facet
-  filter** — `catalog search --tissue blood`, or in REST `&tissue=blood` on the search route — which is
-  an exact match against a curated value and far more precise than free text. Two rules, in order:
-  1. **Confirm the exact spelling first — facet values are a controlled vocabulary.** In REST that means a
-     `search` call with the facet field(s) read off the response's `facets` object (there is **no**
-     `/api/datasets/facets/` endpoint; see [reference/rest.md](reference/rest.md)). Use this exact call and
-     do **not** improvise the encoding — `facets` is a **repeated** param, so pass it as a **list** through
-     the `doseq=True` helper; comma-joining it (`facets="tissue,modality"`) returns HTTP 422:
-     ```python
      # api_get is the doseq=True helper from Quick start
      api_get("/api/datasets/search/", facets=["tissue", "modality"], limit=1)["facets"]
-     ```
-     Confirm the value is real before you filter on it: the list route **silently ignores** an unknown
-     filter, so a wrong value reads as "matched everything". OLS synonyms/subtypes are *not* guaranteed to
-     be valid facet values.
-  2. **Filter on the facet alone — do not also pass the same word as free-text `q=`.** Stacking
-     `q="blood"` on top of `tissue="blood"` double-filters: a record only survives if the literal word
-     "blood" also appears in indexed text, which silently craters recall (in one run, 33 hits instead of
-     the real 1970). Use `q=` only for a *different* concept than the facet, or not at all.
-- **If the concept is not a facet, or the facet vocabulary doesn't cover the synonyms/subtypes you need
-  for recall**, fall back to free-text `q=` expansion (below). You can also combine the two — a facet
-  filter to scope, `--terms` for recall within it — but only union free-text passes when the facet alone
-  under-recalls.
+```
+Facet parameters are exact controlled values. Do not assume that an OLS synonym or subtype is a valid facet value.
 
-The ontology-expansion machinery below feeds the **free-text `q=` path** (`--terms`). It does *not* widen
-a facet filter, so don't reach for it when a single precise facet value answers the question.
+Do not repeat the same concept in both a facet and `q`.
 
-### Raising recall on the free-text path
+Bad:
 
-Catalog search matches only the **text that was indexed** — a dataset tagged "hepatic" won't surface for
-`q=liver`. Raising recall is a two-part job, split by *who can do what*:
-
-1. **Expand the term with the bundled `ols.py` handler** (EBI Ontology Lookup Service). Prefer it over the
-   `ols` MCP — it prints only distilled rows (`obo_id`, label, synonyms), so it never floods context, and
-   as a plain subprocess it runs inside `catalog-reader` too, which the MCP can't reach. Each subcommand
-   mirrors an MCP tool, takes `--ontology`, and adds `--json` for programmatic union; gather related terms
-   from several relations:
-   - `ols.py search <term>` (searchClasses) — resolve the term to a class (canonical **label + synonyms**). Always do this.
-   - `ols.py children <id>` (getChildren) — the **immediate children** (one level down): the direct subtypes, e.g. `blood` →
-     `arterial/venous/capillary/placental blood`. Prefer this when you want tight, obviously-related
-     subtypes rather than the whole subtree. Add `--hierarchical` to also pull part-of / develops-from children.
-   - `ols.py descendants <id>` (getDescendants) — the **full subtype subtree**, when you want maximum subtype recall.
-   - `ols.py ancestors <id>` (getAncestors) — **broader parent terms**, e.g. `blood` → `haemolymphatic fluid` → `bodily fluid`.
-     **Only expand ancestors when the starting term is already super granular** — a deep, specific leaf
-     class (e.g. `CD8-positive, alpha-beta memory T cell`), whose immediate parents are still meaningful.
-     For a term that is already broad (like `blood`), the very first hop is generic, so ancestors add
-     only noise — skip them. Even for a granular term, prune hard: the walk climbs toward upper-ontology
-     terms (`material entity`, `anatomical entity`) that match everything — `ols.py ancestors` drops these
-     by default (`--include-upper` keeps them), but still eyeball the rest (see the precision note below).
-2. **Union the passes by dataset `id`** — run one search per expanded term and merge, deduped on `id`, so
-   a dataset matching several synonyms is reported once. Same result either way:
-   - **No install** — reuse `api_get` from Quick start; one call per term, union by `id` (`urllib`
-     handles URL-encoding, so multi-word terms are fine):
-     ```python
-     terms = ["liver", "hepatic", "hepatocyte"]        # expanded via ols.py
-     merged = {}
-     for t in terms:
-         for hit in api_get("/api/datasets/search/", q=t, modality="sequencing", limit=25)["results"]:
-             merged.setdefault(hit["id"], hit)         # dedupe by dataset id
-     hits = list(merged.values())
-     ```
-   - **Installed convenience** — `scripts/search_expanded.py` does the fan-out, unions by `id`, reports
-     exactly which terms it searched (so a broadened match is never mistaken for an exact-name hit), and
-     adds fan-out caps plus the client's extra filters:
-     ```bash
-     # after ols.py expands "liver" -> liver, hepatic, hepatocyte:
-     #   python scripts/ols.py search liver --ontology uberon   # -> the term list below
-     python scripts/search_expanded.py --terms "liver,hepatic,hepatocyte" --modality sequencing
-     ```
-
-**Precision guardrail — prune before you union.** Free-text `q=` is **OR-tokenized**: a multi-word term
-matches on *any* of its tokens, and recall is dominated by its most generic word. `q="red blood cell"`
-is really `red OR blood OR cell`, so it drags in every dataset whose text merely contains `cell` (e.g.
-"Billion **Cell** Project") — false positives that masquerade as recall. This bites hardest with
-**ancestors** (which resolve to broad terms) and any expansion term reduced to a generic single token.
-So: search **single, specific tokens**; drop generic ones (`cell`, `blood`, `tissue`, `entity`); and
-sanity-check a broadened hit by confirming the record text genuinely relates before trusting the count.
-
-**Standalone fallback (no agent/MCP):** run with `--q` instead of `--terms` and the script expands the
-term itself through the same `ols.py` handler (public OLS4 REST) — no `--terms` needed — scoped with
-`--ontology` (`uberon`/`cl`/`efo`/`mondo`) and any of `--children` (immediate subtypes), `--subtypes`
-(full descendant subtree), `--ancestors` (broader terms; upper-ontology roots like `entity` are dropped
-automatically, but still prune the remaining generic terms). If OLS is unreachable it warns and searches
-the bare term. Use `--no-expand` to search verbatim.
-
-```bash
-python scripts/search_expanded.py --q liver --ontology uberon --children --ancestors   # self-expand, no MCP
+```python
+api_get("/api/datasets/search/", tissue="blood", q="blood",)
 ```
 
-Cap fan-out with `--max-terms` (default 8), and narrow with the same dataset filters as `catalog search`
-(`--modality`, `--project`, `--organism`, `--tissue`, `--assay`, `--disease`, `--sub-modality`,
-`--development-stage`, `--access-scope`, `--all-versions`). Run `python scripts/ols.py <cmd> -h` for the
-handler's flags; the `ols` MCP fallback is documented in
-[reference/rest.md](reference/rest.md#manual-ols-expansion-finer-control-than-the-script).
+The `q` condition adds a second text requirement and can remove valid facet matches.
 
-## Other CLI commands
+Good:
+
+```python
+api_get("/api/datasets/search/", tissue="blood")
+```
+
+Use `q` alongside a facet only when it represents a different concept.
+
+### Use free text when facets are insufficient
+
+Use free-text expansion when:
+
+* the concept is not a facet
+* the facet vocabulary lacks needed synonyms
+* subtypes must be searched separately
+* a facet-only query under-recognizes the intended concept
+
+## 4. Broaden biological free-text searches
+
+Prefer the bundled `ols.py` handler. It returns compact term information and can run inside the `catalog-reader` subagent.
+
+Start by resolving the term:
 
 ```bash
-catalog facets --fields organism,tissue,assay        # discover the real filter vocabulary
-catalog list --project CellXGene --modality imaging --limit 100
+python scripts/ols.py search liver --ontology uberon
+```
+
+Available expansion types:
+
+```bash
+python scripts/ols.py children <ontology-id>
+python scripts/ols.py descendants <ontology-id>
+python scripts/ols.py ancestors <ontology-id>
+```
+
+Use them as follows:
+
+* `search`: preferred label and synonyms; always start here
+* `children`: immediate, closely related subtypes
+* `descendants`: the complete subtype subtree
+* `ancestors`: broader terms, only for highly specific starting concepts
+
+Scope to a known ontology when possible:
+
+* `uberon`
+* `cl`
+* `efo`
+* `mondo`
+
+### Search each term separately
+
+Run one Catalog search per retained term, then union results by dataset `id`.
+
+```python
+terms = ["liver", "hepatic", "hepatocyte"]
+merged = {}
+
+for term in terms:
+    response = api_get(
+        "/api/datasets/search/",
+        q=term,
+        modality="sequencing",
+        limit=100,
+    )
+
+    for hit in response["results"]:
+        merged.setdefault(hit["id"], hit)
+
+hits = list(merged.values())
+```
+
+For automated expansion and union:
+
+```bash
+python scripts/search_expanded.py \
+  --terms "liver,hepatic,hepatocyte" \
+  --modality sequencing
+```
+
+The script may also expand a starting term itself:
+
+```bash
+python scripts/search_expanded.py \
+  --q liver \
+  --ontology uberon \
+  --children
+```
+
+Useful controls include:
+
+```text
+--children
+--subtypes
+--ancestors
+--max-terms
+--no-expand
+```
+
+Tell the user which terms were searched.
+
+### Prune generic terms
+
+Catalog free-text search is OR-tokenized. A query such as:
+
+```text
+red blood cell
+```
+
+may match records containing any of:
+
+```text
+red OR blood OR cell
+```
+
+Prefer specific terms and remove generic tokens such as:
+
+```text
+cell
+blood
+tissue
+entity
+```
+
+Ancestor expansion is especially likely to introduce overly broad terms. Inspect and prune expanded terms before trusting aggregate counts.
+
+Use the OLS MCP only when `ols.py` cannot provide the required hierarchy or semantic-neighbor operation.
+
+## 5. CLI and SDK examples
+
+CLI:
+
+```bash
+catalog search --query liver --modality sequencing
+catalog facets --fields organism,tissue,assay
+catalog list --project CellXGene --limit 100
 catalog lineage <dataset-uuid> --direction up --depth 3
 catalog collections entries <collection-uuid>
 ```
 
-`catalog facets` has no REST endpoint behind it — it is a `search` call with `facets=<field>` params,
-reading the response's `facets`. There is no `/api/datasets/facets/`; the no-install recipe is in
-[reference/rest.md](reference/rest.md).
-
-Subcommands: `search`, `facets`, `get`, `list`, `lineage`, `collections`. Run `catalog <cmd> -h` for
-flags. Prefer `catalog search` for plain queries and `search_expanded.py` when recall matters. The
-equivalent SDK surface:
+SDK:
 
 ```python
 import os
 from catalog_client import CatalogClient
 
-with CatalogClient(base_url=os.environ["CATALOG_API_URL"],
-                   api_token=os.environ["CATALOG_API_TOKEN"]) as cat:
-    hits  = cat.datasets.search(q="liver", modality="sequencing", facets=["project"], limit=10)
-    page  = cat.datasets.list(project="…", is_latest=True, limit=100)
-    one   = cat.datasets.get(dataset_id)          # or a DatasetRef(canonical_id, version, project)
-    cols  = cat.collections.list(limit=100)
-    edges = cat.lineages.list(source_dataset_id=dataset_id)
+with CatalogClient(
+    base_url=os.environ["CATALOG_API_URL"],
+    api_token=os.environ["CATALOG_API_TOKEN"],
+) as catalog:
+    hits = catalog.datasets.search(
+        q="liver",
+        modality="sequencing",
+        limit=10,
+    )
+
+    datasets = catalog.datasets.list(
+        project="CellXGene",
+        is_latest=True,
+        limit=100,
+    )
+
+    dataset = catalog.datasets.get(dataset_id)
 ```
 
-`CatalogClient(base_url, api_token, timeout=30.0)`; `AsyncCatalogClient` mirrors it under `async with`.
-Sub-clients: `.datasets`, `.collections`, `.lineages`.
+## References
 
-## Reference
-
-- **[reference/install.md](reference/install.md)** — tagged-release install (CLI + SDK + scripts).
-- **[reference/rest.md](reference/rest.md)** — direct REST, read-endpoint table, search-vs-list
-  semantics and gotchas, full dataset record shape, pagination, and manual OLS expansion.
+* [reference/rest.md](reference/rest.md): routes, filters, facets, pagination, record shape, and manual OLS behavior
+* [reference/install.md](reference/install.md): tagged-release installation for the CLI and SDK
