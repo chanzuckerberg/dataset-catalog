@@ -91,9 +91,13 @@ Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the
    [coverage] 24 mapped + 1 dropped of 25 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
-5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser):
+5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser). Run the
+   shared preflight first — it's read-only, auto-approved by the plugin hook, and confirms the token
+   actually works before you attempt a write (a 401 mid-`--submit` after a full mapping is the failure it
+   prevents):
    ```bash
    export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py"     # exit 0 = ready; 2 = fix config/token
    python $P/scripts/register_dataset.py --submit
    ```
 
