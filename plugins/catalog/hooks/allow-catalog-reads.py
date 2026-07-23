@@ -4,7 +4,7 @@
 Enabled with the `catalog` plugin. Emits an "allow" decision only for
 unambiguous catalog GET/read commands (the shared `preflight.py`, the `catalog`
 CLI reads, the bundled `search_expanded.py` / `ols.py`, and the stdlib `urllib`
-REST GETs used by the catalog-query skill). For everything else — including the
+REST GETs used by the catalog-read / catalog-search skills). For everything else — including the
 register script and any HTTP mutation — it stays silent and defers to Claude's
 normal permission flow. A hook "allow" never overrides a user's explicit
 deny/ask rule.

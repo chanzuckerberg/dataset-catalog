@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared preflight for the catalog plugin — run ONCE before query or register work.
 
-Both skills (catalog-query, catalog-register) need the same thing up front: a
+All three skills (catalog-read, catalog-search, catalog-register) need the same thing up front: a
 reachable catalog and a working token. This script checks that in one place so a
 missing or expired token fails fast with clear guidance, instead of surfacing
 three steps into a task (after an expensive OLS expansion, or a full schema
