@@ -36,9 +36,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any
 
 from _catalog import (
@@ -50,9 +47,8 @@ from _catalog import (
     get_client,
     usage_error,
 )
-
-OLS_BASE = "https://www.ebi.ac.uk/ols4/api"
-OLS_TIMEOUT = 15.0
+from ols import related_labels as ols_related
+from ols import top_class as ols_top_class
 
 
 def _warn(message: str) -> None:
@@ -80,92 +76,10 @@ def _dedup_preserving(terms: list[str], limit: int) -> list[str]:
 # ------------------------------------------------- OLS4 REST fallback expansion
 
 # NOTE: this path exists only for standalone runs with no agent/MCP. When an
-# agent drives the script it should expand via the `ols` MCP and pass --terms;
-# a subprocess cannot reach the session's MCP connection.
-
-
-def _ols_get(path: str, params: dict[str, Any]) -> dict | None:
-    """GET one OLS4 endpoint; return parsed JSON or None on any failure."""
-    url = f"{OLS_BASE}/{path}?{urllib.parse.urlencode(params)}"
-    try:
-        request = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=OLS_TIMEOUT) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        _warn(f"OLS request failed ({exc}); continuing without it.")
-        return None
-
-
-def _ols_top_class(term: str, ontology: str | None) -> dict | None:
-    """Resolve ``term`` to its best-matching OLS class (label, synonyms, iri)."""
-    params: dict[str, Any] = {
-        "q": term,
-        "fieldList": "label,synonym,obo_id,iri,ontology_name",
-        "rows": 1,
-    }
-    if ontology:
-        params["ontology"] = ontology.lower()
-    data = _ols_get("search", params)
-    docs = ((data or {}).get("response") or {}).get("docs") or []
-    return docs[0] if docs else None
-
-
-# Upper-ontology namespaces whose classes ("entity", "material entity", …) are
-# too generic to search on. Dropped from ancestor walks. Note: OLS reports these
-# under the importing ontology (UBERON etc.), so they must be filtered by ID
-# namespace, not by `ontology_name`.
-_UPPER_ONTOLOGY_PREFIXES = frozenset({"BFO", "CARO", "COB", "OBI", "IAO"})
-
-# Generic root terms that live in an otherwise-useful namespace (so they can't be
-# dropped by prefix) — matched by full OBO id. UBERON:0000000 is UBERON's own root.
-_GENERIC_TERM_IDS = frozenset({"UBERON:0000000"})
-
-
-def _term_prefix(term: dict) -> str:
-    """ID namespace of an OLS term (e.g. 'BFO' from 'BFO:0000001'), upper-cased."""
-    obo_id = term.get("obo_id") or ""
-    if ":" in obo_id:
-        return obo_id.split(":", 1)[0].upper()
-    tail = (term.get("iri") or "").rsplit("/", 1)[-1]
-    return tail.split("_", 1)[0].upper() if "_" in tail else ""
-
-
-def _is_upper_ontology(term: dict) -> bool:
-    """True if an OLS term is too generic to search on (upper-ontology root)."""
-    return (
-        _term_prefix(term) in _UPPER_ONTOLOGY_PREFIXES
-        or (term.get("obo_id") or "").upper() in _GENERIC_TERM_IDS
-    )
-
-
-def _ols_related(
-    doc: dict, relation: str, max_terms: int, *, drop_upper: bool = False
-) -> list[str]:
-    """Fetch labels of a hierarchical relation for an OLS class (best-effort, capped).
-
-    ``relation`` is an OLS4 term sub-resource: ``children`` (immediate subtypes),
-    ``descendants`` (full subtype subtree), or ``ancestors`` (broader terms).
-    ``drop_upper`` skips generic upper-ontology classes (BFO ``entity`` etc.) — used
-    for ancestor walks, which otherwise climb all the way to the ontology root.
-    """
-    ontology = doc.get("ontology_name")
-    iri = doc.get("iri")
-    if not ontology or not iri:
-        return []
-    # OLS requires the IRI double-URL-encoded in the path segment.
-    encoded = urllib.parse.quote(urllib.parse.quote(iri, safe=""), safe="")
-    data = _ols_get(
-        f"ontologies/{ontology}/terms/{encoded}/{relation}", {"size": max_terms}
-    )
-    terms = ((data or {}).get("_embedded") or {}).get("terms") or []
-    labels: list[str] = []
-    for term in terms:
-        if not term.get("label"):
-            continue
-        if drop_upper and _is_upper_ontology(term):
-            continue
-        labels.append(term["label"])
-    return labels
+# agent drives the script it should expand via the `ols` MCP (or run `ols.py`
+# directly) and pass --terms; a subprocess cannot reach the session's MCP
+# connection. The OLS4 REST calls themselves live in the `ols` handler module;
+# here we only apply the expansion *policy* (which relations to union).
 
 
 def _ols_expand(
@@ -179,19 +93,19 @@ def _ols_expand(
     """Return ``term`` plus its OLS label/synonyms, and — if requested — its
     immediate children, full subtype subtree, and/or broader ancestors."""
     candidates = [term]
-    doc = _ols_top_class(term, ontology)
+    doc = ols_top_class(term, ontology)
     if doc is None:
         _warn(f"no OLS match for {term!r}; searching the bare term only.")
         return [term]
     if doc.get("label"):
         candidates.append(doc["label"])
-    candidates.extend(doc.get("synonym") or [])
+    candidates.extend(doc.get("synonyms") or [])
     if children:
-        candidates.extend(_ols_related(doc, "children", max_terms))
+        candidates.extend(ols_related(doc, "children", max_terms))
     if subtypes:
-        candidates.extend(_ols_related(doc, "descendants", max_terms))
+        candidates.extend(ols_related(doc, "descendants", max_terms))
     if ancestors:
-        broader = _ols_related(doc, "ancestors", max_terms, drop_upper=True)
+        broader = ols_related(doc, "ancestors", max_terms, drop_upper=True)
         if broader:
             _warn(
                 "ancestors broaden recall at the cost of precision; drop generic "

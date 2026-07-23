@@ -1,6 +1,6 @@
 ---
 name: catalog-query
-description: Read-only querying of the Scientific Dataset Catalog — free-text dataset search (optionally broadened with ontology terms via the ols MCP), look-ups by id or canonical_id, project dataset listings, collection browsing, and lineage tracing. Use when asked to search or find datasets, fetch a dataset by id/canonical_id, list a project's datasets, browse collections, or trace lineage.
+description: Read-only querying of the Scientific Dataset Catalog — free-text dataset search (optionally broadened with ontology terms via the bundled `ols.py` handler), look-ups by id or canonical_id, project dataset listings, collection browsing, and lineage tracing. Use when asked to search or find datasets, fetch a dataset by id/canonical_id, list a project's datasets, browse collections, or trace lineage.
 ---
 
 # Query the Scientific Dataset Catalog
@@ -11,8 +11,8 @@ collections, lineage.
 The common reads — **search, list, get by id** for datasets — are plain HTTP GETs and need **no
 install**: call the REST API from Python's standard library (`urllib`, see [Quick start](#quick-start)),
 which reads the token from the environment so it never lands on a command line. Even **ontology-broadened
-search** works with no install — expand the term with the `ols` MCP, then run one search per term and
-union the hits by dataset `id` yourself. Install the `catalog` CLI or the `catalog_client` SDK for the
+search** works with no install — expand the term with the bundled `ols.py` handler, then run one search
+per term and union the hits by dataset `id` yourself. Install the `catalog` CLI or the `catalog_client` SDK for the
 conveniences: the bundled `search_expanded.py` automates that fan-out and union, plus page iteration,
 typed post-processing, and whatever extra filters the latest client adds.
 
@@ -123,15 +123,17 @@ delegate — an over-delegated `get` costs a little overhead; an inline sweep fl
 and invites the retry-in-the-open failures this skill exists to prevent.
 
 **Run inline only** for a genuinely bounded single call: one `get` by known UUID/`canonical_id`, or one
-`search`/facet call you will read once and not paginate. And **always run ontology expansion inline**
-(next section) — the `ols` MCP is a session connection the subagent can't reach; expand agent-side, then
-hand the expanded terms to `catalog-reader`.
+`search`/facet call you will read once and not paginate.
 
-(If you delegate a *bare* biological term without expanding it first, the agent falls back to the script's
-OLS4 REST expansion — `search_expanded.py --q --ontology …` — which covers label + synonyms only, so
-recall is thinner than an `ols` MCP expansion done agent-side.)
+**Ontology expansion (next section): prefer the bundled `ols.py` handler over the `ols` MCP.** `ols.py`
+prints only distilled term rows, so — unlike the MCP, which returns the full OLS payload into whatever
+context calls it — the raw JSON never lands in the conversation. And because it's a plain subprocess (not
+a session connection), it runs *inside* the `catalog-reader` subagent too, which the MCP cannot reach. So
+you can either delegate a bare biological term and let `catalog-reader` expand with `ols.py` and search in
+one shot, or expand agent-side first and hand it `--terms`. Reach for the `ols` MCP only as a last resort:
+it floods context and can't run in the subagent.
 
-## Search: broaden biological terms (ols MCP + `search_expanded.py`)
+## Search: broaden biological terms (`ols.py` + `search_expanded.py`)
 
 ### First: is this a facet filter or a free-text term?
 
@@ -171,26 +173,29 @@ a facet filter, so don't reach for it when a single precise facet value answers 
 Catalog search matches only the **text that was indexed** — a dataset tagged "hepatic" won't surface for
 `q=liver`. Raising recall is a two-part job, split by *who can do what*:
 
-1. **Expand the term via the plugin's `ols` MCP server** (EBI Ontology Lookup Service). Call its tools
-   directly, agent-side (the `ols` MCP is a session connection a subprocess can't reach), and gather
-   related terms from several relations:
-   - `search`/`searchClasses` — resolve the term to a class (canonical **label + synonyms**). Always do this.
-   - `getChildren` — the **immediate children** (one level down): the direct subtypes, e.g. `blood` →
+1. **Expand the term with the bundled `ols.py` handler** (EBI Ontology Lookup Service). Prefer it over the
+   `ols` MCP — it prints only distilled rows (`obo_id`, label, synonyms), so it never floods context, and
+   as a plain subprocess it runs inside `catalog-reader` too, which the MCP can't reach. Each subcommand
+   mirrors an MCP tool, takes `--ontology`, and adds `--json` for programmatic union; gather related terms
+   from several relations:
+   - `ols.py search <term>` (searchClasses) — resolve the term to a class (canonical **label + synonyms**). Always do this.
+   - `ols.py children <id>` (getChildren) — the **immediate children** (one level down): the direct subtypes, e.g. `blood` →
      `arterial/venous/capillary/placental blood`. Prefer this when you want tight, obviously-related
-     subtypes rather than the whole subtree.
-   - `getDescendants` — the **full subtype subtree**, when you want maximum subtype recall.
-   - `getAncestors` — **broader parent terms**, e.g. `blood` → `haemolymphatic fluid` → `bodily fluid`.
+     subtypes rather than the whole subtree. Add `--hierarchical` to also pull part-of / develops-from children.
+   - `ols.py descendants <id>` (getDescendants) — the **full subtype subtree**, when you want maximum subtype recall.
+   - `ols.py ancestors <id>` (getAncestors) — **broader parent terms**, e.g. `blood` → `haemolymphatic fluid` → `bodily fluid`.
      **Only expand ancestors when the starting term is already super granular** — a deep, specific leaf
      class (e.g. `CD8-positive, alpha-beta memory T cell`), whose immediate parents are still meaningful.
      For a term that is already broad (like `blood`), the very first hop is generic, so ancestors add
      only noise — skip them. Even for a granular term, prune hard: the walk climbs toward upper-ontology
-     terms (`material entity`, `anatomical entity`) that match everything (see the precision note below).
+     terms (`material entity`, `anatomical entity`) that match everything — `ols.py ancestors` drops these
+     by default (`--include-upper` keeps them), but still eyeball the rest (see the precision note below).
 2. **Union the passes by dataset `id`** — run one search per expanded term and merge, deduped on `id`, so
    a dataset matching several synonyms is reported once. Same result either way:
    - **No install** — reuse `api_get` from Quick start; one call per term, union by `id` (`urllib`
      handles URL-encoding, so multi-word terms are fine):
      ```python
-     terms = ["liver", "hepatic", "hepatocyte"]        # expanded by the ols MCP
+     terms = ["liver", "hepatic", "hepatocyte"]        # expanded via ols.py
      merged = {}
      for t in terms:
          for hit in api_get("/api/datasets/search/", q=t, modality="sequencing", limit=25)["results"]:
@@ -201,7 +206,8 @@ Catalog search matches only the **text that was indexed** — a dataset tagged "
      exactly which terms it searched (so a broadened match is never mistaken for an exact-name hit), and
      adds fan-out caps plus the client's extra filters:
      ```bash
-     # after the ols MCP expands "liver" -> liver, hepatic, hepatocyte:
+     # after ols.py expands "liver" -> liver, hepatic, hepatocyte:
+     #   python scripts/ols.py search liver --ontology uberon   # -> the term list below
      python scripts/search_expanded.py --terms "liver,hepatic,hepatocyte" --modality sequencing
      ```
 
@@ -214,7 +220,7 @@ So: search **single, specific tokens**; drop generic ones (`cell`, `blood`, `tis
 sanity-check a broadened hit by confirming the record text genuinely relates before trusting the count.
 
 **Standalone fallback (no agent/MCP):** run with `--q` instead of `--terms` and the script expands the
-term itself against the public OLS4 REST API — the same EBI service the MCP fronts — scoped with
+term itself through the same `ols.py` handler (public OLS4 REST) — no `--terms` needed — scoped with
 `--ontology` (`uberon`/`cl`/`efo`/`mondo`) and any of `--children` (immediate subtypes), `--subtypes`
 (full descendant subtree), `--ancestors` (broader terms; upper-ontology roots like `entity` are dropped
 automatically, but still prune the remaining generic terms). If OLS is unreachable it warns and searches
@@ -226,7 +232,8 @@ python scripts/search_expanded.py --q liver --ontology uberon --children --ances
 
 Cap fan-out with `--max-terms` (default 8), and narrow with the same dataset filters as `catalog search`
 (`--modality`, `--project`, `--organism`, `--tissue`, `--assay`, `--disease`, `--sub-modality`,
-`--development-stage`, `--access-scope`, `--all-versions`). Full `ols` tool reference:
+`--development-stage`, `--access-scope`, `--all-versions`). Run `python scripts/ols.py <cmd> -h` for the
+handler's flags; the `ols` MCP fallback is documented in
 [reference/rest.md](reference/rest.md#manual-ols-expansion-finer-control-than-the-script).
 
 ## Other CLI commands
