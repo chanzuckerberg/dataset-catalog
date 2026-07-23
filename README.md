@@ -24,12 +24,71 @@ Want to contribute to the codebase?
 
 ## Claude Code Plugin
 
-This repo ships a Claude Code plugin, `catalog`, distributed through the `dataset-catalog` marketplace defined in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Install it from inside a Claude Code session:
+This repo ships a Claude Code plugin, `catalog`, distributed through the `dataset-catalog` marketplace defined in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). It lets you register, read, and search the Scientific Dataset Catalog conversationally from a Claude Code session — no client install required for the common read paths.
+
+### What it does
+
+The plugin adds three skills, a read-only subagent, an ontology MCP server, and a safety hook:
+
+| Component | Type | What it's for |
+| --- | --- | --- |
+| `catalog-register` | skill | Maps your dataset metadata onto the latest catalog schema and generates a runnable registration script. This is the only **write** path. |
+| `catalog-read` | skill | Read-only lookups and analysis — get a dataset by UUID or canonical ID, list a project, browse collections, discover facet values, trace lineage, and aggregate, compare, or **visualize** across results. The everyday default. |
+| `catalog-search` | skill | High-recall search that expands a term through synonyms and the OLS ontology hierarchy, then unions the hits by dataset id — so a dataset tagged "hepatic" still surfaces for a "liver" query. Higher overhead; use when recall matters. |
+| `catalog-reader` | subagent | Runs multi-page reads and fan-out searches in its own context and returns only the distilled answer, keeping paginated JSON out of the main conversation. |
+| `ols` | MCP server | Read-only access to the [EBI OLS4](https://www.ebi.ac.uk/ols4/) ontology service, used by `catalog-search` for term expansion. |
+| read hook | PreToolUse hook | Auto-approves read-only catalog/OLS commands so bounded reads run without a prompt. All catalog access stays `GET`-only; writes go only through `catalog-register`. |
+
+`catalog-read` and `catalog-search` share a single read-only operating contract (`plugins/catalog/reference/read-contract.md`): every catalog and OLS call is a `GET`, and the API token travels only as the `X-catalog-api-token` header.
+
+### Prerequisites
+
+Set these in your Claude Code environment settings before using the plugin (the token is read from the environment, never entered in chat):
+
+```text
+CATALOG_API_TOKEN   API token; required — issue one at <base_url>/tokens (SSO-gated)
+CATALOG_API_URL     base URL; optional, defaults to production when unset
+```
+
+### Install
+
+From inside a Claude Code session:
 
 ```
 /plugin marketplace add chanzuckerberg/dataset-catalog
 /plugin install catalog@dataset-catalog
 ```
+
+Or from your terminal (outside a session):
+
+```bash
+claude plugin marketplace add chanzuckerberg/dataset-catalog
+claude plugin install catalog@dataset-catalog
+# then, inside a Claude Code session, apply it:
+#   /reload-plugins
+```
+
+**Reload after installing.** If you're already inside a Claude Code session, run `/reload-plugins` to load the skills, `catalog-reader` subagent, `ols` MCP server, and read hook. (A new session picks them up automatically.) Confirm with `claude plugin list`.
+
+### Update
+
+From inside a Claude Code session:
+
+```
+/plugin marketplace update dataset-catalog
+/plugin
+```
+
+Or from your terminal:
+
+```bash
+claude plugin marketplace update dataset-catalog
+claude plugin update catalog@dataset-catalog
+# then, inside a Claude Code session, apply it:
+#   /reload-plugins
+```
+
+`marketplace update` pulls the latest marketplace definition; `plugin update` (or the `/plugin` menu) upgrades `catalog@dataset-catalog` to the newest published version. **Reload after updating** — if you're inside a session, run `/reload-plugins` to apply the new version (a new session picks it up automatically). Plugin versions are managed by release-please — see the plugin [CHANGELOG](plugins/catalog/CHANGELOG.md).
 
 ## Quick Start
 
