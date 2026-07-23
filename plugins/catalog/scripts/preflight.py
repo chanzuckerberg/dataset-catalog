@@ -98,13 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             "check CATALOG_API_URL points at a valid catalog instance."
         )
     except urllib.error.URLError as exc:
-        # A network problem is not a config error — warn, but don't block the task.
-        print(
-            f"preflight: warning — could not reach {url} ({exc.reason}); config "
-            "looks set, but connectivity is unverified.",
-            file=sys.stderr,
+        _fail(
+            f"could not reach {url} ({exc.reason}); cannot verify the token. "
+            "Check network/VPN or rerun with --no-ping to skip the connectivity check."
         )
-        return 0
 
     print(f"preflight: catalog reachable, token accepted (HTTP {status}). Ready.")
     return 0
