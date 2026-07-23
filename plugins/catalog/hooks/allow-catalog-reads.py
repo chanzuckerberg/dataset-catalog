@@ -2,11 +2,12 @@
 """PreToolUse hook: auto-approve read-only Scientific Dataset Catalog commands.
 
 Enabled with the `catalog` plugin. Emits an "allow" decision only for
-unambiguous catalog GET/read commands (the `catalog` CLI reads, the bundled
-`search_expanded.py`, and the stdlib `urllib` REST GETs used by the
-catalog-query skill). For everything else — including the register script and
-any HTTP mutation — it stays silent and defers to Claude's normal permission
-flow. A hook "allow" never overrides a user's explicit deny/ask rule.
+unambiguous catalog GET/read commands (the shared `preflight.py`, the `catalog`
+CLI reads, the bundled `search_expanded.py` / `ols.py`, and the stdlib `urllib`
+REST GETs used by the catalog-query skill). For everything else — including the
+register script and any HTTP mutation — it stays silent and defers to Claude's
+normal permission flow. A hook "allow" never overrides a user's explicit
+deny/ask rule.
 """
 
 import json
@@ -31,6 +32,7 @@ mutates = (
 reads = (
     re.search(r"\bcatalog\s+(search|get|list|facets|lineage|collections)\b", cmd)
     or re.search(r"\bcatalog\s+--version\b", cmd)
+    or "preflight.py" in cmd
     or "search_expanded.py" in cmd
     or "ols.py" in cmd
     # stdlib REST GET against the catalog: token/host present, no mutation

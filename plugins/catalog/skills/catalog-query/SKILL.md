@@ -21,12 +21,17 @@ typed post-processing, and whatever extra filters the latest client adds.
 Every command below assumes the following are already true. Check them first; don't discover a missing
 one three steps into a query.
 
-1. **Config is set.** `CATALOG_API_TOKEN` must be in the environment; `CATALOG_API_URL` is optional.
-   - **URL:** if `CATALOG_API_URL` is unset, it defaults to the production instance
-     `https://datacatalog.prod-sci-data.prod.czi.team/` — set it only to target another instance.
-   - **Token:** if `CATALOG_API_TOKEN` is unset, it cannot be minted headlessly — it is issued through an
-     SSO-gated page that needs a human. Open the token page in the user's (already logged-in) default
-     browser so they can generate one:
+1. **Config is set — verify with the shared preflight (once).** Run the plugin's preflight script; it's
+   read-only and the plugin's hook auto-approves it, so there's no permission prompt and no ad-hoc env
+   check to run yourself:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py"          # or --no-ping to skip the network check
+   ```
+   It confirms `CATALOG_API_URL` (defaults to production if unset) and that `CATALOG_API_TOKEN` is set
+   **and actually works** (one authed GET — catches an expired token up front). Exit 0 means ready; exit 2
+   prints what to fix. If the token is unset it cannot be minted headlessly — it is issued through an
+   SSO-gated page that needs a human. Open the token page in the user's (already logged-in) default
+   browser so they can generate one:
      ```bash
      URL="${CATALOG_API_URL:-https://datacatalog.prod-sci-data.prod.czi.team}"
      open "${URL%/}/tokens"          # macOS; Linux: xdg-open …  Windows: start "" …
