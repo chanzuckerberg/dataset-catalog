@@ -115,8 +115,12 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
         chunk_hasher = new_hasher(algorithm)
 
     # Both hashers are fed incrementally, so no chunk is ever held in memory:
-    # peak usage is one READ_BUFFER regardless of CHUNK_SIZE. Chunk boundaries
-    # land exactly where a buffered implementation would put them.
+    # peak usage is one READ_BUFFER regardless of CHUNK_SIZE. A chunk is closed
+    # only between reads, so boundaries land exactly where a buffered
+    # implementation would put them as long as CHUNK_SIZE is a multiple of
+    # READ_BUFFER (256MB and 64KB are). file_hash never sees a boundary, so it
+    # is unaffected either way; only the manifest and merkle_root would shift.
+    # See tests/utils/checksum/test_invariance.py.
     for raw in _iter_stream(stream):
         file_hasher.update(raw)
         chunk_hasher.update(raw)

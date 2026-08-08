@@ -24,7 +24,17 @@ BUCKET = "repro-bucket"
 BODY = b"the quick brown fox jumps over the lazy dog"
 
 # blake2b is stdlib, so these tests hold on a base install too.
-ALGORITHMS = [Algorithm.blake2b, Algorithm.crc32, Algorithm.blake3, Algorithm.crc64]
+# crc64nvme is here because it is one of the two algorithms S3 computes natively
+# (see _S3_NATIVE_RESPONSE_KEY): reproducibility is what makes a stored native
+# value interchangeable with a locally computed one. crc64 is ECMA-182, which S3
+# does not use — the two are easy to confuse, so both are covered.
+ALGORITHMS = [
+    Algorithm.blake2b,
+    Algorithm.crc32,
+    Algorithm.blake3,
+    Algorithm.crc64,
+    Algorithm.crc64nvme,
+]
 
 
 @pytest.fixture
