@@ -1,7 +1,16 @@
 import base64
+import binascii
+import logging
 
-from catalog_client.utils.checksum.algorithm import Algorithm
+from catalog_client.utils.checksum.algorithm import Algorithm, is_valid_digest
 from catalog_client.utils.checksum.models import ChecksumResult
+
+logger = logging.getLogger(__name__)
+
+# HeadObject error codes that genuinely mean "this object has no stored
+# checksum because it does not exist". Anything else (403, throttling,
+# expired credentials) must not be silently reported as "no checksum".
+_MISSING_OBJECT_ERROR_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 
 # Maps our algorithm name to the HeadObject response field S3 uses
 _S3_NATIVE_RESPONSE_KEY: dict[Algorithm, str] = {
@@ -33,6 +42,20 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     raise ValueError(f"Not an S3 URI: {uri}")
 
 
+def _folder_prefix(key: str) -> str:
+    """
+    Normalise an S3 key into a folder prefix.
+
+    A prefix without a trailing slash over-matches siblings: listing "ds"
+    also returns objects under "ds2/". Appending the slash confines the
+    listing to the intended folder. An empty key (bucket root) is returned
+    unchanged.
+    """
+    if not key or key.endswith("/"):
+        return key
+    return f"{key}/"
+
+
 def _insert_key(tree: dict, parts: list[str], s3_key: str) -> None:
     """
     Insert an S3 key into a nested dict keyed by path segment.
@@ -59,16 +82,44 @@ def _b64_to_hex(b64: str) -> str:
     return base64.b64decode(b64).hex()
 
 
-def _strip_multipart_suffix(value: str) -> str:
+def _has_multipart_suffix(value: str) -> bool:
     """
     S3 returns composite checksums as '{base64}-{num_parts}' for multipart
-    objects (e.g. 'abc123==-23'). Strip the trailing '-N' if present so we
-    get a clean base64 value we can decode.
+    objects (e.g. 'abc123==-23'). The standard base64 alphabet has no '-',
+    so a trailing '-N' unambiguously marks a composite value.
     """
-    if "-" in value:
-        b64_part, _, _ = value.rpartition("-")
-        return b64_part
-    return value
+    head, sep, tail = value.rpartition("-")
+    return bool(sep) and tail.isdigit()
+
+
+def _is_composite(head: dict, raw_value: str) -> bool:
+    """
+    Decide whether a native checksum value covers the whole object or is a
+    multipart composite (a checksum computed over the part checksums).
+
+    A composite value cannot be compared against a checksum computed over the
+    object's bytes: it depends on the uploader's part size, which we neither
+    know nor reproduce. Prefer the explicit ChecksumType field and fall back
+    to the '-N' suffix for responses that omit it.
+    """
+    checksum_type = head.get("ChecksumType")
+    if checksum_type:
+        return checksum_type == "COMPOSITE"
+    return _has_multipart_suffix(raw_value)
+
+
+def _missing_object_error_code(exc: Exception) -> str | None:
+    """
+    Return the S3 error code if exc is a botocore ClientError, else None.
+
+    Read off the exception duck-typed rather than importing botocore, so that
+    `import catalog_client` does not pull in boto3's several hundred modules
+    (see the lazy import in generate.for_assets).
+    """
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    return response.get("Error", {}).get("Code")
 
 
 def _fetch_all_s3_stored_checksums(
@@ -77,43 +128,76 @@ def _fetch_all_s3_stored_checksums(
     """
     Fetch all stored checksums for an S3 object in one HeadObject call.
     Returns dict mapping algorithm -> ChecksumResult.
-    Returns empty dict on any error.
+
+    Returns an empty dict when the object does not exist. Any other error
+    (403, throttling, expired credentials) is re-raised so the caller can
+    surface it, rather than being silently reported as "no stored checksum" —
+    which would trigger a needless full download or a silent skip.
+
+    Multipart composite checksums are excluded: they are not comparable with
+    a checksum computed over the object's bytes.
     """
     results: dict[Algorithm, ChecksumResult] = {}
     path = f"s3://{bucket}/{key}"
 
     try:
         head = s3_client.head_object(Bucket=bucket, Key=key, ChecksumMode="ENABLED")
+    except Exception as exc:
+        if _missing_object_error_code(exc) in _MISSING_OBJECT_ERROR_CODES:
+            logger.debug("No S3 object at %s; treating as no stored checksum", path)
+            return {}
+        raise
 
-        # Native S3 checksums (CRC32, CRC64NVME)
-        for algo, response_key in _S3_NATIVE_RESPONSE_KEY.items():
-            if raw_value := head.get(response_key):
-                clean_b64 = _strip_multipart_suffix(raw_value)
-                hex_digest = _b64_to_hex(clean_b64)
-                results[algo] = ChecksumResult(
-                    path=path,
-                    algorithm=algo,
-                    file_hash=hex_digest,
-                    merkle_root=hex_digest,
-                    source="s3_native",
-                )
+    # Native S3 checksums (CRC32, CRC64NVME)
+    for algo, response_key in _S3_NATIVE_RESPONSE_KEY.items():
+        raw_value = head.get(response_key)
+        if not isinstance(raw_value, str) or not raw_value:
+            continue
+        if _is_composite(head, raw_value):
+            logger.debug(
+                "Ignoring composite %s checksum on %s: not comparable with a "
+                "whole-object hash",
+                algo,
+                path,
+            )
+            continue
+        # One unreadable value must not discard the object's other checksums,
+        # so decoding failures skip just this algorithm.
+        try:
+            hex_digest = _b64_to_hex(raw_value)
+        except (ValueError, binascii.Error):
+            logger.debug("Ignoring undecodable %s checksum on %s", algo, path)
+            continue
+        if not is_valid_digest(hex_digest, algo):
+            logger.debug("Ignoring malformed %s checksum on %s", algo, path)
+            continue
+        results[algo] = ChecksumResult(
+            path=path,
+            algorithm=algo,
+            file_hash=hex_digest,
+            merkle_root=hex_digest,
+            source="s3_native",
+        )
 
-        # User metadata checksums (blake3, blake2b, crc64)
-        metadata = {k.lower(): v for k, v in head.get("Metadata", {}).items()}
-        for algo in _NON_S3_NATIVE_ALGORITHMS:
-            file_hash = metadata.get(f"x-checksum-{algo}")
-            if file_hash:
-                merkle_root = metadata.get(f"x-checksum-{algo}-merkle", file_hash)
-                results[algo] = ChecksumResult(
-                    path=path,
-                    algorithm=algo,
-                    file_hash=file_hash,
-                    merkle_root=merkle_root,
-                    source="s3_metadata",
-                )
-
-    except Exception:
-        return {}
+    # User metadata checksums (blake3, blake2b, crc64)
+    metadata = {k.lower(): v for k, v in head.get("Metadata", {}).items()}
+    for algo in _NON_S3_NATIVE_ALGORITHMS:
+        file_hash = metadata.get(f"x-checksum-{algo}")
+        if not file_hash:
+            continue
+        if not is_valid_digest(file_hash, algo):
+            # Not a digest we could combine into a folder root, so refusing it
+            # here keeps a file's checksum identical standalone and as a child.
+            logger.debug("Ignoring malformed x-checksum-%s metadata on %s", algo, path)
+            continue
+        merkle_root = metadata.get(f"x-checksum-{algo}-merkle", file_hash)
+        results[algo] = ChecksumResult(
+            path=path,
+            algorithm=algo,
+            file_hash=file_hash,
+            merkle_root=merkle_root,
+            source="s3_metadata",
+        )
 
     return results
 
@@ -147,7 +231,10 @@ def _find_common_algorithm_in_folder(
     if not path.startswith(("s3://", "s3a://")):
         return None, {}
 
-    bucket, prefix = _parse_s3_uri(path)
+    bucket, key = _parse_s3_uri(path)
+    # Same normalisation the compute phase applies, so detection and hashing
+    # always see the same set of objects.
+    prefix = _folder_prefix(key)
     common_algorithms: set[Algorithm] | None = None
     per_child_all_checksums: dict[str, dict[Algorithm, ChecksumResult]] = {}
 

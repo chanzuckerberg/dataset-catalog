@@ -1,8 +1,10 @@
 import logging
 import warnings
+from dataclasses import dataclass
+from typing import TypeVar
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
-from catalog_client.utils.checksum.algorithm import Algorithm
+from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
     compute_checksum_localfs,
     compute_checksum_s3,
@@ -15,12 +17,18 @@ from catalog_client.utils.checksum.s3 import (
     _select_best_algorithm,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ChecksumWarning(UserWarning):
     pass
 
 
 UNSUPPORTED_PLATFORMS = {StoragePlatform.external, StoragePlatform.other}
+
+# for_assets preserves the caller's concrete asset type (DataAssetResponse is a
+# DataAssetRequest subclass that widens storage_platform to optional).
+AssetT = TypeVar("AssetT", bound=DataAssetRequest)
 
 
 def _determine_platform(
@@ -31,37 +39,68 @@ def _determine_platform(
     return None
 
 
+def _skip(message: str) -> None:
+    """
+    Report a location we are not going to checksum.
+
+    Every skip goes through one mechanism so that a caller filtering on
+    ChecksumWarning sees all of them, not just the subset that used to warn
+    while the rest went to the root logger.
+    """
+    logger.debug("Skipping checksum: %s", message)
+    warnings.warn(message, ChecksumWarning, stacklevel=3)
+
+
+@dataclass
+class _S3Detection:
+    """
+    What the detect phase learned about an S3 location.
+
+    Bundled rather than returned as a loose tuple because the compute phase
+    needs every field to route correctly; dropping one silently changes
+    behaviour (see `has_cached_children`, which previously defaulted to False
+    on the auto-detect path and made algorithm=None strictly worse than
+    naming the algorithm auto-detection would have chosen).
+    """
+
+    algorithm: Algorithm | None
+    has_cached_children: bool = False
+
+
 def detect_and_cache_for_s3(
     location_uri: str,
     asset_type: AssetType,
     algorithm: Algorithm | None,
     cached_results: dict[str, ChecksumResult],
     s3_client,
-) -> tuple[Algorithm | None, bool]:
-    has_cached_folder_children = False
-    detected_algorithm = algorithm
-    if asset_type == AssetType.file:
-        bucket, key = _parse_s3_uri(location_uri)
-        all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
-        if algorithm is None:
-            if all_checksums and (
-                detected_algorithm := _select_best_algorithm(set(all_checksums.keys()))
-            ):
-                cached_results[location_uri] = all_checksums[detected_algorithm]
-        elif algorithm in all_checksums:
-            cached_results[location_uri] = all_checksums[algorithm]
-    elif asset_type == AssetType.folder:
+) -> _S3Detection:
+    if asset_type == AssetType.folder:
         common_algorithm, cached_children = _find_common_algorithm_in_folder(
             location_uri, s3_client
         )
+        # Children are reusable whenever the algorithm we are going to hash
+        # with is the one they all carry — whether that algorithm was named by
+        # the caller or discovered here.
         if algorithm is None:
-            detected_algorithm = common_algorithm
-            if detected_algorithm is not None:
-                cached_results.update(cached_children)
-        elif common_algorithm == algorithm:
+            if common_algorithm is None:
+                return _S3Detection(algorithm=None)
             cached_results.update(cached_children)
-            has_cached_folder_children = True
-    return detected_algorithm, has_cached_folder_children
+            return _S3Detection(algorithm=common_algorithm, has_cached_children=True)
+        if common_algorithm == algorithm:
+            cached_results.update(cached_children)
+            return _S3Detection(algorithm=algorithm, has_cached_children=True)
+        return _S3Detection(algorithm=algorithm)
+
+    bucket, key = _parse_s3_uri(location_uri)
+    all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
+    if algorithm is None:
+        detected = _select_best_algorithm(set(all_checksums.keys()))
+        if detected is not None:
+            cached_results[location_uri] = all_checksums[detected]
+        return _S3Detection(algorithm=detected)
+    if algorithm in all_checksums:
+        cached_results[location_uri] = all_checksums[algorithm]
+    return _S3Detection(algorithm=algorithm)
 
 
 def compute_for_s3(
@@ -72,22 +111,29 @@ def compute_for_s3(
     s3_client,
     compute_if_no_s3_checksum: bool,
 ) -> ChecksumResult | None:
-    detected_algorithm, has_cached_folder_children = detect_and_cache_for_s3(
+    detection = detect_and_cache_for_s3(
         location_uri, asset_type, algorithm, cached_results, s3_client
     )
-    if detected_algorithm and location_uri in cached_results:
+    if detection.algorithm and location_uri in cached_results:
         return cached_results[location_uri]
 
-    elif not compute_if_no_s3_checksum and not has_cached_folder_children:
-        return None
-    else:
-        return compute_checksum_s3(
+    # Assembling a folder digest from already-cached children needs no
+    # downloads, so compute_if_no_s3_checksum does not apply to it.
+    if not compute_if_no_s3_checksum and not detection.has_cached_children:
+        logger.debug(
+            "Skipping %s: no stored S3 checksum and compute_if_no_s3_checksum=False",
             location_uri,
-            algorithm=detected_algorithm or Algorithm.blake3,
-            s3_client=s3_client,
-            use_stored=False,
-            cached_results=cached_results,
         )
+        return None
+
+    return compute_checksum_s3(
+        location_uri,
+        algorithm=detection.algorithm or default_algorithm(),
+        s3_client=s3_client,
+        use_stored=False,
+        cached_results=cached_results,
+        is_folder=asset_type == AssetType.folder,
+    )
 
 
 def for_location(
@@ -97,23 +143,29 @@ def for_location(
     algorithm: Algorithm | None = None,
     s3_client=None,
     cached_results: dict[str, ChecksumResult] | None = None,
-    compute_if_no_s3_checksum: bool = False,
+    compute_if_no_s3_checksum: bool = True,
 ) -> LocationChecksum:
+    """
+    Compute the checksum for a single location.
+
+    Returns an empty (falsy) LocationChecksum when the location is skipped or
+    fails; every such case also emits a ChecksumWarning, so a caller can turn
+    all of them into errors with
+    `warnings.simplefilter("error", ChecksumWarning)`.
+    """
     if not location_uri:
-        logging.error("Can't generate checksum when location is None")
+        _skip("Cannot generate a checksum for an empty location_uri")
         return LocationChecksum()
 
     if not (platform := _determine_platform(storage_platform)):
-        warnings.warn(
-            f"StoragePlatform of {location_uri} not supported for checksum generation",
-            ChecksumWarning,
-            stacklevel=2,
+        _skip(
+            f"StoragePlatform of {location_uri} not supported for checksum generation"
         )
         return LocationChecksum()
 
     is_s3 = platform == StoragePlatform.s3
     if is_s3 and s3_client is None:
-        logging.error("No s3 client provided for s3 data access")
+        _skip(f"No s3_client provided; cannot read {location_uri}")
         return LocationChecksum()
 
     try:
@@ -129,16 +181,15 @@ def for_location(
             )
         else:
             hash_result = compute_checksum_localfs(
-                location_uri, algorithm=algorithm or Algorithm.blake3
+                location_uri, algorithm=algorithm or default_algorithm()
             )
 
         if hash_result is not None:
-            value = (
-                hash_result.merkle_root
-                if hash_result.is_directory
-                else hash_result.file_hash
+            # content_digest, not merkle_root — the same value this node would
+            # contribute to a parent directory. See ChecksumResult.content_digest.
+            return LocationChecksum(
+                value=hash_result.content_digest, algorithm=hash_result.algorithm
             )
-            return LocationChecksum(value=value, algorithm=hash_result.algorithm)
 
     except Exception as e:
         warnings.warn(
@@ -150,19 +201,26 @@ def for_location(
 
 
 def for_assets(
-    assets: list[DataAssetRequest],
+    assets: list[AssetT],
     algorithm: Algorithm | None = None,
     compute_if_no_s3_checksum: bool = True,
     s3_client=None,
-) -> list[DataAssetRequest]:
+) -> list[AssetT]:
     """
-    Populate checksums on a list of DataAssetRequest objects.
+    Return copies of the given assets with `checksum` and `checksum_alg` populated.
+
+    The input assets are NOT modified: each is shallow-copied via
+    `model_copy()`, preserving its concrete type, and the copies are returned.
+    Read the results off the returned list.
 
     algorithm=None auto-detects from stored S3 checksums (highest priority wins),
-    falling back to blake3 if none exist. Non-S3 assets always compute locally.
+    falling back to `default_algorithm()` if none exist. Non-S3 assets always
+    compute locally.
 
     compute_if_no_s3_checksum=False skips S3 assets that have no stored checksum
-    rather than downloading them. Has no effect on non-S3 assets.
+    rather than downloading them. It does not apply to folders whose children
+    all carry a stored checksum, since assembling those needs no download, nor
+    to non-S3 assets.
 
     Unsupported platforms (external, other, None) are passed through with a
     ChecksumWarning. Failures also warn and pass the asset through unchanged.
@@ -170,7 +228,7 @@ def for_assets(
     if not assets:
         return []
 
-    result = []
+    result: list[AssetT] = []
     cached_results: dict[str, ChecksumResult] = {}
     if s3_client is None:
         # Imported here rather than at module scope: boto3/botocore pull in
@@ -181,14 +239,15 @@ def for_assets(
         s3_client = boto3.client("s3")
 
     for asset in assets:
-        if asset.checksum is not None:
-            result.append(asset)
+        asset_copy = asset.model_copy()
+        if asset_copy.checksum is not None:
+            result.append(asset_copy)
             continue
 
         result_checksum = for_location(
-            asset.location_uri,
-            asset.asset_type,
-            asset.storage_platform,
+            asset_copy.location_uri,
+            asset_copy.asset_type,
+            asset_copy.storage_platform,
             algorithm,
             s3_client,
             cached_results,
@@ -196,9 +255,9 @@ def for_assets(
         )
 
         if result_checksum:
-            asset.checksum = result_checksum.value
-            asset.checksum_alg = result_checksum.algorithm
+            asset_copy.checksum = result_checksum.value
+            asset_copy.checksum_alg = result_checksum.algorithm
 
-        result.append(asset)
+        result.append(asset_copy)
 
     return result

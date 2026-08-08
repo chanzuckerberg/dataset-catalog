@@ -9,6 +9,7 @@ from catalog_client.utils.checksum.algorithm import (
 from catalog_client.utils.checksum.models import CHUNK_SIZE, ChecksumResult, ChunkRecord
 from catalog_client.utils.checksum.s3 import (
     _fetch_s3_stored_checksum,
+    _folder_prefix,
     _insert_key,
     _parse_s3_uri,
 )
@@ -33,8 +34,11 @@ def _combine_child_digests(raw_digests: list[bytes], algorithm: Algorithm) -> st
         Feeds concatenated raw child hashes into a new hasher — Merkle node.
 
     CRC (crc32, crc64, crc64nvme):
-        Computes CRC over the concatenated raw child CRC bytes — matches S3's
-        composite checksum model for multipart uploads.
+        Computes CRC over the concatenated raw child CRC bytes. For the chunks
+        of a single file this matches S3's composite checksum model for
+        multipart uploads. Directory nodes prepend each child's name (see
+        _directory_result), so directory digests are deliberately NOT
+        S3-composite-compatible — S3 composites cover ordered, unnamed parts.
 
     Both cases use the same operation: hash/CRC of concatenated raw bytes.
     The difference is only in what "raw bytes" means per algorithm type:
@@ -52,11 +56,17 @@ def _directory_result(
     """
     Build the tree node for a directory (local or S3 prefix) from its children.
 
-    Each child contributes its name bytes plus the raw bytes of its merkle_root,
-    so a rename changes the parent digest even when file contents are identical.
+    Each child contributes its name bytes plus the raw bytes of its
+    content_digest, so a rename changes the parent digest even when file
+    contents are identical.
+
+    content_digest — not merkle_root — is what makes folder hashing
+    reproducible: it is the same value the child would report if checksummed
+    standalone, so a child read from a stored S3 checksum and the same child
+    downloaded and hashed contribute identical bytes to the parent.
     """
     child_raw = [
-        name.encode() + raw_from_hex(child.merkle_root, algorithm)
+        name.encode() + raw_from_hex(child.content_digest, algorithm)
         for name, child in children.items()
     ]
     digest = _combine_child_digests(child_raw, algorithm)
@@ -243,18 +253,31 @@ def compute_checksum_s3(
     s3_client=None,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
+    is_folder: bool | None = None,
 ) -> ChecksumResult:
     """
-    Compute a checksum for an S3 URI (s3:// or s3a://). Defaults to blake3.
-    Trailing slash = treat as prefix (virtual directory).
+    Compute a checksum for an S3 URI (s3:// or s3a://).
+
+    is_folder=True treats the key as a prefix (virtual directory), False as a
+    single object. When None (the default) it is inferred from the URI: a
+    trailing slash or an empty key means prefix. Callers that already know the
+    asset type should pass it explicitly rather than relying on the caller
+    having appended a slash.
 
     use_stored=True (default) returns any checksum already on the S3 object
     without downloading. Set False to always recompute (e.g. integrity audits).
     """
     bucket, key = _parse_s3_uri(path)
-    if path.endswith("/") or not key:
+    if is_folder is None:
+        is_folder = path.endswith("/") or not key
+    if is_folder:
         return _hash_s3_prefix(
-            bucket, key, algorithm, s3_client, use_stored, cached_results
+            bucket,
+            _folder_prefix(key),
+            algorithm,
+            s3_client,
+            use_stored,
+            cached_results,
         )
     return _hash_s3_file(bucket, key, algorithm, s3_client, use_stored, cached_results)
 
@@ -265,13 +288,17 @@ def compute_checksum(
     s3_client=None,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
+    is_folder: bool | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for a local path or S3 URI (s3:// or s3a://).
     Delegates to compute_checksum_s3 or compute_checksum_localfs.
+
+    is_folder is only consulted for S3 URIs; local paths are classified by
+    os.path.isdir.
     """
     if path.startswith(("s3://", "s3a://")):
         return compute_checksum_s3(
-            path, algorithm, s3_client, use_stored, cached_results
+            path, algorithm, s3_client, use_stored, cached_results, is_folder
         )
     return compute_checksum_localfs(path, algorithm)

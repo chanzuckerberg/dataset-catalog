@@ -3,6 +3,7 @@
 All I/O is mocked; no real files, S3 calls, or network access.
 """
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,11 +14,12 @@ from catalog_client.models.asset import (
     DataAssetResponse,
     StoragePlatform,
 )
-from catalog_client.utils.checksum.algorithm import Algorithm
+from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.generate import (
     UNSUPPORTED_PLATFORMS,
     ChecksumWarning,
     for_assets,
+    for_location,
 )
 from catalog_client.utils.checksum.models import ChecksumResult
 
@@ -349,21 +351,54 @@ def test_s3_folder_no_common_algo_falls_back_to_blake3(
 
 
 @patch(
+    "catalog_client.utils.checksum.generate.compute_checksum_s3",
+    return_value=_FOLDER_RESULT,
+)
+@patch(
     "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
     return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
 )
-def test_s3_folder_common_algo_no_compute_flag_leaves_checksum_unset(
+def test_s3_folder_auto_detect_no_compute_flag_still_uses_cached_children(
+    mock_find, mock_compute, mock_s3
+):
+    # Every child carries a stored blake3, so assembling the folder digest needs
+    # no download and compute_if_no_s3_checksum=False must not block it.
+    # Auto-detection must not be worse than naming the algorithm it would pick.
+    asset = make_asset(S3_FOLDER, AssetType.folder)
+    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
+    mock_compute.assert_called_once()
+    assert mock_compute.call_args.kwargs["algorithm"] == Algorithm.blake3
+    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
+    assert result[0].checksum == HASH
+
+
+@patch(
+    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
+    return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
+)
+def test_s3_folder_auto_detect_matches_explicit_algo_under_no_compute_flag(
     mock_find, mock_s3
 ):
-    # Folder URI itself is not in cached_results, so compute would be required
-    # but compute_if_no_s3_checksum=False prevents it → checksum unset
-    asset = make_asset(S3_FOLDER, AssetType.folder)
+    # Regression guard for the asymmetry itself: algorithm=None and
+    # algorithm=blake3 must reach the same outcome when blake3 is what
+    # auto-detection finds.
     with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
-        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
-    mock_compute.assert_not_called()
-    assert result[0].checksum is None
+        "catalog_client.utils.checksum.generate.compute_checksum_s3",
+        return_value=_FOLDER_RESULT,
+    ):
+        auto = for_assets(
+            [make_asset(S3_FOLDER, AssetType.folder)],
+            s3_client=mock_s3,
+            compute_if_no_s3_checksum=False,
+        )
+        explicit = for_assets(
+            [make_asset(S3_FOLDER, AssetType.folder)],
+            algorithm=Algorithm.blake3,
+            s3_client=mock_s3,
+            compute_if_no_s3_checksum=False,
+        )
+    assert auto[0].checksum == explicit[0].checksum
+    assert auto[0].checksum_alg == explicit[0].checksum_alg
 
 
 @patch(
@@ -607,3 +642,111 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset])  # no s3_client
     mock_client.assert_called_once_with("s3")
+
+
+# ── Skip reporting: one mechanism for every skip ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "kwargs, why",
+    [
+        (
+            {
+                "location_uri": "",
+                "asset_type": AssetType.file,
+                "storage_platform": StoragePlatform.s3,
+            },
+            "empty location_uri",
+        ),
+        (
+            {
+                "location_uri": S3_FILE,
+                "asset_type": AssetType.file,
+                "storage_platform": StoragePlatform.other,
+            },
+            "unsupported platform",
+        ),
+        (
+            {
+                "location_uri": S3_FILE,
+                "asset_type": AssetType.file,
+                "storage_platform": None,
+            },
+            "missing platform",
+        ),
+        (
+            {
+                "location_uri": S3_FILE,
+                "asset_type": AssetType.file,
+                "storage_platform": StoragePlatform.s3,
+                "s3_client": None,
+            },
+            "no s3_client for an S3 asset",
+        ),
+    ],
+)
+def test_every_skip_reason_emits_a_checksum_warning(kwargs, why):
+    """A caller escalating ChecksumWarning to an error must catch all of them.
+
+    Previously some skips went to the root logger instead, so
+    warnings.simplefilter("error", ChecksumWarning) silently missed them.
+    """
+    with pytest.warns(ChecksumWarning):
+        result = for_location(**kwargs)
+    assert not result, why
+    assert result.value is None
+
+
+def test_skips_can_be_escalated_to_exceptions():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ChecksumWarning)
+        with pytest.raises(ChecksumWarning):
+            for_location(S3_FILE, AssetType.file, StoragePlatform.other)
+
+
+# ── Input is not mutated ──────────────────────────────────────────────────────
+
+
+@patch(
+    "catalog_client.utils.checksum.generate.compute_checksum_localfs",
+    return_value=make_result(LOCAL_FILE, Algorithm.blake3, HASH),
+)
+def test_for_assets_returns_copies_and_leaves_input_untouched(mock_compute, mock_s3):
+    asset = make_asset(LOCAL_FILE, AssetType.file, StoragePlatform.sf_hpc)
+
+    result = for_assets([asset], s3_client=mock_s3)
+
+    assert asset.checksum is None, "caller's object must not be modified"
+    assert asset.checksum_alg is None
+    assert result[0] is not asset
+    assert result[0].checksum == HASH
+
+
+def test_for_assets_preserves_the_concrete_asset_type(mock_s3):
+    """model_copy keeps DataAssetResponse a DataAssetResponse."""
+    asset = DataAssetResponse(
+        location_uri=LOCAL_FILE,
+        asset_type=AssetType.file,
+        id="asset-1",
+        tombstoned=False,
+        created_at="2026-01-01T00:00:00Z",
+        last_modified_at="2026-01-01T00:00:00Z",
+        dataset_id="dataset-1",
+    )
+    with pytest.warns(ChecksumWarning):
+        result = for_assets([asset], s3_client=mock_s3)
+    assert isinstance(result[0], DataAssetResponse)
+
+
+# ── Default algorithm ─────────────────────────────────────────────────────────
+
+
+@patch("catalog_client.utils.checksum.generate.compute_checksum_localfs")
+def test_no_algorithm_uses_the_resolved_default(mock_compute, mock_s3):
+    """Not hard-coded blake3: on a base install the default is blake2b."""
+    mock_compute.return_value = make_result(LOCAL_FILE, default_algorithm(), HASH)
+    asset = make_asset(LOCAL_FILE, AssetType.file, StoragePlatform.sf_hpc)
+
+    for_assets([asset], s3_client=mock_s3)
+
+    assert mock_compute.call_args.kwargs["algorithm"] == default_algorithm()

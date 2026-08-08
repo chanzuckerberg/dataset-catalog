@@ -1,13 +1,19 @@
 """Utility modules for catalog client."""
 
+# The checksum entry points (for_assets, for_location, compute_checksum) are
+# deliberately NOT re-exported here: those names say nothing about checksums
+# once they sit beside the manifest helpers. Import them from their own
+# namespace instead:
+#
+#     from catalog_client.utils.checksum import for_assets
+#
+# The types below are re-exported because they are checksum-specific by name
+# and appear in user annotations and warning filters.
 from catalog_client.utils.checksum import (
     Algorithm,
     ChecksumResult,
     ChecksumWarning,
     LocationChecksum,
-    compute_checksum,
-    for_assets,
-    for_location,
 )
 from catalog_client.utils.manifest import (
     FieldFilter,
@@ -27,9 +33,6 @@ __all__ = [
     "ChecksumResult",
     "ChecksumWarning",
     "LocationChecksum",
-    "compute_checksum",
-    "for_location",
-    "for_assets",
     # Manifest
     "FieldFilter",
     "FilterCondition",

@@ -10,6 +10,7 @@ import pytest
 
 from catalog_client.utils.checksum.algorithm import Algorithm
 from catalog_client.utils.checksum.hashing import (
+    compute_checksum,
     compute_checksum_localfs,
     compute_checksum_s3,
 )
@@ -349,3 +350,100 @@ def test_localfs_directory_hash_changes_with_content(tmp_path):
     result_after = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
 
     assert result_before.merkle_root != result_after.merkle_root
+
+
+# ── compute_checksum — the public dispatcher ─────────────────────────────────
+
+
+@pytest.mark.parametrize("scheme", ["s3://", "s3a://"])
+def test_compute_checksum_routes_both_s3_schemes_to_s3(scheme):
+    s3 = _s3()
+    compute_checksum(
+        f"{scheme}{BUCKET}/{FILE_KEY}", Algorithm.blake3, s3, use_stored=False
+    )
+    s3.get_object.assert_called_once_with(Bucket=BUCKET, Key=FILE_KEY)
+
+
+def test_compute_checksum_routes_local_paths_to_the_filesystem(tmp_path):
+    f = tmp_path / "file.bin"
+    f.write_bytes(b"local bytes")
+    result = compute_checksum(str(f), Algorithm.blake3)
+    assert result.path == str(f)
+    assert not result.is_directory
+
+
+def test_compute_checksum_routes_local_directories_to_the_filesystem(tmp_path):
+    (tmp_path / "child.bin").write_bytes(b"x")
+    assert compute_checksum(str(tmp_path), Algorithm.blake3).is_directory
+
+
+def test_compute_checksum_is_folder_overrides_the_trailing_slash_guess():
+    # A folder whose URI lacks the slash must still be listed as a prefix,
+    # not fetched as a single object.
+    s3 = _s3_prefix(keys=[f"{PREFIX}a.h5ad"], body=b"data")
+    result = compute_checksum(
+        f"s3://{BUCKET}/data/folder",
+        Algorithm.blake3,
+        s3,
+        use_stored=False,
+        is_folder=True,
+    )
+    s3.get_paginator.assert_called_once_with("list_objects_v2")
+    assert result.is_directory
+
+
+def test_compute_checksum_is_folder_false_forces_object_fetch():
+    # Conversely, a key that ends in a slash but is genuinely an object.
+    s3 = _s3()
+    compute_checksum(
+        f"s3://{BUCKET}/{PREFIX}",
+        Algorithm.blake3,
+        s3,
+        use_stored=False,
+        is_folder=False,
+    )
+    s3.get_object.assert_called_once_with(Bucket=BUCKET, Key=PREFIX)
+
+
+def test_compute_checksum_s3_normalises_a_slashless_prefix():
+    # Listing must be confined to "data/folder/", not everything starting
+    # with "data/folder".
+    s3 = _s3_prefix(keys=[f"{PREFIX}a.h5ad"], body=b"data")
+    compute_checksum_s3(
+        f"s3://{BUCKET}/data/folder",
+        Algorithm.blake3,
+        s3,
+        use_stored=False,
+        is_folder=True,
+    )
+    paginator = s3.get_paginator.return_value
+    assert paginator.paginate.call_args.kwargs["Prefix"] == PREFIX
+
+
+# ── Directory results and S3 composite semantics ─────────────────────────────
+
+
+def test_s3_composite_base64_rejected_for_directories(tmp_path):
+    """A directory Merkle root is not an S3 multipart composite checksum."""
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.crc32)
+    with pytest.raises(ValueError, match="not defined for directory"):
+        _ = result.s3_composite_base64
+
+
+def test_s3_composite_base64_available_for_files(tmp_path):
+    f = tmp_path / "f.bin"
+    f.write_bytes(b"data")
+    assert compute_checksum_localfs(str(f), Algorithm.crc32).s3_composite_base64
+
+
+def test_content_digest_is_file_hash_for_files(tmp_path):
+    f = tmp_path / "f.bin"
+    f.write_bytes(b"data")
+    result = compute_checksum_localfs(str(f), Algorithm.blake3)
+    assert result.content_digest == result.file_hash
+
+
+def test_content_digest_is_well_defined_for_directories(tmp_path):
+    (tmp_path / "f.bin").write_bytes(b"data")
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+    assert result.content_digest == result.file_hash == result.merkle_root

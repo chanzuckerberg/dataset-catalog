@@ -47,6 +47,22 @@ class ChecksumResult:
         return base64.b64encode(bytes.fromhex(hexcode)).decode()
 
     @property
+    def content_digest(self) -> str:
+        """
+        The canonical digest identifying this node's content.
+
+        This single value serves both roles: it is what a standalone asset
+        reports, and it is what a child contributes to its parent directory.
+        Because both paths read the same field, a file hashes to the same
+        string whether it is checksummed on its own or as part of a folder —
+        and a stored S3 checksum is directly comparable to a computed one.
+
+        For directories file_hash and merkle_root are the same digest, so this
+        is well-defined for files and folders alike.
+        """
+        return self.file_hash
+
+    @property
     def s3_base64(self) -> str:
         """
         Base64-encoded file_hash bytes — the format S3 expects for checksum
@@ -60,5 +76,14 @@ class ChecksumResult:
         """
         Base64-encoded merkle_root bytes.
         Can be used for CompleteMultipartUpload when chunks > 1.
+
+        Only meaningful for file results. On a directory result merkle_root is
+        a Merkle root over named children, which is not an S3 composite
+        checksum — S3 composites cover ordered, unnamed parts.
         """
+        if self.is_directory:
+            raise ValueError(
+                "s3_composite_base64 is not defined for directory results: "
+                "a directory Merkle root is not an S3 multipart composite checksum"
+            )
         return self._to_base64(self.merkle_root)

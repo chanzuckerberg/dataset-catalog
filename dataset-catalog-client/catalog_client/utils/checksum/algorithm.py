@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Protocol
 
 try:  # Optional: crcmod is only needed for crc64
-    import crcmod.predefined
+    import crcmod
 
     _HAS_CRCMOD = True
 except ImportError:
@@ -36,12 +36,24 @@ class Algorithm(StrEnum):
     crc64nvme = "crc64nvme"
 
 
-class _Hasher(Protocol):
-    def update(self, data: bytes) -> None:
-        pass
+def default_algorithm() -> Algorithm:
+    """
+    The algorithm used when the caller does not name one and no stored S3
+    checksum is available.
 
-    def hexdigest(self) -> str:
-        pass
+    blake3 is preferred, but it ships in the optional `checksum` extra. Rather
+    than failing every default call on a base install, fall back to blake2b,
+    which is stdlib and therefore always importable. The chosen algorithm is
+    always recorded alongside the digest (DataAssetRequest.checksum_alg), so
+    values stay self-describing across installs.
+    """
+    return Algorithm.blake3 if _HAS_BLAKE3 else Algorithm.blake2b
+
+
+class _Hasher(Protocol):
+    def update(self, data: bytes) -> None: ...
+
+    def hexdigest(self) -> str: ...
 
 
 class _CryptoHasher:
@@ -86,18 +98,27 @@ class _CRC64BaseHasher:
 
 _CRC64_FN: Callable[[bytes, int], int] | None = None
 
+# CRC-64/ECMA-182, given to crcmod with the implicit top bit set.
+# NOT crcmod.predefined "crc-64", which is a different variant (reflected,
+# polynomial 0x1B) whose check value is 0x46A5A9388A5BEFFE rather than
+# ECMA-182's 0x6C40DF5F0B497347 — see tests/utils/checksum/test_algorithm.py.
+_CRC64_ECMA182_POLY = 0x142F0E1EBA9EA3693
+
 
 def _crc64_fn() -> Callable[[bytes, int], int]:
     """Build the CRC64/ECMA-182 function once, on first use.
 
     Built lazily rather than at import time so that importing catalog_client
     does not require the optional crcmod package.
+
+    initCrc=0 and xorOut=0 are what make chained calls — fn(data, previous) —
+    accumulate correctly, which is how every multi-buffer read is hashed.
     """
     global _CRC64_FN
     if _CRC64_FN is None:
         if not _HAS_CRCMOD:
             raise ImportError("crc64 requires the crcmod package: pip install crcmod")
-        _CRC64_FN = crcmod.predefined.mkCrcFun("crc-64")
+        _CRC64_FN = crcmod.mkCrcFun(_CRC64_ECMA182_POLY, initCrc=0, rev=False, xorOut=0)
     return _CRC64_FN
 
 
@@ -108,7 +129,8 @@ class _CRC64Hasher(_CRC64BaseHasher):
     Raises ImportError at instantiation if crcmod is not installed.
 
     Spec: https://ecma-international.org/publications-and-standards/standards/ecma-182/
-    Polynomial: 0x42F0E1EBA9EA3693
+    Polynomial: 0x42F0E1EBA9EA3693 (non-reflected)
+    Check value: CRC64("123456789") == 0x6C40DF5F0B497347
     """
 
     def __init__(self) -> None:
@@ -163,6 +185,37 @@ def hash_bytes_independent(data: bytes, algorithm: Algorithm) -> str:
     h = new_hasher(algorithm)
     h.update(data)
     return h.hexdigest()
+
+
+# Hex-digest width per algorithm. A digest of the wrong width cannot be packed
+# into the raw bytes a parent directory combines, so widths are checked at the
+# point a digest enters the system rather than failing later inside struct.pack.
+DIGEST_HEX_LENGTH: dict[Algorithm, int] = {
+    Algorithm.blake3: 64,  # 32 bytes
+    Algorithm.blake2b: 128,  # 64 bytes
+    Algorithm.crc32: 8,  # 4 bytes
+    Algorithm.crc64: 16,  # 8 bytes
+    Algorithm.crc64nvme: 16,  # 8 bytes
+}
+
+
+def is_valid_digest(hex_digest: str, algorithm: Algorithm) -> bool:
+    """
+    Whether hex_digest is a usable digest for this algorithm.
+
+    Rejects anything that is not hex of the algorithm's exact width. A value
+    that fails this check cannot participate in a folder digest, so admitting
+    it would make a file's checksum depend on whether it was hashed standalone
+    or as a folder child.
+    """
+    expected = DIGEST_HEX_LENGTH.get(algorithm)
+    if expected is None or len(hex_digest) != expected:
+        return False
+    try:
+        int(hex_digest, 16)
+    except ValueError:
+        return False
+    return True
 
 
 def raw_from_hex(hex_digest: str, algorithm: Algorithm) -> bytes:

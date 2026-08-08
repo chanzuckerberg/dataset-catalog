@@ -5,12 +5,15 @@ shapes through moto, so they cover the wiring that tests/utils/checksum/test_gen
 deliberately mocks out (metadata key casing, HeadObject response fields, error types).
 """
 
+import hashlib
+
 import boto3
 import pytest
 from moto import mock_aws
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils import checksum as checksums
+from catalog_client.utils.checksum.algorithm import DIGEST_HEX_LENGTH, Algorithm
 from catalog_client.utils.checksum.models import ChecksumResult
 from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
@@ -21,6 +24,22 @@ from catalog_client.utils.checksum.s3 import (
 
 BUCKET = "test-bucket"
 HEX64 = "aa" * 32  # a valid blake3-length hex digest
+
+
+def hex64(seed: str) -> str:
+    """A distinct but well-formed 64-char (blake3-width) hex digest.
+
+    Stored checksums must be hex of the algorithm's exact width — placeholder
+    strings like "hash_b3" are rejected at read time — so tests that only need
+    "some digest" derive one deterministically from a label.
+    """
+    return hashlib.blake2b(seed.encode(), digest_size=32).hexdigest()
+
+
+def hex_for(seed: str, algorithm: Algorithm) -> str:
+    """A well-formed digest of the right width for `algorithm`."""
+    width = DIGEST_HEX_LENGTH[algorithm]
+    return hashlib.blake2b(seed.encode(), digest_size=width // 2).hexdigest()
 
 
 @pytest.fixture
@@ -96,31 +115,33 @@ class TestFetchAllS3StoredChecksums:
             assert algo not in result
 
     def test_metadata_checksums_with_merkle(self, s3):
+        file_hash, merkle = hex64("file"), hex64("merkle")
         s3.put_object(
             Bucket=BUCKET,
             Key="meta.txt",
             Body=b"data",
             Metadata={
-                "x-checksum-blake3": "abc123",
-                "x-checksum-blake3-merkle": "def456",
+                "x-checksum-blake3": file_hash,
+                "x-checksum-blake3-merkle": merkle,
             },
         )
 
         result = _fetch_all_s3_stored_checksums(BUCKET, "meta.txt", s3)
-        assert result["blake3"].file_hash == "abc123"
-        assert result["blake3"].merkle_root == "def456"
+        assert result["blake3"].file_hash == file_hash
+        assert result["blake3"].merkle_root == merkle
         assert result["blake3"].source == "s3_metadata"
 
     def test_metadata_without_merkle_uses_file_hash(self, s3):
+        digest = hex_for("crc64-value", Algorithm.crc64)
         s3.put_object(
             Bucket=BUCKET,
             Key="meta.txt",
             Body=b"data",
-            Metadata={"x-checksum-crc64": "aabbccdd"},
+            Metadata={"x-checksum-crc64": digest},
         )
 
         result = _fetch_all_s3_stored_checksums(BUCKET, "meta.txt", s3)
-        assert result["crc64"].merkle_root == "aabbccdd"
+        assert result["crc64"].merkle_root == digest
 
     def test_nonexistent_object_returns_empty(self, s3):
         assert _fetch_all_s3_stored_checksums(BUCKET, "missing.txt", s3) == {}
@@ -131,14 +152,65 @@ class TestFetchAllS3StoredChecksums:
             Key="multi.txt",
             Body=b"data",
             Metadata={
-                "x-checksum-blake3": "hash_b3",
-                "x-checksum-blake2b": "hash_b2",
+                "x-checksum-blake3": hex_for("b3", Algorithm.blake3),
+                "x-checksum-blake2b": hex_for("b2", Algorithm.blake2b),
             },
         )
 
         result = _fetch_all_s3_stored_checksums(BUCKET, "multi.txt", s3)
         assert "blake3" in result
         assert "blake2b" in result
+
+    @pytest.mark.parametrize(
+        "bad_value, why",
+        [
+            ("not-hex-at-all", "non-hex characters"),
+            ("aabb", "hex but far too short for blake3"),
+            ("aa" * 64, "hex but too long for blake3"),
+        ],
+    )
+    def test_malformed_metadata_digest_is_ignored(self, s3, bad_value, why):
+        """A stored value that is not a well-formed digest is not usable.
+
+        It could not be packed into a parent folder's Merkle root, so admitting
+        it would make a file's checksum depend on whether it was hashed alone
+        or as a folder child. It is dropped at read time instead.
+        """
+        s3.put_object(
+            Bucket=BUCKET,
+            Key="bad.txt",
+            Body=b"data",
+            Metadata={"x-checksum-blake3": bad_value},
+        )
+
+        result = _fetch_all_s3_stored_checksums(BUCKET, "bad.txt", s3)
+        assert "blake3" not in result, why
+
+    def test_one_bad_value_does_not_discard_the_others(self, s3):
+        """A single unreadable checksum must not hide the object's good ones."""
+        good = hex_for("b2", Algorithm.blake2b)
+        s3.put_object(
+            Bucket=BUCKET,
+            Key="mixed.txt",
+            Body=b"data",
+            Metadata={
+                "x-checksum-blake3": "garbage",
+                "x-checksum-blake2b": good,
+            },
+        )
+
+        result = _fetch_all_s3_stored_checksums(BUCKET, "mixed.txt", s3)
+        assert "blake3" not in result
+        assert result["blake2b"].file_hash == good
+
+    def test_non_missing_error_is_raised_not_swallowed(self, s3):
+        """An access error is a real problem, not "this object has no checksum".
+
+        Swallowing it would silently trigger a full download, or a silent skip
+        under compute_if_no_s3_checksum=False.
+        """
+        with pytest.raises(Exception, match="NoSuchBucket|AccessDenied|404"):
+            _fetch_all_s3_stored_checksums("no-such-bucket-here", "k.txt", s3)
 
 
 # ── Folder Common Algorithm Detection ──────────────────────────────────────────
@@ -151,7 +223,7 @@ class TestFindCommonAlgorithmInFolder:
                 Bucket=BUCKET,
                 Key=f"dataset/{name}",
                 Body=b"data",
-                Metadata={"x-checksum-blake3": f"hash_{name}"},
+                Metadata={"x-checksum-blake3": hex64(name)},
             )
 
         algo, per_child = _find_common_algorithm_in_folder(
@@ -195,15 +267,15 @@ class TestFindCommonAlgorithmInFolder:
             Key="dataset/a.txt",
             Body=b"data",
             Metadata={
-                "x-checksum-blake3": "hash_b3",
-                "x-checksum-crc64": "hash_c64",
+                "x-checksum-blake3": hex_for("b3", Algorithm.blake3),
+                "x-checksum-crc64": hex_for("c64-a", Algorithm.crc64),
             },
         )
         s3.put_object(
             Bucket=BUCKET,
             Key="dataset/b.txt",
             Body=b"data",
-            Metadata={"x-checksum-crc64": "hash_c64_b"},
+            Metadata={"x-checksum-crc64": hex_for("c64-b", Algorithm.crc64)},
         )
 
         algo, per_child = _find_common_algorithm_in_folder(
@@ -325,16 +397,17 @@ class TestGenerateForAssetsS3:
         Covers real S3 metadata key casing: S3 lowercases user metadata keys, which
         the s3.py lookup depends on.
         """
+        stored = hex_for("stored", Algorithm.blake3)
         s3.put_object(
             Bucket=BUCKET,
             Key="file.txt",
             Body=b"data",
-            Metadata={"x-checksum-blake3": "stored_hash_value"},
+            Metadata={"x-checksum-blake3": stored},
         )
 
         assets = [make_asset(f"s3://{BUCKET}/file.txt")]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
-        assert result[0].checksum == "stored_hash_value"
+        assert result[0].checksum == stored
         assert result[0].checksum_alg == "blake3"
 
     def test_auto_detect_file_falls_back_to_blake3(self, s3, monkeypatch):
