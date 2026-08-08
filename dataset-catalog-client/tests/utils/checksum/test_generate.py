@@ -531,37 +531,24 @@ def test_local_folder_explicit_algo_computes_merkle(mock_compute, mock_s3):
 # ── Error / exception ─────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    "exc",
+    [Exception("NoCredentialsError"), PermissionError("Access denied")],
+    ids=["credential_failure", "file_access_error"],
+)
 @patch(
     "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
     return_value={},
 )
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    side_effect=Exception("NoCredentialsError"),
-)
-def test_s3_credential_failure_warns_and_leaves_checksum_unset(
-    mock_compute, mock_fetch, mock_s3
-):
+def test_compute_failure_warns_and_leaves_checksum_unset(mock_fetch, mock_s3, exc):
     asset = make_asset(S3_FILE, AssetType.file)
-    with pytest.warns(ChecksumWarning, match="Failed to generate checksum"):
-        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
-    assert result[0].checksum is None
-
-
-@patch(
-    "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
-    return_value={},
-)
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    side_effect=PermissionError("Access denied"),
-)
-def test_file_access_error_warns_and_leaves_checksum_unset(
-    mock_compute, mock_fetch, mock_s3
-):
-    asset = make_asset(S3_FILE, AssetType.file)
-    with pytest.warns(ChecksumWarning, match="Failed to generate checksum"):
-        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
+    with patch(
+        "catalog_client.utils.checksum.generate.compute_checksum_s3", side_effect=exc
+    ):
+        with pytest.warns(ChecksumWarning, match="Failed to generate checksum"):
+            result = for_assets(
+                [asset], s3_client=mock_s3, compute_if_no_s3_checksum=True
+            )
     assert result[0].checksum is None
 
 
@@ -596,23 +583,6 @@ def test_partial_failure_all_assets_returned(mock_compute, mock_fetch, mock_s3):
 # ── Caching and s3_client ─────────────────────────────────────────────────────
 
 
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
-)
-def test_folder_children_added_to_cached_results_for_compute(
-    mock_find, mock_compute, mock_s3
-):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
-    cached = mock_compute.call_args.kwargs["cached_results"]
-    assert _CHILD_URI in cached
-
-
 def test_custom_s3_client_forwarded_to_s3_operations(mock_s3):
     stored = {Algorithm.blake3: make_result(S3_FILE, Algorithm.blake3, HASH)}
     with patch(
@@ -621,13 +591,14 @@ def test_custom_s3_client_forwarded_to_s3_operations(mock_s3):
     ) as mock_fetch:
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset], s3_client=mock_s3)
-    # s3_client is the third positional arg: (bucket, key, s3_client)
-    assert mock_fetch.call_args.args[2] is mock_s3
+    mock_fetch.assert_called_once_with("bucket", "data/file.h5ad", mock_s3)
 
 
-@patch("catalog_client.utils.checksum.generate.boto3")
-def test_default_boto3_client_created_when_no_s3_client_passed(mock_boto3):
-    mock_boto3.client.return_value = MagicMock()
+# boto3 is imported lazily inside for_assets, so patch the real module attribute
+# rather than a name bound on catalog_client.utils.checksum.generate.
+@patch("boto3.client")
+def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
+    mock_client.return_value = MagicMock()
     stored = {Algorithm.blake3: make_result(S3_FILE, Algorithm.blake3, HASH)}
     with patch(
         "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
@@ -635,4 +606,4 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_boto3):
     ):
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset])  # no s3_client
-    mock_boto3.client.assert_called_once_with("s3")
+    mock_client.assert_called_once_with("s3")

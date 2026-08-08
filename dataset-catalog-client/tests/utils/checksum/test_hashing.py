@@ -6,6 +6,8 @@ S3 tests use a MagicMock client; local tests use real I/O via tmp_path.
 import io
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from catalog_client.utils.checksum.algorithm import Algorithm
 from catalog_client.utils.checksum.hashing import (
     compute_checksum_localfs,
@@ -23,13 +25,12 @@ PREFIX_URI = f"s3://{BUCKET}/{PREFIX}"
 HEX64 = "ab" * 32  # valid 64-char hex (blake3 length)
 
 
-def _make_result(path, algorithm=Algorithm.blake3, source="computed"):
+def _make_result(path):
     return ChecksumResult(
         path=path,
-        algorithm=algorithm,
+        algorithm=Algorithm.blake3,
         file_hash=HEX64,
         merkle_root=HEX64,
-        source=source,
     )
 
 
@@ -232,31 +233,20 @@ def test_localfs_single_chunk_streaming_hash_equals_chunk_hash(tmp_path):
     assert result.file_hash == result.chunks[0].hash
 
 
+@pytest.mark.parametrize("algorithm", [Algorithm.crc32, Algorithm.blake2b])
 @patch("catalog_client.utils.checksum.hashing.READ_BUFFER", 4)
 @patch("catalog_client.utils.checksum.hashing.CHUNK_SIZE", 4)
-def test_localfs_multi_chunk_crc_streaming_hash_differs_from_chunk_and_merkle(tmp_path):
-    # CRC multi-chunk: file_hash = streaming CRC of full data (one pass);
-    # chunks[0].hash = CRC of first chunk only → differs from file_hash;
-    # merkle_root = CRC of concatenated packed chunk CRC integers → also differs.
+def test_localfs_multi_chunk_file_hash_differs_from_chunk_and_merkle(
+    tmp_path, algorithm
+):
+    # Multi-chunk, both algorithm families: file_hash covers the whole byte stream in
+    # one pass, chunks[0].hash covers only the first chunk, and merkle_root is computed
+    # over the concatenated raw chunk digests (packed CRC ints for CRCs, raw hash bytes
+    # for crypto) — so all three differ.
     # READ_BUFFER is patched so each 4-byte read triggers a chunk flush.
     f = tmp_path / "data.bin"
     f.write_bytes(b"hello world")  # 11 bytes → chunks: b"hell", b"o wo", b"rld"
-    result = compute_checksum_localfs(str(f), Algorithm.crc32)
-    assert len(result.chunks) == 3
-    assert result.file_hash != result.chunks[0].hash
-    assert result.file_hash != result.merkle_root
-
-
-@patch("catalog_client.utils.checksum.hashing.READ_BUFFER", 4)
-@patch("catalog_client.utils.checksum.hashing.CHUNK_SIZE", 4)
-def test_localfs_multi_chunk_crypto_streaming_hash_differs_from_chunk_and_merkle(
-    tmp_path,
-):
-    # Crypto multi-chunk: file_hash = hash of full byte stream;
-    # merkle_root = hash of concatenated raw chunk hashes — both differ from chunks[0].hash.
-    f = tmp_path / "data.bin"
-    f.write_bytes(b"hello world")
-    result = compute_checksum_localfs(str(f), Algorithm.blake2b)
+    result = compute_checksum_localfs(str(f), algorithm)
     assert len(result.chunks) == 3
     assert result.file_hash != result.chunks[0].hash
     assert result.file_hash != result.merkle_root

@@ -1,14 +1,17 @@
-import io
 import os
-import struct
 
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
     hash_bytes_independent,
     new_hasher,
+    raw_from_hex,
 )
 from catalog_client.utils.checksum.models import CHUNK_SIZE, ChecksumResult, ChunkRecord
-from catalog_client.utils.checksum.s3 import _fetch_s3_stored_checksum, _parse_s3_uri
+from catalog_client.utils.checksum.s3 import (
+    _fetch_s3_stored_checksum,
+    _insert_key,
+    _parse_s3_uri,
+)
 
 READ_BUFFER = 64 * 1024  # 64KB I/O buffer
 
@@ -43,17 +46,29 @@ def _combine_child_digests(raw_digests: list[bytes], algorithm: Algorithm) -> st
     return hash_bytes_independent(combined, algorithm)
 
 
-def _raw_from_hex(hex_digest: str, algorithm: Algorithm) -> bytes:
+def _directory_result(
+    path: str, children: dict[str, ChecksumResult], algorithm: Algorithm
+) -> ChecksumResult:
     """
-    Convert a hex digest back to the raw bytes used for combining.
-    For CRCs this is the integer packed as big-endian bytes, not raw hex decode.
+    Build the tree node for a directory (local or S3 prefix) from its children.
+
+    Each child contributes its name bytes plus the raw bytes of its merkle_root,
+    so a rename changes the parent digest even when file contents are identical.
     """
-    if algorithm == "crc32":
-        return struct.pack(">I", int(hex_digest, 16))
-    elif algorithm in ("crc64", "crc64nvme"):
-        return struct.pack(">Q", int(hex_digest, 16))
-    else:
-        return bytes.fromhex(hex_digest)
+    child_raw = [
+        name.encode() + raw_from_hex(child.merkle_root, algorithm)
+        for name, child in children.items()
+    ]
+    digest = _combine_child_digests(child_raw, algorithm)
+
+    return ChecksumResult(
+        path=path,
+        algorithm=algorithm,
+        file_hash=digest,
+        merkle_root=digest,
+        is_directory=True,
+        children=children,
+    )
 
 
 def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
@@ -69,44 +84,42 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
     the composite (merkle_root) is the S3-style CRC of concatenated chunk CRCs.
     """
     file_hasher = new_hasher(algorithm)
+    chunk_hasher = new_hasher(algorithm)
     chunks: list[ChunkRecord] = []
     offset = 0
-    part = 0
+    chunk_len = 0
 
-    buf = io.BytesIO()
-    buf_len = 0
-
-    def flush_chunk(data: bytes) -> None:
-        nonlocal offset, part
-        chunk_hex = hash_bytes_independent(data, algorithm)
+    def close_chunk() -> None:
+        """Record the chunk accumulated so far and start a fresh chunk hasher."""
+        nonlocal chunk_hasher, offset, chunk_len
         chunks.append(
             ChunkRecord(
-                index=part,
+                index=len(chunks),
                 offset=offset,
-                size=len(data),
-                hash=chunk_hex,
+                size=chunk_len,
+                hash=chunk_hasher.hexdigest(),
             )
         )
-        file_hasher.update(data)
-        offset += len(data)
-        part += 1
+        offset += chunk_len
+        chunk_len = 0
+        chunk_hasher = new_hasher(algorithm)
 
+    # Both hashers are fed incrementally, so no chunk is ever held in memory:
+    # peak usage is one READ_BUFFER regardless of CHUNK_SIZE. Chunk boundaries
+    # land exactly where a buffered implementation would put them.
     for raw in _iter_stream(stream):
-        buf.write(raw)
-        buf_len += len(raw)
-        if buf_len >= CHUNK_SIZE:
-            flush_chunk(buf.getvalue())
-            buf.seek(0)
-            buf.truncate()
-            buf_len = 0
+        file_hasher.update(raw)
+        chunk_hasher.update(raw)
+        chunk_len += len(raw)
+        if chunk_len >= CHUNK_SIZE:
+            close_chunk()
 
-    tail = buf.getvalue()
-    if tail:
-        flush_chunk(tail)
+    if chunk_len:
+        close_chunk()
 
-    # Use _raw_from_hex so CRC algorithms produce 4/8-byte packed ints
+    # Use raw_from_hex so CRC algorithms produce 4/8-byte packed ints
     # while crypto algorithms produce raw hash bytes
-    chunk_raws = [_raw_from_hex(c.hash, algorithm) for c in chunks]
+    chunk_raws = [raw_from_hex(c.hash, algorithm) for c in chunks]
     merkle_root = _combine_child_digests(chunk_raws, algorithm)
 
     return ChecksumResult(
@@ -114,7 +127,6 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
         algorithm=algorithm,
         file_hash=file_hasher.hexdigest(),
         merkle_root=merkle_root,
-        chunk_size=CHUNK_SIZE,
         chunks=chunks,
     )
 
@@ -137,21 +149,7 @@ def _hash_local_dir(path: str, algorithm: Algorithm) -> ChecksumResult:
         elif entry.is_dir():
             children[entry.name] = _hash_local_dir(entry.path, algorithm)
 
-    # Each internal node: name bytes + child merkle_root raw bytes
-    child_raw = [
-        name.encode() + _raw_from_hex(child.merkle_root, algorithm)
-        for name, child in children.items()
-    ]
-    digest = _combine_child_digests(child_raw, algorithm)
-
-    return ChecksumResult(
-        path=path,
-        algorithm=algorithm,
-        file_hash=digest,
-        merkle_root=digest,
-        is_directory=True,
-        children=children,
-    )
+    return _directory_result(path, children, algorithm)
 
 
 # ── S3 ──────────────────────────────────────────────────────────────────────────
@@ -189,14 +187,6 @@ def _hash_s3_file(
     return _hash_stream(resp["Body"], algorithm, path)
 
 
-def insert(tree: dict, parts: list[str], s3_key: str) -> None:
-    if len(parts) == 1:
-        tree[parts[0]] = ("file", s3_key)
-    else:
-        tree.setdefault(parts[0], {})
-        insert(tree[parts[0]], parts[1:], s3_key)
-
-
 def _hash_s3_prefix(
     bucket: str,
     prefix: str,
@@ -216,7 +206,7 @@ def _hash_s3_prefix(
 
     tree: dict = {}
     for key in keys:
-        insert(tree, key[len(prefix) :].split("/"), key)
+        _insert_key(tree, key[len(prefix) :].split("/"), key)
 
     def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
         children: dict[str, ChecksumResult] = {}
@@ -233,20 +223,7 @@ def _hash_s3_prefix(
             elif isinstance(value, dict):
                 children[name] = hash_tree(value, f"{virtual_path}{name}/")
 
-        child_raw = [
-            name.encode() + _raw_from_hex(child.merkle_root, algorithm)
-            for name, child in children.items()
-        ]
-        digest = _combine_child_digests(child_raw, algorithm)
-
-        return ChecksumResult(
-            path=f"s3://{bucket}/{virtual_path}",
-            algorithm=algorithm,
-            file_hash=digest,
-            merkle_root=digest,
-            is_directory=True,
-            children=children,
-        )
+        return _directory_result(f"s3://{bucket}/{virtual_path}", children, algorithm)
 
     return hash_tree(tree, prefix)
 

@@ -33,6 +33,20 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     raise ValueError(f"Not an S3 URI: {uri}")
 
 
+def _insert_key(tree: dict, parts: list[str], s3_key: str) -> None:
+    """
+    Insert an S3 key into a nested dict keyed by path segment.
+
+    Leaves are ("file", s3_key) tuples; interior nodes are dicts. Lets a flat
+    list_objects_v2 listing be walked as a virtual directory tree.
+    """
+    if len(parts) == 1:
+        tree[parts[0]] = ("file", s3_key)
+    else:
+        tree.setdefault(parts[0], {})
+        _insert_key(tree[parts[0]], parts[1:], s3_key)
+
+
 def _select_best_algorithm(algorithms: set[Algorithm]) -> Algorithm | None:
     """Select the highest-priority algorithm from a set of algorithm names."""
     if not algorithms:

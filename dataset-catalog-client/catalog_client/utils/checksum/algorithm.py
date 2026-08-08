@@ -3,7 +3,7 @@ import struct
 import zlib
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 try:  # Optional: crcmod is only needed for crc64
     import crcmod.predefined
@@ -36,20 +36,11 @@ class Algorithm(StrEnum):
     crc64nvme = "crc64nvme"
 
 
-CRC_ALGORITHMS: set[Algorithm] = {Algorithm.crc32, Algorithm.crc64, Algorithm.crc64nvme}
-CRYPTO_ALGORITHMS: set[Algorithm] = {Algorithm.blake3, Algorithm.blake2b}
-
-
-@runtime_checkable
 class _Hasher(Protocol):
     def update(self, data: bytes) -> None:
         pass
 
     def hexdigest(self) -> str:
-        pass
-
-    def raw(self) -> bytes:
-        """Returns the digest as raw bytes for use when combining chunk digests."""
         pass
 
 
@@ -64,9 +55,6 @@ class _CryptoHasher:
 
     def hexdigest(self) -> str:
         return self._h.hexdigest()
-
-    def raw(self) -> bytes:
-        return bytes.fromhex(self._h.hexdigest())
 
 
 class _CRC32Hasher:
@@ -85,9 +73,6 @@ class _CRC32Hasher:
     def hexdigest(self) -> str:
         return f"{self._crc:08x}"
 
-    def raw(self) -> bytes:
-        return struct.pack(">I", self._crc)
-
 
 class _CRC64BaseHasher:
     """Shared base for 64-bit CRC hashers (ECMA-182 and NVMe)."""
@@ -97,9 +82,6 @@ class _CRC64BaseHasher:
 
     def hexdigest(self) -> str:
         return f"{self._crc:016x}"
-
-    def raw(self) -> bytes:
-        return struct.pack(">Q", self._crc)
 
 
 _CRC64_FN: Callable[[bytes, int], int] | None = None
@@ -159,19 +141,19 @@ class _CRC64NVMEHasher(_CRC64BaseHasher):
 
 
 def new_hasher(algorithm: Algorithm) -> _Hasher:
-    if algorithm == "blake3":
+    if algorithm == Algorithm.blake3:
         if not _HAS_BLAKE3:
             raise ImportError("blake3 package required: pip install blake3")
         return _CryptoHasher(_blake3.blake3())  # type: ignore[union-attr]
-    elif algorithm == "blake2b":
-        """cryptographic hash (RFC 7693); combine chunks via Merkle tree.
-        Spec: https://www.rfc-editor.org/rfc/rfc7693"""
+    elif algorithm == Algorithm.blake2b:
+        # Cryptographic hash (RFC 7693); combine chunks via Merkle tree.
+        # Spec: https://www.rfc-editor.org/rfc/rfc7693
         return _CryptoHasher(hashlib.blake2b())
-    elif algorithm == "crc32":
+    elif algorithm == Algorithm.crc32:
         return _CRC32Hasher()
-    elif algorithm == "crc64":
+    elif algorithm == Algorithm.crc64:
         return _CRC64Hasher()
-    elif algorithm == "crc64nvme":
+    elif algorithm == Algorithm.crc64nvme:
         return _CRC64NVMEHasher()
     raise ValueError(f"Unknown algorithm: {algorithm!r}")
 
@@ -181,3 +163,18 @@ def hash_bytes_independent(data: bytes, algorithm: Algorithm) -> str:
     h = new_hasher(algorithm)
     h.update(data)
     return h.hexdigest()
+
+
+def raw_from_hex(hex_digest: str, algorithm: Algorithm) -> bytes:
+    """
+    Convert a hex digest to the raw bytes used when combining child digests.
+
+    For CRCs this is the integer packed as big-endian bytes (4 for crc32,
+    8 for crc64/crc64nvme), not a raw hex decode. Lives here beside the hasher
+    definitions so digest widths are declared in exactly one place.
+    """
+    if algorithm == Algorithm.crc32:
+        return struct.pack(">I", int(hex_digest, 16))
+    elif algorithm in (Algorithm.crc64, Algorithm.crc64nvme):
+        return struct.pack(">Q", int(hex_digest, 16))
+    return bytes.fromhex(hex_digest)

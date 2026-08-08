@@ -1,8 +1,6 @@
 import logging
 import warnings
 
-import boto3
-
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksum.algorithm import Algorithm
 from catalog_client.utils.checksum.hashing import (
@@ -53,10 +51,9 @@ def detect_and_cache_for_s3(
         elif algorithm in all_checksums:
             cached_results[location_uri] = all_checksums[algorithm]
     elif asset_type == AssetType.folder:
-        _raw_algo, cached_children = _find_common_algorithm_in_folder(
+        common_algorithm, cached_children = _find_common_algorithm_in_folder(
             location_uri, s3_client
         )
-        common_algorithm = Algorithm(_raw_algo) if _raw_algo is not None else None
         if algorithm is None:
             detected_algorithm = common_algorithm
             if detected_algorithm is not None:
@@ -175,7 +172,13 @@ def for_assets(
 
     result = []
     cached_results: dict[str, ChecksumResult] = {}
-    s3_client = s3_client or boto3.client("s3")
+    if s3_client is None:
+        # Imported here rather than at module scope: boto3/botocore pull in
+        # several hundred modules, and `import catalog_client` reaches this
+        # module transitively via catalog_client.utils.
+        import boto3
+
+        s3_client = boto3.client("s3")
 
     for asset in assets:
         if asset.checksum is not None:

@@ -17,8 +17,10 @@ For S3 uploads use ChecksumResult.s3_base64 — S3 expects base64, not hex.
 
 Optional dependencies
 ---------------------
-blake3, boto3, crcmod are required for checksum generation.
-awscrt is only required for crc64nvme.
+Install with the `checksum` extra: blake3 (for blake3), crcmod (for crc64),
+awscrt (for crc64nvme). Each is imported lazily and raises ImportError only
+when its algorithm is requested. boto3 is a required dependency of the package,
+not part of this extra.
 
 Usage
 -----

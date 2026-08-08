@@ -1,9 +1,9 @@
-"""Tests for checksum utilities module."""
+"""Tests for checksum utilities module.
 
-import os
-import tempfile
-import warnings
-from unittest.mock import patch
+These are integration-level tests: the S3 cases drive real boto3 request/response
+shapes through moto, so they cover the wiring that tests/utils/checksum/test_generate.py
+deliberately mocks out (metadata key casing, HeadObject response fields, error types).
+"""
 
 import boto3
 import pytest
@@ -18,6 +18,29 @@ from catalog_client.utils.checksum.s3 import (
     _parse_s3_uri,
     _select_best_algorithm,
 )
+
+BUCKET = "test-bucket"
+HEX64 = "aa" * 32  # a valid blake3-length hex digest
+
+
+@pytest.fixture
+def s3():
+    """A moto-backed S3 client with the test bucket already created.
+
+    The mock_aws context is held open by the fixture rather than applied as a class
+    decorator, so that bucket setup and the test body share one mocked session.
+    """
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket=BUCKET)
+        yield client
+
+
+def make_asset(uri, asset_type=AssetType.file, platform=StoragePlatform.s3, **kwargs):
+    return DataAssetRequest(
+        location_uri=uri, asset_type=asset_type, storage_platform=platform, **kwargs
+    )
+
 
 # ── URI Parsing ────────────────────────────────────────────────────────────────
 
@@ -64,25 +87,17 @@ class TestSelectBestAlgorithm:
 # ── S3 Stored Checksum Fetching ────────────────────────────────────────────────
 
 
-@mock_aws
 class TestFetchAllS3StoredChecksums:
-    def _setup_bucket(self):
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        return s3
+    def test_no_metadata_checksums(self, s3):
+        s3.put_object(Bucket=BUCKET, Key="plain.txt", Body=b"data")
 
-    def test_no_metadata_checksums(self):
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="plain.txt", Body=b"data")
-
-        result = _fetch_all_s3_stored_checksums("test-bucket", "plain.txt", s3)
+        result = _fetch_all_s3_stored_checksums(BUCKET, "plain.txt", s3)
         for algo in ["blake3", "blake2b", "crc64"]:
             assert algo not in result
 
-    def test_metadata_checksums_with_merkle(self):
-        s3 = self._setup_bucket()
+    def test_metadata_checksums_with_merkle(self, s3):
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="meta.txt",
             Body=b"data",
             Metadata={
@@ -91,31 +106,28 @@ class TestFetchAllS3StoredChecksums:
             },
         )
 
-        result = _fetch_all_s3_stored_checksums("test-bucket", "meta.txt", s3)
+        result = _fetch_all_s3_stored_checksums(BUCKET, "meta.txt", s3)
         assert result["blake3"].file_hash == "abc123"
         assert result["blake3"].merkle_root == "def456"
         assert result["blake3"].source == "s3_metadata"
 
-    def test_metadata_without_merkle_uses_file_hash(self):
-        s3 = self._setup_bucket()
+    def test_metadata_without_merkle_uses_file_hash(self, s3):
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="meta.txt",
             Body=b"data",
             Metadata={"x-checksum-crc64": "aabbccdd"},
         )
 
-        result = _fetch_all_s3_stored_checksums("test-bucket", "meta.txt", s3)
+        result = _fetch_all_s3_stored_checksums(BUCKET, "meta.txt", s3)
         assert result["crc64"].merkle_root == "aabbccdd"
 
-    def test_nonexistent_object_returns_empty(self):
-        s3 = self._setup_bucket()
-        assert _fetch_all_s3_stored_checksums("test-bucket", "missing.txt", s3) == {}
+    def test_nonexistent_object_returns_empty(self, s3):
+        assert _fetch_all_s3_stored_checksums(BUCKET, "missing.txt", s3) == {}
 
-    def test_multiple_metadata_algorithms(self):
-        s3 = self._setup_bucket()
+    def test_multiple_metadata_algorithms(self, s3):
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="multi.txt",
             Body=b"data",
             Metadata={
@@ -124,7 +136,7 @@ class TestFetchAllS3StoredChecksums:
             },
         )
 
-        result = _fetch_all_s3_stored_checksums("test-bucket", "multi.txt", s3)
+        result = _fetch_all_s3_stored_checksums(BUCKET, "multi.txt", s3)
         assert "blake3" in result
         assert "blake2b" in result
 
@@ -132,34 +144,26 @@ class TestFetchAllS3StoredChecksums:
 # ── Folder Common Algorithm Detection ──────────────────────────────────────────
 
 
-@mock_aws
 class TestFindCommonAlgorithmInFolder:
-    def _setup_bucket(self):
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        return s3
-
-    def test_common_algorithm_found(self):
-        s3 = self._setup_bucket()
+    def test_common_algorithm_found(self, s3):
         for name in ["a.txt", "b.txt", "c.txt"]:
             s3.put_object(
-                Bucket="test-bucket",
+                Bucket=BUCKET,
                 Key=f"dataset/{name}",
                 Body=b"data",
                 Metadata={"x-checksum-blake3": f"hash_{name}"},
             )
 
         algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/dataset/", s3
+            f"s3://{BUCKET}/dataset/", s3
         )
         assert algo == "blake3"
         assert len(per_child) == 3
 
-    def test_early_exit_on_missing_checksum(self):
+    def test_early_exit_on_missing_checksum(self, s3, monkeypatch):
         """When a child has no stored checksums, exit early with None."""
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="dataset/a.txt", Body=b"data")
-        s3.put_object(Bucket="test-bucket", Key="dataset/b.txt", Body=b"data")
+        s3.put_object(Bucket=BUCKET, Key="dataset/a.txt", Body=b"data")
+        s3.put_object(Bucket=BUCKET, Key="dataset/b.txt", Body=b"data")
 
         def _mock_fetch(bucket, key, client):
             if key == "dataset/a.txt":
@@ -167,28 +171,27 @@ class TestFindCommonAlgorithmInFolder:
                     "blake3": ChecksumResult(
                         path=f"s3://{bucket}/{key}",
                         algorithm="blake3",
-                        file_hash="aa" * 32,
-                        merkle_root="aa" * 32,
+                        file_hash=HEX64,
+                        merkle_root=HEX64,
                         source="s3_metadata",
                     )
                 }
             return {}  # b.txt has no checksums
 
-        with patch(
+        monkeypatch.setattr(
             "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums",
-            side_effect=_mock_fetch,
-        ):
-            algo, per_child = _find_common_algorithm_in_folder(
-                "s3://test-bucket/dataset/", s3
-            )
+            _mock_fetch,
+        )
+        algo, per_child = _find_common_algorithm_in_folder(
+            f"s3://{BUCKET}/dataset/", s3
+        )
         assert algo is None
         assert per_child == {}
 
-    def test_intersection_finds_shared_algorithm(self):
+    def test_intersection_finds_shared_algorithm(self, s3):
         """File A has {blake3, crc64}, File B has {crc64} -> crc64 is common."""
-        s3 = self._setup_bucket()
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="dataset/a.txt",
             Body=b"data",
             Metadata={
@@ -197,23 +200,20 @@ class TestFindCommonAlgorithmInFolder:
             },
         )
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="dataset/b.txt",
             Body=b"data",
             Metadata={"x-checksum-crc64": "hash_c64_b"},
         )
 
         algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/dataset/", s3
+            f"s3://{BUCKET}/dataset/", s3
         )
         assert algo == "crc64"
         assert len(per_child) == 2
 
-    def test_empty_folder_returns_none(self):
-        s3 = self._setup_bucket()
-        algo, per_child = _find_common_algorithm_in_folder(
-            "s3://test-bucket/empty/", s3
-        )
+    def test_empty_folder_returns_none(self, s3):
+        algo, per_child = _find_common_algorithm_in_folder(f"s3://{BUCKET}/empty/", s3)
         assert algo is None
         assert per_child == {}
 
@@ -223,7 +223,7 @@ class TestFindCommonAlgorithmInFolder:
         assert per_child == {}
 
 
-# ── generate_for_assets: Core Behaviors ────────────────────────────────────────
+# ── for_assets: Core Behaviors ─────────────────────────────────────────────────
 
 
 class TestGenerateForAssetsCore:
@@ -232,10 +232,9 @@ class TestGenerateForAssetsCore:
 
     def test_skips_assets_with_existing_checksums(self):
         assets = [
-            DataAssetRequest(
-                location_uri="/hpc/existing.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.sf_hpc,
+            make_asset(
+                "/hpc/existing.txt",
+                platform=StoragePlatform.sf_hpc,
                 checksum="existing123",
                 checksum_alg="blake3",
             )
@@ -246,23 +245,15 @@ class TestGenerateForAssetsCore:
 
     def test_unsupported_platform_warns_and_preserves_asset(self):
         assets = [
-            DataAssetRequest(
-                location_uri="http://example.com/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.other,
-            )
+            make_asset("http://example.com/file.txt", platform=StoragePlatform.other)
         ]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        with pytest.warns(checksums.ChecksumWarning, match="not supported") as rec:
             result = checksums.for_assets(assets, algorithm="blake3")
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, checksums.ChecksumWarning)
-            assert "not supported" in str(w[0].message)
-            assert result[0].checksum is None
+        assert len(rec) == 1
+        assert result[0].checksum is None
 
 
-# ── generate_for_assets: Filesystem ────────────────────────────────────────────
+# ── for_assets: Filesystem ─────────────────────────────────────────────────────
 
 
 class TestGenerateForAssetsFilesystem:
@@ -274,280 +265,175 @@ class TestGenerateForAssetsFilesystem:
             ("crc32", 8),
         ],
     )
-    def test_local_file_with_algorithm(self, algorithm, expected_hex_len):
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("test content")
-            temp_path = f.name
-        try:
-            assets = [
-                DataAssetRequest(
-                    location_uri=temp_path,
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.sf_hpc,
-                )
-            ]
-            result = checksums.for_assets(assets, algorithm=algorithm)
-            assert result[0].checksum_alg == algorithm
-            assert len(result[0].checksum) == expected_hex_len
-        finally:
-            os.unlink(temp_path)
+    def test_local_file_with_algorithm(self, tmp_path, algorithm, expected_hex_len):
+        target = tmp_path / "file.txt"
+        target.write_text("test content")
 
-    def test_local_directory(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            for name in ["a.txt", "b.txt"]:
-                with open(os.path.join(temp_dir, name), "w") as f:
-                    f.write(f"content_{name}")
+        assets = [make_asset(str(target), platform=StoragePlatform.sf_hpc)]
+        result = checksums.for_assets(assets, algorithm=algorithm)
+        assert result[0].checksum_alg == algorithm
+        assert len(result[0].checksum) == expected_hex_len
 
-            assets = [
-                DataAssetRequest(
-                    location_uri=temp_dir,
-                    asset_type=AssetType.folder,
-                    storage_platform=StoragePlatform.sf_hpc,
-                )
-            ]
-            result = checksums.for_assets(assets, algorithm="blake3")
-            assert result[0].checksum is not None
-            assert result[0].checksum_alg == "blake3"
-
-    def test_nonexistent_file_warns(self):
-        assets = [
-            DataAssetRequest(
-                location_uri="/nonexistent/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.sf_hpc,
-            )
-        ]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = checksums.for_assets(assets, algorithm="blake3")
-            assert len(w) == 1
-            assert "Failed to generate checksum" in str(w[0].message)
-            assert result[0].checksum is None
-
-    def test_none_algorithm_defaults_to_blake3(self):
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("test")
-            temp_path = f.name
-        try:
-            assets = [
-                DataAssetRequest(
-                    location_uri=temp_path,
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.sf_hpc,
-                )
-            ]
-            result = checksums.for_assets(assets, algorithm=None)
-            assert result[0].checksum_alg == "blake3"
-        finally:
-            os.unlink(temp_path)
-
-
-# ── generate_for_assets: S3 Integration ────────────────────────────────────────
-
-
-@mock_aws
-class TestGenerateForAssetsS3:
-    def _setup_bucket(self):
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        return s3
-
-    def test_explicit_algorithm(self):
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="file.txt", Body=b"data")
+    def test_local_directory(self, tmp_path):
+        for name in ["a.txt", "b.txt"]:
+            (tmp_path / name).write_text(f"content_{name}")
 
         assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
+            make_asset(
+                str(tmp_path),
+                asset_type=AssetType.folder,
+                platform=StoragePlatform.sf_hpc,
             )
         ]
         result = checksums.for_assets(assets, algorithm="blake3")
+        assert result[0].checksum is not None
+        assert result[0].checksum_alg == "blake3"
+
+    def test_nonexistent_file_warns(self):
+        assets = [make_asset("/nonexistent/file.txt", platform=StoragePlatform.sf_hpc)]
+        with pytest.warns(
+            checksums.ChecksumWarning, match="Failed to generate checksum"
+        ) as rec:
+            result = checksums.for_assets(assets, algorithm="blake3")
+        assert len(rec) == 1
+        assert result[0].checksum is None
+
+    def test_none_algorithm_defaults_to_blake3(self, tmp_path):
+        target = tmp_path / "file.txt"
+        target.write_text("test")
+
+        assets = [make_asset(str(target), platform=StoragePlatform.sf_hpc)]
+        result = checksums.for_assets(assets, algorithm=None)
+        assert result[0].checksum_alg == "blake3"
+
+
+# ── for_assets: S3 Integration ─────────────────────────────────────────────────
+
+
+class TestGenerateForAssetsS3:
+    def test_explicit_algorithm(self, s3):
+        s3.put_object(Bucket=BUCKET, Key="file.txt", Body=b"data")
+
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
+        result = checksums.for_assets(assets, algorithm="blake3", s3_client=s3)
         assert result[0].checksum_alg == "blake3"
         assert result[0].checksum is not None
 
-    def test_auto_detect_file_uses_stored_metadata(self):
-        """algorithm=None on S3 file with metadata -> uses stored checksum."""
-        s3 = self._setup_bucket()
+    def test_auto_detect_file_uses_stored_metadata(self, s3):
+        """algorithm=None on S3 file with metadata -> uses stored checksum.
+
+        Covers real S3 metadata key casing: S3 lowercases user metadata keys, which
+        the s3.py lookup depends on.
+        """
         s3.put_object(
-            Bucket="test-bucket",
+            Bucket=BUCKET,
             Key="file.txt",
             Body=b"data",
             Metadata={"x-checksum-blake3": "stored_hash_value"},
         )
 
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
-        result = checksums.for_assets(assets, algorithm=None)
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum == "stored_hash_value"
         assert result[0].checksum_alg == "blake3"
 
-    def test_auto_detect_file_falls_back_to_blake3(self):
-        """algorithm=None on S3 file with no stored checksums -> computes blake3."""
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="file.txt", Body=b"data")
+    def test_auto_detect_file_falls_back_to_blake3(self, s3, monkeypatch):
+        """algorithm=None on S3 file with no stored checksums -> computes blake3.
 
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
-        with patch(
+        The fetch must be stubbed: S3 (and moto) attach a native ChecksumCRC32 to
+        every PutObject, so a genuinely checksum-free object cannot be created and
+        auto-detection would otherwise legitimately choose crc32.
+        """
+        s3.put_object(Bucket=BUCKET, Key="file.txt", Body=b"data")
+        monkeypatch.setattr(
             "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
-            return_value={},
-        ):
-            result = checksums.for_assets(assets, algorithm=None)
+            lambda *a, **k: {},
+        )
+
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
-    def test_auto_detect_folder_common_algorithm(self):
+    def test_auto_detect_folder_common_algorithm(self, s3):
         """algorithm=None on S3 folder where all children share blake3."""
-        s3 = self._setup_bucket()
-        # Use valid 64-char hex strings (blake3 digest length)
-        s3.put_object(
-            Bucket="test-bucket",
-            Key="dataset/a.txt",
-            Body=b"data",
-            Metadata={"x-checksum-blake3": "aa" * 32},
-        )
-        s3.put_object(
-            Bucket="test-bucket",
-            Key="dataset/b.txt",
-            Body=b"data",
-            Metadata={"x-checksum-blake3": "bb" * 32},
-        )
-
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/dataset/",
-                asset_type=AssetType.folder,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
-        result = checksums.for_assets(assets, algorithm=None)
-        assert result[0].checksum is not None
-        assert result[0].checksum_alg == "blake3"
-
-    def test_auto_detect_folder_no_common_falls_back_to_blake3(self):
-        """algorithm=None on S3 folder with no common algorithm -> computes blake3."""
-        s3 = self._setup_bucket()
-        for name in ["a.txt", "b.txt"]:
+        for name, digest in [("a.txt", "aa" * 32), ("b.txt", "bb" * 32)]:
             s3.put_object(
-                Bucket="test-bucket",
+                Bucket=BUCKET,
                 Key=f"dataset/{name}",
                 Body=b"data",
+                Metadata={"x-checksum-blake3": digest},
             )
 
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/dataset/",
-                asset_type=AssetType.folder,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
-        with patch(
-            "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-            return_value=(None, {}),
-        ):
-            result = checksums.for_assets(assets, algorithm=None)
+        assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
-    def test_access_error_warns(self):
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://nonexistent-bucket/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = checksums.for_assets(assets, algorithm="blake3")
-            assert len(w) == 1
-            assert "Failed to generate checksum" in str(w[0].message)
-            assert result[0].checksum is None
+    def test_auto_detect_folder_no_common_falls_back_to_blake3(self, s3, monkeypatch):
+        """algorithm=None on S3 folder with no common algorithm -> computes blake3.
 
-    def test_compute_if_no_s3_checksum_false_skips_s3(self):
+        Stubbed for the same reason as the file case: every PutObject carries a
+        native CRC32, so children always share at least one algorithm in practice.
+        """
+        for name in ["a.txt", "b.txt"]:
+            s3.put_object(Bucket=BUCKET, Key=f"dataset/{name}", Body=b"data")
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
+            lambda *a, **k: (None, {}),
+        )
+
+        assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
+        assert result[0].checksum is not None
+        assert result[0].checksum_alg == "blake3"
+
+    def test_access_error_warns(self, s3):
+        """A real botocore NoSuchBucket error is caught and surfaced as a warning."""
+        assets = [make_asset("s3://nonexistent-bucket/file.txt")]
+        with pytest.warns(
+            checksums.ChecksumWarning, match="Failed to generate checksum"
+        ) as rec:
+            result = checksums.for_assets(assets, algorithm="blake3", s3_client=s3)
+        assert len(rec) == 1
+        assert result[0].checksum is None
+
+    def test_compute_if_no_s3_checksum_false_skips_s3(self, s3):
         """S3 file with no stored checksum + flag=False -> skipped."""
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="file.txt", Body=b"data")
+        s3.put_object(Bucket=BUCKET, Key="file.txt", Body=b"data")
 
-        assets = [
-            DataAssetRequest(
-                location_uri="s3://test-bucket/file.txt",
-                asset_type=AssetType.file,
-                storage_platform=StoragePlatform.s3,
-            )
-        ]
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
         result = checksums.for_assets(
-            assets, algorithm="blake3", compute_if_no_s3_checksum=False
+            assets, algorithm="blake3", compute_if_no_s3_checksum=False, s3_client=s3
         )
         assert result[0].checksum is None
 
-    def test_compute_if_no_s3_checksum_false_does_not_skip_local(self):
+    def test_compute_if_no_s3_checksum_false_does_not_skip_local(self, tmp_path):
         """Non-S3 asset is still computed even with flag=False."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("data")
-            temp_path = f.name
-        try:
-            assets = [
-                DataAssetRequest(
-                    location_uri=temp_path,
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.sf_hpc,
-                )
-            ]
-            result = checksums.for_assets(
-                assets, algorithm="blake3", compute_if_no_s3_checksum=False
-            )
-            assert result[0].checksum is not None
-        finally:
-            os.unlink(temp_path)
+        target = tmp_path / "file.txt"
+        target.write_text("data")
 
-    def test_mixed_platforms(self):
+        assets = [make_asset(str(target), platform=StoragePlatform.sf_hpc)]
+        result = checksums.for_assets(
+            assets, algorithm="blake3", compute_if_no_s3_checksum=False
+        )
+        assert result[0].checksum is not None
+
+    def test_mixed_platforms(self, s3, tmp_path):
         """S3, local, and unsupported assets processed correctly together."""
-        s3 = self._setup_bucket()
-        s3.put_object(Bucket="test-bucket", Key="test.txt", Body=b"s3 content")
+        s3.put_object(Bucket=BUCKET, Key="test.txt", Body=b"s3 content")
+        local = tmp_path / "local.txt"
+        local.write_text("local content")
 
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("local content")
-            temp_path = f.name
+        assets = [
+            make_asset(f"s3://{BUCKET}/test.txt"),
+            make_asset(str(local), platform=StoragePlatform.sf_hpc),
+            make_asset("http://unsupported.com/file", platform=StoragePlatform.other),
+        ]
 
-        try:
-            assets = [
-                DataAssetRequest(
-                    location_uri="s3://test-bucket/test.txt",
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.s3,
-                ),
-                DataAssetRequest(
-                    location_uri=temp_path,
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.sf_hpc,
-                ),
-                DataAssetRequest(
-                    location_uri="http://unsupported.com/file",
-                    asset_type=AssetType.file,
-                    storage_platform=StoragePlatform.other,
-                ),
-            ]
+        with pytest.warns(checksums.ChecksumWarning, match="not supported"):
+            result = checksums.for_assets(assets, algorithm="blake3", s3_client=s3)
 
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                result = checksums.for_assets(assets, algorithm="blake3")
-
-                assert result[0].checksum is not None  # S3
-                assert result[1].checksum is not None  # local
-                assert result[2].checksum is None  # unsupported
-                assert any("not supported" in str(x.message) for x in w)
-        finally:
-            os.unlink(temp_path)
+        assert result[0].checksum is not None  # S3
+        assert result[1].checksum is not None  # local
+        assert result[2].checksum is None  # unsupported
