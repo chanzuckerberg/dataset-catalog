@@ -1,9 +1,13 @@
 """Utility modules for catalog client."""
 
-from catalog_client.utils.checksums import (
+from catalog_client.utils.checksum import (
+    Algorithm,
+    ChecksumResult,
     ChecksumWarning,
-    generate_for_assets,
-    get_supported_algorithms,
+    LocationChecksum,
+    compute_checksum,
+    for_assets,
+    for_location,
 )
 from catalog_client.utils.manifest import (
     FieldFilter,
@@ -19,9 +23,13 @@ from catalog_client.utils.manifest import (
 
 __all__ = [
     # Checksums
+    "Algorithm",
+    "ChecksumResult",
     "ChecksumWarning",
-    "generate_for_assets",
-    "get_supported_algorithms",
+    "LocationChecksum",
+    "compute_checksum",
+    "for_location",
+    "for_assets",
     # Manifest
     "FieldFilter",
     "FilterCondition",
