@@ -78,11 +78,18 @@ result = for_location(
     asset_type=AssetType.file,
     storage_platform=StoragePlatform.s3,
     s3_client=boto3.client("s3"),
+    compute_if_no_s3_checksum=True,
 )
 
 print(result.value)      # hex digest
 print(result.algorithm)  # e.g. Algorithm.blake3
 ```
+
+Note the default differs between the two entry points: `for_location` defaults to
+`compute_if_no_s3_checksum=False`, so without the argument above it returns an empty
+`LocationChecksum` (`value is None`) for an S3 object that has no stored checksum, rather
+than downloading it. `for_assets` defaults to `True`. An empty result is falsy, so
+`if result:` distinguishes the two cases.
 
 ---
 
@@ -92,7 +99,7 @@ print(result.algorithm)  # e.g. Algorithm.blake3
 |---|---|---|
 | `blake3` | `blake3` package | Requires `pip install blake3` |
 | `blake2b` | stdlib `hashlib` | Always available |
-| `crc32` | stdlib `binascii` | Always available |
+| `crc32` | stdlib `zlib` | Always available |
 | `crc64` | `crcmod` package | Requires `pip install crcmod` |
 | `crc64nvme` | `awscrt` package | Requires `pip install awscrt`; matches AWS CRC64NVME |
 
@@ -105,14 +112,21 @@ the library auto-detects the best available algorithm from stored S3 checksums.
 
 ### Algorithm auto-detection
 
-When `algorithm=None`, the library inspects S3 object metadata and native checksums to find an
-existing stored checksum. The priority order is:
+When `algorithm=None`, the library inspects both S3 native checksum fields (`crc32`,
+`crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
+`x-checksum-crc64`) in a single `HeadObject` call, then picks the strongest algorithm
+present. Where a checksum was stored does not affect the choice — only which algorithm
+it is, ranked by `ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
 
-1. Native S3 checksum fields (`crc64nvme`, `crc32`, `crc64`)
-2. User metadata (`x-checksum-blake3`, `x-checksum-blake2b`, `x-checksum-crc64`)
+`blake3` > `blake2b` > `crc64` > `crc64nvme` > `crc32`
 
-The highest-priority algorithm found is used. If no stored checksum exists, `blake3` is used as
-the fallback and the object is downloaded to compute the hash.
+So a `blake3` value in user metadata is preferred over a native `crc32`. If no stored
+checksum exists, `blake3` is used as the fallback and the object is downloaded to
+compute the hash.
+
+For folders, the algorithm must be present on **every** object under the prefix; the
+strongest algorithm common to all children wins, and if there is no common algorithm the
+folder falls back to `blake3`.
 
 ### Controlling downloads
 
@@ -166,13 +180,18 @@ result = for_assets([folder_asset], s3_client=boto3.client("s3"))
 
 ## Local filesystem assets
 
-Use `StoragePlatform.local` and provide an absolute path. No S3 client is needed.
+Use any non-S3 storage platform (for example `StoragePlatform.sf_hpc`) and provide an
+absolute path. No S3 client is needed, and `compute_if_no_s3_checksum` has no effect —
+local paths are always hashed.
 
 ```python
+from catalog_client.utils.checksum import Algorithm, for_location
+from catalog_client.models.asset import AssetType, StoragePlatform
+
 result = for_location(
     location_uri="/data/local-file.h5ad",
     asset_type=AssetType.file,
-    storage_platform=StoragePlatform.local,
+    storage_platform=StoragePlatform.sf_hpc,
     algorithm=Algorithm.blake3,
 )
 ```
@@ -216,10 +235,17 @@ You can also pass a pre-populated `cached_results` dict to `for_location` to sha
 multiple calls:
 
 ```python
-from catalog_client.utils.checksum.models import ChecksumResult
+from catalog_client.models.asset import AssetType, StoragePlatform
+from catalog_client.utils.checksum import ChecksumResult, for_location
 
 cache: dict[str, ChecksumResult] = {}
 
 for uri in uris:
-    result = for_location(uri, ..., cached_results=cache)
+    result = for_location(
+        uri,
+        asset_type=AssetType.file,
+        storage_platform=StoragePlatform.s3,
+        s3_client=s3,
+        cached_results=cache,
+    )
 ```
