@@ -148,6 +148,10 @@ def _fetch_all_s3_stored_checksums(
             return {}
         raise
 
+    # The size rides along on the response we already made, so a stored
+    # checksum reports a size without ever reading the object's bytes.
+    content_length = head.get("ContentLength")
+
     # Native S3 checksums (CRC32, CRC64NVME)
     for algo, response_key in _S3_NATIVE_RESPONSE_KEY.items():
         raw_value = head.get(response_key)
@@ -176,6 +180,7 @@ def _fetch_all_s3_stored_checksums(
             algorithm=algo,
             file_hash=hex_digest,
             merkle_root=hex_digest,
+            total_size=content_length,
             source="s3_native",
         )
 
@@ -196,6 +201,7 @@ def _fetch_all_s3_stored_checksums(
             algorithm=algo,
             file_hash=file_hash,
             merkle_root=merkle_root,
+            total_size=content_length,
             source="s3_metadata",
         )
 

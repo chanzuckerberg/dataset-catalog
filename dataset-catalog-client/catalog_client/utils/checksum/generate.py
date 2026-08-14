@@ -188,7 +188,9 @@ def for_location(
             # content_digest, not merkle_root — the same value this node would
             # contribute to a parent directory. See ChecksumResult.content_digest.
             return LocationChecksum(
-                value=hash_result.content_digest, algorithm=hash_result.algorithm
+                value=hash_result.content_digest,
+                algorithm=hash_result.algorithm,
+                total_size=hash_result.total_size,
             )
 
     except Exception as e:
@@ -207,11 +209,17 @@ def for_assets(
     s3_client=None,
 ) -> list[AssetT]:
     """
-    Return copies of the given assets with `checksum` and `checksum_alg` populated.
+    Return copies of the given assets with `checksum`, `checksum_alg` and
+    `size_bytes` populated.
 
     The input assets are NOT modified: each is shallow-copied via
     `model_copy()`, preserving its concrete type, and the copies are returned.
     Read the results off the returned list.
+
+    `size_bytes` is read from storage-platform metadata (os.stat, S3
+    ContentLength, S3 listing sizes), so it costs no extra I/O and is set even
+    when a stored S3 checksum avoids downloading the object. It is only written
+    on assets where it is None, and only where a checksum was produced.
 
     algorithm=None auto-detects from stored S3 checksums (highest priority wins),
     falling back to `default_algorithm()` if none exist. Non-S3 assets always
@@ -257,6 +265,11 @@ def for_assets(
         if result_checksum:
             asset_copy.checksum = result_checksum.value
             asset_copy.checksum_alg = result_checksum.algorithm
+            # A size the caller already supplied wins: they may be describing
+            # something we cannot see (a logical size, a pre-move total), and
+            # silently replacing it would be a surprise mutation.
+            if asset_copy.size_bytes is None and result_checksum.total_size is not None:
+                asset_copy.size_bytes = result_checksum.total_size
 
         result.append(asset_copy)
 

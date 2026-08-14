@@ -27,6 +27,14 @@ Multipart composite checksums are the one thing S3 stores that cannot satisfy
 this — they depend on the uploader's part size — so they are ignored rather
 than mistaken for whole-object hashes.
 
+Sizes
+-----
+Every result also carries ChecksumResult.total_size, and for_assets copies it
+onto each asset's size_bytes. The size is read from storage metadata (os.fstat,
+S3 ContentLength, S3 listing sizes) rather than counted while hashing, so it
+costs no extra I/O and is reported even on the stored-checksum path that never
+reads the object. It is None — never 0 — when the platform reported no size.
+
 Optional dependencies
 ---------------------
 Install with the `checksum` extra: blake3 (for blake3), crcmod (for crc64),
@@ -45,8 +53,9 @@ Usage
     # Single path (local or S3)
     result = compute_checksum("data/file.h5ad", algorithm=Algorithm.blake3)
     result = compute_checksum("s3://my-bucket/prefix/", algorithm=Algorithm.crc32)
+    result.content_digest, result.total_size
 
-    # Batch asset list
+    # Batch asset list — sets checksum, checksum_alg and size_bytes
     assets = for_assets(assets, algorithm=Algorithm.blake3)
 """
 

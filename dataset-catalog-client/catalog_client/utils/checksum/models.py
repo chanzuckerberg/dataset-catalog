@@ -16,8 +16,12 @@ ChecksumSource = Literal[
 class LocationChecksum:
     value: str | None = None
     algorithm: Algorithm | None = None
+    total_size: int | None = None  # bytes, as reported by the storage platform
 
     def __bool__(self) -> bool:
+        # Deliberately ignores total_size: a size alone is not a checksum, and
+        # letting one make this truthy would have callers writing a digest of
+        # None onto their assets.
         return self.value is not None and self.algorithm is not None
 
 
@@ -37,6 +41,12 @@ class ChecksumResult:
     merkle_root: str  # crypto: Merkle root over chunks
     # CRC:    S3-style composite (CRC of raw chunk CRCs)
     is_directory: bool = False
+    # Total bytes covered by this result, as reported by the storage platform
+    # (os.fstat, S3 ContentLength, S3 listing Size) — never counted while
+    # hashing, so it is populated even when a stored checksum avoids the read.
+    # For directories, the sum over all descendants. None when the platform did
+    # not report a size, which must not be conflated with an empty 0-byte file.
+    total_size: int | None = None
     chunk_size: int = CHUNK_SIZE
     source: ChecksumSource = "computed"
     chunks: list[ChunkRecord] = field(default_factory=list)

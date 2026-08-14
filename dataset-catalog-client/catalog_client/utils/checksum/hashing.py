@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
@@ -50,6 +51,21 @@ def _combine_child_digests(raw_digests: list[bytes], algorithm: Algorithm) -> st
     return hash_bytes_independent(combined, algorithm)
 
 
+def _sum_child_sizes(children: dict[str, ChecksumResult]) -> int | None:
+    """
+    Total the byte sizes of a directory's children.
+
+    Returns None if any child's size is unknown: a partial sum would understate
+    the directory and read as authoritative. An empty directory totals 0.
+    """
+    total = 0
+    for child in children.values():
+        if child.total_size is None:
+            return None
+        total += child.total_size
+    return total
+
+
 def _directory_result(
     path: str, children: dict[str, ChecksumResult], algorithm: Algorithm
 ) -> ChecksumResult:
@@ -77,11 +93,14 @@ def _directory_result(
         file_hash=digest,
         merkle_root=digest,
         is_directory=True,
+        total_size=_sum_child_sizes(children),
         children=children,
     )
 
 
-def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
+def _hash_stream(
+    stream, algorithm: Algorithm, path: str, total_size: int | None = None
+) -> ChecksumResult:
     """
     Hash a readable binary stream, building a chunk manifest.
 
@@ -92,6 +111,12 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
 
     The two diverge for CRCs: file_hash is the "true" CRC of the whole file;
     the composite (merkle_root) is the S3-style CRC of concatenated chunk CRCs.
+
+    total_size is supplied by the caller from storage-platform metadata and is
+    passed straight through — it is never derived by counting bytes here.
+    Deriving it here would only produce a size on the paths that read the whole
+    object, leaving the stored-checksum fast path (which never enters this
+    function) sizeless.
     """
     file_hasher = new_hasher(algorithm)
     chunk_hasher = new_hasher(algorithm)
@@ -141,6 +166,7 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
         algorithm=algorithm,
         file_hash=file_hasher.hexdigest(),
         merkle_root=merkle_root,
+        total_size=total_size,
         chunks=chunks,
     )
 
@@ -150,7 +176,11 @@ def _hash_stream(stream, algorithm: Algorithm, path: str) -> ChecksumResult:
 
 def _hash_local_file(path: str, algorithm: Algorithm) -> ChecksumResult:
     with open(path, "rb") as fh:
-        return _hash_stream(fh, algorithm, path)
+        # fstat on the open handle rather than os.path.getsize(path): it sizes
+        # the exact file being hashed, with no second path lookup and no window
+        # for the path to be replaced between the stat and the read.
+        size = os.fstat(fh.fileno()).st_size
+        return _hash_stream(fh, algorithm, path, total_size=size)
 
 
 def _hash_local_dir(path: str, algorithm: Algorithm) -> ChecksumResult:
@@ -169,6 +199,22 @@ def _hash_local_dir(path: str, algorithm: Algorithm) -> ChecksumResult:
 # ── S3 ──────────────────────────────────────────────────────────────────────────
 
 
+def _with_size(result: ChecksumResult, size: int | None) -> ChecksumResult:
+    """
+    Backfill a known size onto a result that does not carry one.
+
+    A result read from HeadObject or the cache normally already knows its size;
+    this covers the case where it does not but the listing does. Returns a copy
+    rather than mutating, because cached results are shared between the folder
+    walk and the caller's cache dict. A size the result already has is left
+    alone — HeadObject and the listing agree, and preferring one arbitrarily
+    would make the value depend on call order.
+    """
+    if size is None or result.total_size is not None:
+        return result
+    return replace(result, total_size=size)
+
+
 def _hash_s3_file(
     bucket: str,
     key: str,
@@ -176,6 +222,7 @@ def _hash_s3_file(
     s3,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
+    size: int | None = None,
 ) -> ChecksumResult:
     """
     Return a ChecksumResult for an S3 object.
@@ -186,19 +233,30 @@ def _hash_s3_file(
     stored checksum exists for the requested algorithm.
 
     Set use_stored=False to always recompute (e.g. for integrity audits).
+
+    size is the object's byte size if the caller already knows it (the prefix
+    walk reads it from the listing). Cache hits and stored checksums carry a
+    size of their own from HeadObject; size only fills in for them when that is
+    missing. Otherwise the size comes off the GetObject response already being
+    issued — never from counting bytes.
     """
     path = f"s3://{bucket}/{key}"
 
     if cached_results and path in cached_results:
-        return cached_results[path]
+        return _with_size(cached_results[path], size)
 
     if use_stored:
         stored = _fetch_s3_stored_checksum(bucket, key, algorithm, s3)
         if stored is not None:
-            return stored
+            return _with_size(stored, size)
 
     resp = s3.get_object(Bucket=bucket, Key=key)
-    return _hash_stream(resp["Body"], algorithm, path)
+    # .get, not []: GetObject always returns ContentLength in practice, but the
+    # test suite builds partial response dicts, and a missing size is reportable
+    # (None) rather than fatal.
+    if size is None:
+        size = resp.get("ContentLength")
+    return _hash_stream(resp["Body"], algorithm, path, total_size=size)
 
 
 def _hash_s3_prefix(
@@ -211,12 +269,16 @@ def _hash_s3_prefix(
 ) -> ChecksumResult:
     """Hash all objects under an S3 prefix as a virtual directory tree."""
     paginator = s3.get_paginator("list_objects_v2")
-    keys = sorted(
-        obj["Key"]
+    # The listing already reports every object's size, so a folder's total is
+    # known from this one call regardless of how each child's digest is later
+    # obtained (cache, stored checksum, or download).
+    sizes: dict[str, int | None] = {
+        obj["Key"]: obj.get("Size")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
         for obj in page.get("Contents", [])
         if not obj["Key"].endswith("/")
-    )
+    }
+    keys = sorted(sizes)
 
     tree: dict = {}
     for key in keys:
@@ -233,6 +295,7 @@ def _hash_s3_prefix(
                     s3,
                     use_stored,
                     cached_results,
+                    size=sizes.get(value[1]),
                 )
             elif isinstance(value, dict):
                 children[name] = hash_tree(value, f"{virtual_path}{name}/")

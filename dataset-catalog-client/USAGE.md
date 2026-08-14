@@ -526,6 +526,11 @@ and the default algorithm falls back to `blake2b`.
 Checksums are content-addressed: the same bytes produce the same digest regardless of
 path, storage backend, or whether the file was hashed on its own or as part of a folder.
 
+`for_assets` also fills in each asset's `size_bytes`. The size is read from storage
+metadata (`os.fstat`, S3 `ContentLength`, S3 listing sizes) rather than counted while
+hashing, so it costs no extra I/O and is reported even when a stored S3 checksum means the
+object is never downloaded. A `size_bytes` you supplied yourself is never overwritten.
+
 See [docs/checksum_guide.md](docs/checksum_guide.md) for the full reference, including
 the reproducibility guarantees, Merkle-tree folder hashing, S3 multipart semantics, and
 migration from `catalog_client.utils.checksums`.
@@ -551,7 +556,7 @@ assets = [
     ),
 ]
 
-# Generate checksums — returns copies; `assets` is left untouched
+# Generate checksums and sizes — returns copies; `assets` is left untouched
 assets_with_checksums = for_assets(assets, s3_client=boto3.client("s3"))
 
 # Use in dataset creation
@@ -561,7 +566,7 @@ dataset = client.datasets.create(DatasetRequest(
     version="1.0.0",
     project="atlas",
     modality=DatasetModality.sequencing,
-    locations=assets_with_checksums,  # Now includes checksums
+    locations=assets_with_checksums,  # Now includes checksums and sizes
     governance=GovernanceMetadata(...),
     metadata=DatasetMetadata(),
 ))

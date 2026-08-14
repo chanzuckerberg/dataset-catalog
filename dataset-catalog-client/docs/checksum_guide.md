@@ -123,8 +123,11 @@ assets = [
 assets_with_checksums = for_assets(assets, s3_client=boto3.client("s3"))
 
 for asset in assets_with_checksums:
-    print(asset.location_uri, asset.checksum_alg, asset.checksum)
+    print(asset.location_uri, asset.checksum_alg, asset.checksum, asset.size_bytes)
 ```
+
+`for_assets` fills in `size_bytes` alongside the checksum. See
+[Asset sizes](#asset-sizes) for when it is and is not written.
 
 ### Compute a checksum for a single location
 
@@ -141,13 +144,48 @@ result = for_location(
     compute_if_no_s3_checksum=True,
 )
 
-print(result.value)      # hex digest
-print(result.algorithm)  # e.g. Algorithm.blake3
+print(result.value)       # hex digest
+print(result.algorithm)   # e.g. Algorithm.blake3
+print(result.total_size)  # bytes, or None if the platform did not report one
 ```
 
 Both entry points default to `compute_if_no_s3_checksum=True`, so an S3 object with no
 stored checksum is downloaded and hashed. Set it to `False` on either to skip such
 objects instead. An empty result is falsy, so `if result:` distinguishes the two cases.
+A size alone never makes a result truthy — `total_size` is ignored by that check.
+
+---
+
+## Asset sizes
+
+Every checksum result carries `total_size`, the number of bytes it covers, and
+`for_assets` copies it onto each asset's `size_bytes`.
+
+The size is read from the storage platform, never counted while hashing:
+
+| Path | Source |
+|---|---|
+| Local file | `os.fstat` on the open handle |
+| Local directory | sum over all descendants |
+| S3 object with a stored checksum | `ContentLength` on the `HeadObject` response |
+| S3 object being downloaded | `ContentLength` on the `GetObject` response |
+| S3 folder | `Size` on the `ListObjectsV2` listing, summed over children |
+
+Two consequences follow. It costs no extra API calls or I/O — every value above rides on a
+request the library already makes. And it is reported even when a stored S3 checksum means
+the object is never read, which is the common case for data uploaded through S3 (AWS
+attaches a CRC32 to every upload).
+
+`total_size` is `None`, not `0`, when the platform did not report a size — a 0-byte file
+reports `0`. A directory whose child size is unknown reports `None` rather than an
+understated sum.
+
+Two rules govern `size_bytes` on assets:
+
+- **A caller-supplied size wins.** `for_assets` only writes `size_bytes` where it is `None`.
+- **Size follows the checksum.** If an asset is skipped — unsupported platform,
+  `compute_if_no_s3_checksum=False` with nothing stored, or an error — neither `checksum`
+  nor `size_bytes` is set.
 
 ---
 
@@ -250,6 +288,9 @@ folder_asset = DataAssetRequest(
 )
 result = for_assets([folder_asset], s3_client=boto3.client("s3"))
 ```
+
+The folder's `size_bytes` is the sum of every file under the prefix, taken from the same
+listing used to enumerate them.
 
 ---
 
