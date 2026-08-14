@@ -3,6 +3,7 @@ from dataclasses import replace
 
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
+    _Hasher,
     hash_bytes_independent,
     new_hasher,
     raw_from_hex,
@@ -106,8 +107,10 @@ def _hash_stream(
 
     Computes two things in a single pass:
       file_hash   — accumulates ALL bytes through a single streaming hasher.
-      per-chunk   — each CHUNK_SIZE block is hashed independently (fresh hasher)
-                    and recorded in the manifest.
+      per-chunk   — each CHUNK_SIZE block is hashed independently and recorded
+                    in the manifest. Chunk 0 reuses the whole-file hasher's
+                    state at the boundary instead of running a parallel hasher;
+                    chunks 1+ get their own. See close_chunk.
 
     The two diverge for CRCs: file_hash is the "true" CRC of the whole file;
     the composite (merkle_root) is the S3-style CRC of concatenated chunk CRCs.
@@ -119,7 +122,13 @@ def _hash_stream(
     function) sizeless.
     """
     file_hasher = new_hasher(algorithm)
-    chunk_hasher = new_hasher(algorithm)
+    # Deliberately not created yet. Chunk 0 begins at offset 0, so the whole-file
+    # hasher's state when chunk 0 closes IS the independent hash of chunk 0 —
+    # a second hasher over those same bytes would recompute a value already in
+    # hand. Since CHUNK_SIZE is 256MB, most real files are single-chunk and
+    # never allocate one at all, halving the per-byte hashing work. Chunk 1
+    # onward do need their own hasher, created when chunk 0 closes.
+    chunk_hasher: _Hasher | None = None
     chunks: list[ChunkRecord] = []
     offset = 0
     chunk_len = 0
@@ -127,19 +136,27 @@ def _hash_stream(
     def close_chunk() -> None:
         """Record the chunk accumulated so far and start a fresh chunk hasher."""
         nonlocal chunk_hasher, offset, chunk_len
+        # hexdigest() is a non-destructive read of hasher state for every
+        # algorithm here (blake3, hashlib, and the CRC wrappers), so snapshotting
+        # file_hasher mid-stream leaves it able to keep consuming the rest.
+        digest = (
+            file_hasher.hexdigest()
+            if chunk_hasher is None
+            else chunk_hasher.hexdigest()
+        )
         chunks.append(
             ChunkRecord(
                 index=len(chunks),
                 offset=offset,
                 size=chunk_len,
-                hash=chunk_hasher.hexdigest(),
+                hash=digest,
             )
         )
         offset += chunk_len
         chunk_len = 0
         chunk_hasher = new_hasher(algorithm)
 
-    # Both hashers are fed incrementally, so no chunk is ever held in memory:
+    # Hashers are fed incrementally, so no chunk is ever held in memory:
     # peak usage is one READ_BUFFER regardless of CHUNK_SIZE. A chunk is closed
     # only between reads, so boundaries land exactly where a buffered
     # implementation would put them as long as CHUNK_SIZE is a multiple of
@@ -148,7 +165,8 @@ def _hash_stream(
     # See tests/utils/checksum/test_invariance.py.
     for raw in _iter_stream(stream):
         file_hasher.update(raw)
-        chunk_hasher.update(raw)
+        if chunk_hasher is not None:
+            chunk_hasher.update(raw)
         chunk_len += len(raw)
         if chunk_len >= CHUNK_SIZE:
             close_chunk()
