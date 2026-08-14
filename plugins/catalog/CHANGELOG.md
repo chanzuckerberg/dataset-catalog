@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.4.0...catalog-plugin-v0.5.0) (2026-08-14)
+
+
+### Features
+
+* support Python 3.11 ([#65](https://github.com/chanzuckerberg/dataset-catalog/issues/65)) ([faebc4f](https://github.com/chanzuckerberg/dataset-catalog/commit/faebc4fac198dc026efaeb331e9e3560be8d369a))
+
 ## [0.4.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.3.0...catalog-plugin-v0.4.0) (2026-07-23)
 
 

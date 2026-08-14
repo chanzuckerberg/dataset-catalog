@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.5.1...catalog-client-v0.6.0) (2026-08-14)
+
+
+### Features
+
+* Improving checksum generation robustness and usability ([#18](https://github.com/chanzuckerberg/dataset-catalog/issues/18)) ([0635c53](https://github.com/chanzuckerberg/dataset-catalog/commit/0635c5379c52b8ee8747052bfcce557b00f10a59))
+* support Python 3.11 ([#65](https://github.com/chanzuckerberg/dataset-catalog/issues/65)) ([faebc4f](https://github.com/chanzuckerberg/dataset-catalog/commit/faebc4fac198dc026efaeb331e9e3560be8d369a))
+
 ## [0.5.1](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.5.0...catalog-client-v0.5.1) (2026-07-23)
 
 
