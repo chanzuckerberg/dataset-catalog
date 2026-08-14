@@ -514,11 +514,33 @@ client.lineages.delete("edge-uuid")  # soft-delete, status 204
 
 The client provides utilities to automatically generate checksums for dataset assets on supported storage platforms.
 
+The `checksum` extra adds `blake3`, `crcmod`, and `awscrt`:
+
+```bash
+pip install "catalog-client[checksum]"
+```
+
+It is optional — without it, `blake2b` and `crc32` still work from the standard library,
+and the default algorithm falls back to `blake2b`.
+
+Checksums are content-addressed: the same bytes produce the same digest regardless of
+path, storage backend, or whether the file was hashed on its own or as part of a folder.
+
+`for_assets` also fills in each asset's `size_bytes`. The size is read from storage
+metadata (`os.fstat`, S3 `ContentLength`, S3 listing sizes) rather than counted while
+hashing, so it costs no extra I/O and is reported even when a stored S3 checksum means the
+object is never downloaded. A `size_bytes` you supplied yourself is never overwritten.
+
+See [docs/checksum_guide.md](docs/checksum_guide.md) for the full reference, including
+the reproducibility guarantees, Merkle-tree folder hashing, S3 multipart semantics, and
+migration from `catalog_client.utils.checksums`.
+
 ### Basic usage
 
 ```python
+import boto3
 from catalog_client import DataAssetRequest, AssetType, StoragePlatform, DatasetRequest, DatasetModality, GovernanceMetadata, DatasetMetadata
-from catalog_client.utils.checksums import generate_for_assets
+from catalog_client.utils.checksum import for_assets
 
 # Create assets without checksums
 assets = [
@@ -534,8 +556,8 @@ assets = [
     ),
 ]
 
-# Generate checksums
-assets_with_checksums = generate_for_assets(assets)
+# Generate checksums and sizes — returns copies; `assets` is left untouched
+assets_with_checksums = for_assets(assets, s3_client=boto3.client("s3"))
 
 # Use in dataset creation
 dataset = client.datasets.create(DatasetRequest(
@@ -544,7 +566,7 @@ dataset = client.datasets.create(DatasetRequest(
     version="1.0.0",
     project="atlas",
     modality=DatasetModality.sequencing,
-    locations=assets_with_checksums,  # Now includes checksums
+    locations=assets_with_checksums,  # Now includes checksums and sizes
     governance=GovernanceMetadata(...),
     metadata=DatasetMetadata(),
 ))
@@ -553,56 +575,70 @@ dataset = client.datasets.create(DatasetRequest(
 ### Algorithm selection
 
 ```python
-# Specify algorithm (default: blake3, except S3 prefers existing CRC32)
-assets_with_checksums = generate_for_assets(assets, algorithm="blake2b")
+from catalog_client.utils.checksum import Algorithm
 
-# Supported algorithms: 'blake3', 'blake2b', 'blake2s', 'crc32'
+# Specify an algorithm. With algorithm=None (the default), S3 assets reuse an
+# existing stored checksum, and anything else uses default_algorithm().
+assets_with_checksums = for_assets(assets, algorithm=Algorithm.blake2b, s3_client=boto3.client("s3"))
 ```
+
+| Algorithm | Extra dependency |
+|---|---|
+| `Algorithm.blake3` | `blake3` |
+| `Algorithm.crc64` | `crcmod` (CRC-64/ECMA-182) |
+| `Algorithm.crc64nvme` | `awscrt` |
+| `Algorithm.crc32`, `Algorithm.blake2b` | none (stdlib) |
+
+Requesting an algorithm whose dependency is not installed raises `ImportError`.
+`default_algorithm()` never does: it returns `blake3` when installed and `blake2b`
+otherwise.
 
 ### S3 optimization control
 
 ```python
 # Default: use existing S3 checksums when available, compute otherwise
-assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=True)
+assets_with_checksums = for_assets(assets, compute_if_no_s3_checksum=True, s3_client=boto3.client("s3"))
 
 # Only use existing S3 checksums, skip assets without them
-assets_with_checksums = generate_for_assets(assets, compute_if_no_s3_checksum=False)
+assets_with_checksums = for_assets(assets, compute_if_no_s3_checksum=False, s3_client=boto3.client("s3"))
 ```
+
+The flag controls **downloads**, so it does not block a folder whose children all carry a
+stored checksum — assembling that needs no download. `for_location` takes the same
+parameter with the same default.
 
 ### How a platform is chosen
 
-For each asset the platform is resolved in two steps:
+`storage_platform` is required on `DataAssetRequest`, so the platform is always taken
+directly from the asset. Every platform is supported for checksumming **except**
+`external` and `other`, which are skipped with a `ChecksumWarning`.
 
-1. **Explicit `storage_platform`** — if set, it is used directly. Any value is supported
-   for checksumming **except** `external` and `other`, which are skipped.
-2. **URI fallback** — if `storage_platform` is not set, only S3 is auto-detected (URI
-   starting with `s3://` or `s3a://`); anything else is skipped.
-
-Always set `storage_platform` explicitly on filesystem assets (`sf_hpc`, `chi_hpc`,
-`ny_hpc`, `reef`, `kelp`) — the URI fallback only recognizes S3.
+`DataAssetResponse` widens `storage_platform` to optional so that legacy assets parse;
+an asset with no platform is likewise skipped with a warning.
 
 ### How a checksum is computed
 
 | Platform | How it's computed | Notes |
 |----------|-------------------|-------|
-| **S3** (`s3`) | Reuses an existing S3 checksum when available, otherwise downloads the object | Prefers existing CRC32 when `algorithm=None` |
-| **Filesystem** (`sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`) | Reads the file at `location_uri` and hashes it | Local filesystem access required; defaults to `blake3` |
+| **S3** (`s3`) | Reuses a stored S3 checksum when available, otherwise downloads the object | Prefers an existing stored checksum when `algorithm=None`; multipart composite values are ignored |
+| **Filesystem** (`sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`) | Reads the file at `location_uri` and hashes it | Local filesystem access required; defaults to `default_algorithm()` |
 | **`external`, `other`** | Not computed | Skipped with a warning |
 
-**Current limitations:**
-- Only `AssetType.file` assets are supported. Folder assets (`AssetType.folder`) are skipped.
-- Assets on unsupported platforms (`external`, `other`) or paths without an explicit `storage_platform` that aren't S3 URIs are skipped with warnings.
+Both `AssetType.file` and `AssetType.folder` are supported. Folders are hashed by
+combining per-file digests into a Merkle root; a file's digest is identical whether it is
+hashed on its own or as a folder child — see
+[docs/checksum_guide.md](docs/checksum_guide.md) for details.
 
 ### Error handling
 
 ```python
 import warnings
-from catalog_client.utils.checksums import ChecksumWarning
+from catalog_client.utils.checksum import ChecksumWarning
 
 # Capture checksum warnings
 with warnings.catch_warnings(record=True) as w:
     warnings.simplefilter("always")
-    assets_with_checksums = generate_for_assets(assets)
+    assets_with_checksums = for_assets(assets, s3_client=boto3.client("s3"))
 
     for warning in w:
         if issubclass(warning.category, ChecksumWarning):
@@ -610,9 +646,13 @@ with warnings.catch_warnings(record=True) as w:
 ```
 
 Common warnings:
-- Unsupported storage platform
+- Unsupported or missing storage platform
+- Empty `location_uri`, or no `s3_client` supplied for an S3 asset
 - File not found or access denied
-- Algorithm not available (e.g., `blake3` package not installed)
+- Algorithm not available (e.g., `blake3` requested but the package is not installed)
+
+Every skip and failure is reported this way, so `warnings.simplefilter("error", ChecksumWarning)`
+turns all of them into exceptions.
 
 ---
 

@@ -40,4 +40,4 @@ jobs:
         with:
           enable-cache: true
       - name: Run pytest
-        run: uv run --python ${{ matrix.python-version }} --group dev pytest
+        run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum pytest
