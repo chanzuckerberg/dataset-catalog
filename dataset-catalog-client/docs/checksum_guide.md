@@ -154,6 +154,28 @@ stored checksum is downloaded and hashed. Set it to `False` on either to skip su
 objects instead. An empty result is falsy, so `if result:` distinguishes the two cases.
 A size alone never makes a result truthy — `total_size` is ignored by that check.
 
+### From the command line
+
+The installed `catalog` script exposes the same machinery as `catalog checksum PATH`,
+for one local path or S3 URI at a time. It needs no catalog URL or token — only AWS
+credentials, and only for `s3://` paths.
+
+```bash
+catalog checksum data/file.h5ad
+catalog checksum data/folder/ --children
+catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored checksum
+catalog checksum s3://my-bucket/data/file.h5ad --recompute
+catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
+```
+
+Like `for_location`, omitting `--algorithm` lets a checksum already stored on the S3
+object decide the algorithm, so nothing is downloaded. The table's `SOURCE` column
+reports which path was taken (`computed`, `s3_native`, `s3_metadata`), and `-o json`
+adds the fields the Python API exposes as properties: `content_digest`, `s3_base64`,
+and `s3_composite_base64` (files only). See the [CLI section of
+USAGE.md](../USAGE.md#checksums-from-the-command-line) for every flag and the exit
+codes.
+
 ---
 
 ## Asset sizes

@@ -32,9 +32,11 @@ An async variant is also available — see [Async usage](#async-usage).
 
 Installing the package also installs a read-only `catalog` command for querying
 the catalog from the shell. It only issues GET requests — creating, updating,
-and deleting always go through the Python API.
+and deleting always go through the Python API. One subcommand, `checksum`, does
+not talk to the catalog at all; see [Checksums from the command
+line](#checksums-from-the-command-line).
 
-Configure it via the environment:
+Configure the query subcommands via the environment:
 
 ```bash
 export CATALOG_API_URL=https://your-catalog.example.com
@@ -67,6 +69,9 @@ catalog lineage 6f9d1c2e-...-uuid --direction up --depth 3
 catalog collections list
 catalog collections entries <collection-uuid>
 catalog collections parents <collection-uuid>
+
+# Hash a local path or S3 URI — no catalog credentials involved
+catalog checksum data/sample.h5ad
 ```
 
 Useful flags:
@@ -653,6 +658,59 @@ Common warnings:
 
 Every skip and failure is reported this way, so `warnings.simplefilter("error", ChecksumWarning)`
 turns all of them into exceptions.
+
+### Checksums from the command line
+
+`catalog checksum PATH` hashes one local path or S3 URI. It contacts no catalog
+API and needs no `CATALOG_API_URL`/`CATALOG_API_TOKEN`; `s3://` paths use the
+ambient AWS credentials.
+
+```bash
+# Local file — blake3 if the `checksum` extra is installed, else blake2b
+catalog checksum data/sample.h5ad
+
+# Local directory: one digest for the whole tree
+catalog checksum data/run-01/
+
+# ...and one row per descendant
+catalog checksum data/run-01/ --children -o table
+
+# Pick the algorithm explicitly
+catalog checksum data/sample.h5ad --algorithm crc32
+
+# S3 object: reuses a checksum already stored on the object when --algorithm is
+# omitted, so nothing is downloaded
+catalog checksum s3://my-bucket/prefix/object.tif
+
+# Integrity audit: ignore what S3 stored and hash the bytes
+catalog checksum s3://my-bucket/prefix/object.tif --algorithm crc32 --recompute
+```
+
+```
+DIGEST                            ALG     SIZE     SOURCE     KIND  PATH
+--------------------------------  ------  -------  ---------  ----  ------------------
+9f2a...                           crc32   1048576  s3_native  file  s3://my-bucket/...
+```
+
+`SOURCE` says where the digest came from: `computed` (bytes were hashed),
+`s3_native` (S3's own CRC32/CRC64NVME), or `s3_metadata` (an
+`x-checksum-<algo>` value written by a previous run).
+
+Flags:
+
+- `--algorithm` — `blake3`, `blake2b`, `crc32`, `crc64`, `crc64nvme`. Omit it to
+  reuse whatever is stored on the S3 object, falling back to `blake3`/`blake2b`.
+- `--recompute` — ignore stored S3 checksums and hash the bytes. No effect on local paths.
+- `--folder` / `--file` — treat an S3 key as a prefix or a single object instead of
+  inferring from a trailing `/`. Local paths are always classified by `os.path.isdir`.
+- `--children` — list every descendant of a folder, not just its total.
+- `-o json` — the full `ChecksumResult`: `chunks`, `children`, `merkle_root`,
+  `content_digest`, and the base64 forms S3 headers expect (`s3_base64`, plus
+  `s3_composite_base64` for files).
+
+Exit codes follow the table above: `2` for a bad flag, a malformed `s3://` URI, or a
+missing optional dependency; `4` for a path or S3 key that does not exist; `5` for an
+S3 request failure such as missing credentials.
 
 ---
 
