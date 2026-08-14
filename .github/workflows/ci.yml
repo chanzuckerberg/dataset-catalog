@@ -28,12 +28,16 @@ jobs:
         run: uv tool run pre-commit run --all-files
 
   test:
-    name: Test
+    name: Test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - name: Run pytest
-        run: uv run --group dev pytest
+        run: uv run --python ${{ matrix.python-version }} --group dev pytest

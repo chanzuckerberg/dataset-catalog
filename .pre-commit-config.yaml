@@ -31,7 +31,7 @@ repos:
           pydantic>=2.10.0,
           boto3>=1.28.0
         ]
-        args: [--ignore-missing-imports]
+        args: [--ignore-missing-imports, --python-version=3.11]
         exclude: '^(tests/|examples/)'
 
   # Notebook cleaning

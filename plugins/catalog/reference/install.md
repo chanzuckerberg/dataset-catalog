@@ -14,7 +14,7 @@ Most read operations: search, list, and get use the Python standard library and 
 * Ask whether to create a virtual environment unless one is already active or the repository manages its own environment.
 * Install a released version, never `main`.
 * Resolve the latest `catalog-client-v<X.Y.Z>` release tag and install that exact tag.
-* Python 3.12 or newer is required.
+* Python 3.11 or newer is required.
 
 ```bash
 # resolve the latest released tag (requires the gh CLI):

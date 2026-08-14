@@ -76,7 +76,7 @@ Want to contribute code? Great! Here's how to get set up and submit your changes
 ### Prerequisites
 
 Before you start, make sure you have:
-- **Python 3.12 or higher** - Run `python --version` to check
+- **Python 3.11 or higher** - Run `python --version` to check
 - **Git** - For version control
 - **uv** - Python package manager ([installation guide](https://docs.astral.sh/uv/getting-started/installation/))
 
