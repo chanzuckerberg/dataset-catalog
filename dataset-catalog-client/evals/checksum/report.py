@@ -75,6 +75,19 @@ class Summary:
         }
 
 
+def _first_line(message: str) -> str:
+    """
+    The first line of a check's message, or a placeholder if there is none.
+
+    `splitlines()[0]` would raise on an empty message, which `assert_that` allows
+    a caller to pass. Report generation runs after the checks, so an IndexError
+    here would throw away a whole run's results — including the failure that
+    triggered it.
+    """
+    lines = message.splitlines()
+    return lines[0] if lines else "(no message)"
+
+
 def summarise(checks: list[Check]) -> Summary:
     summary = Summary()
     for check in checks:
@@ -174,7 +187,7 @@ def markdown(payload: dict) -> str:
     if problems:
         lines += ["", "## Failures", ""]
         for check in problems:
-            lines.append(f"- **{check['id']}** — {check['message'].splitlines()[0]}")
+            lines.append(f"- **{check['id']}** — {_first_line(check['message'])}")
 
     measured = [
         (check["id"], check["metrics"])

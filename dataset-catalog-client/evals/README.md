@@ -63,6 +63,12 @@ Exit code is 0 when nothing failed and 1 otherwise. Reports land in
 `evals/checksum/reports/<tier>.{json,md}` — JSON for diffing and trending,
 markdown for pasting into a PR. `--no-report` prints only.
 
+Tiers gate whole dimensions, not just corpus sizes: `full` implies `fast`, while
+`aws` implies nothing, so `--tier aws` reports every other dimension as an
+explicit skip rather than running some of it. A dimension that yields no checks at
+all is reported as an **error** — silence is a harness bug, and "0 checks, all
+passing" is the one result an eval must never be able to print.
+
 ## Dimensions
 
 | dimension | what it does | tier |
@@ -85,8 +91,23 @@ uv run python -m evals.checksum --tier full --update-golden  # also the 256MB ca
 ```
 
 Updating merges rather than replaces, so a fast-tier re-pin does not delete the
-full-tier vectors only a full run can regenerate. A missing vector is reported as
-a **skip**, not a pass — an unpinned case is not evidence of anything.
+full-tier vectors only a full run can regenerate.
+
+An unpinned case is not evidence of anything, so it is never a pass. Each one is
+reported individually as a **skip** (naming the case), and `golden` then fails
+once on `every_case_is_pinned` — without that aggregate verdict, adding or
+renaming a corpus case would silently drop its vectors and the run would still
+exit 0. The mirror image is `no_orphan_vectors`: because updating merges, a
+renamed or deleted case leaves vectors behind that nothing compares. Pruning them
+automatically would be wrong — a fast-tier re-pin cannot know the full-tier
+cases — so they are reported and deleted by hand.
+
+`golden` also pins the constants themselves. `corpus.py` restates `CHUNK_SIZE`
+and `READ_BUFFER` rather than importing them, so if the library's values move,
+the config these vectors label `production` silently stops being production while
+every digest check keeps passing. `production_chunk_size` and
+`production_read_buffer` compare the copies against the values captured from
+`hashing` at import, before any dimension can patch them.
 
 Vectors are recorded per `(case, algorithm, chunk_size, read_buffer)` because
 `merkle_root` is partition-dependent by design; small-chunk configurations are
@@ -143,3 +164,8 @@ Yield checks, never assert: a dimension that raises loses every result after the
 failure, which is the opposite of what an eval is for. Build checks with
 `compare()` / `assert_that()` / `skip()` from `harness.py`, and tag each with the
 tier it can afford to run at.
+
+Start `run()` with `gate(NAME, ctx, <lowest tier it needs>)` and yield the skip it
+returns. Filtering the corpus is not enough on its own: any check that hardcodes
+its own tier would still run at a tier that never asked for it, and the dimension
+would report a clean "ok" over a handful of off-tier results.

@@ -173,6 +173,10 @@ If you intentionally change how a digest is computed, re-pin the vectors with
 diff is the signal that checksums already stored in the catalog will no longer
 match.
 
+Adding or renaming a corpus case also fails the eval until you re-pin, and a
+rename leaves the old vectors behind for you to delete by hand: the merge cannot
+tell a rename from a fast-tier run that simply did not visit the full-tier cases.
+
 #### Code Formatting
 
 We use `ruff` for code formatting and linting. Run these before submitting:

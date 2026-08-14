@@ -38,6 +38,7 @@ from evals.checksum.harness import (
     assert_that,
     chunking,
     compare,
+    gate,
     skip,
 )
 
@@ -48,6 +49,11 @@ _SPARSE_APPARENT = 64 * 1024 * 1024
 
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
+
+    declined = gate(NAME, ctx, Tier.fast)
+    if declined:
+        yield declined
+        return
 
     algorithm = available_algorithms()[0]
     file_cases, tree_cases = cases_for(ctx.tier)

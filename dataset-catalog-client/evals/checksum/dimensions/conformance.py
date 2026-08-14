@@ -25,13 +25,18 @@ from catalog_client.utils.checksum.hashing import (
 )
 from evals.checksum import oracles
 from evals.checksum.corpus import cases_for
-from evals.checksum.harness import Check, Context, assert_that, compare
+from evals.checksum.harness import Check, Context, Tier, assert_that, compare, gate
 
 NAME = "conformance"
 
 
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
+
+    declined = gate(NAME, ctx, Tier.fast)
+    if declined:
+        yield declined
+        return
 
     algorithms = available_algorithms()
     file_cases, tree_cases = cases_for(ctx.tier)
