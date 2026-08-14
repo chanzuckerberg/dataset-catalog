@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from catalog_client.utils.checksum.algorithm import Algorithm
@@ -32,11 +33,11 @@ from evals.checksum.corpus import (
     FILE_CASES,
     READ_BUFFER,
     TREE_CASES,
+    FileCase,
+    TreeCase,
     cases_for,
 )
 from evals.checksum.harness import (
-    PRODUCTION_CHUNK_SIZE,
-    PRODUCTION_READ_BUFFER,
     Check,
     Context,
     Status,
@@ -44,7 +45,6 @@ from evals.checksum.harness import (
     assert_that,
     chunking,
     compare,
-    gate,
     skip,
 )
 
@@ -83,6 +83,35 @@ def _record(result) -> dict:
     }
 
 
+# ── Case identity ───────────────────────────────────────────────────────────────
+#
+# The id grammar and the config rule live here, in one place each, because they
+# are used twice: once to walk the cases this run pins, and once to enumerate
+# every id that could exist so leftover vectors can be spotted. Two copies would
+# have to stay in step or orphan detection quietly inverts.
+
+
+def _configs_for(tier: Tier) -> Iterator[tuple[int, int]]:
+    """The (chunk_size, read_buffer) configurations a case of `tier` is pinned at."""
+    for chunk_size, read_buffer in CONFIGS:
+        # A small-chunk configuration on a 256MB body would build a 65,000-entry
+        # manifest for no extra signal: the production configuration is the one
+        # that matters at that size.
+        if tier == Tier.full and chunk_size != CHUNK_SIZE:
+            continue
+        yield chunk_size, read_buffer
+
+
+def _file_case_id(
+    name: str, algorithm: Algorithm, chunk_size: int, read_buffer: int
+) -> str:
+    return f"{name}.{algorithm.value}.{_config_key(chunk_size, read_buffer)}"
+
+
+def _tree_case_id(name: str, algorithm: Algorithm) -> str:
+    return f"tree_{name}.{algorithm.value}.production"
+
+
 def _all_possible_case_ids() -> set[str]:
     """
     Every case id any tier, config and algorithm could pin.
@@ -93,49 +122,92 @@ def _all_possible_case_ids() -> set[str]:
     without the `checksum` extra does not call every blake3 vector stale, and all
     tiers, so a fast run does not call the 256MB vectors stale.
     """
-    ids = set()
-    for case in FILE_CASES:
-        for chunk_size, read_buffer in CONFIGS:
-            if case.tier == Tier.full and chunk_size != CHUNK_SIZE:
-                continue
-            for algorithm in Algorithm:
-                ids.add(
-                    f"{case.name}.{algorithm.value}."
-                    f"{_config_key(chunk_size, read_buffer)}"
+    return {
+        _file_case_id(case.name, algorithm, chunk_size, read_buffer)
+        for case in FILE_CASES
+        for chunk_size, read_buffer in _configs_for(case.tier)
+        for algorithm in Algorithm
+    } | {
+        _tree_case_id(tree.name, algorithm)
+        for tree in TREE_CASES
+        for algorithm in Algorithm
+    }
+
+
+def _sample(ids: list[str], limit: int = 5) -> str:
+    """The first few ids, with an ellipsis when the list is longer than that."""
+    return ", ".join(ids[:limit]) + (" …" if len(ids) > limit else "")
+
+
+def _orphan_message(orphans: list[str], remedy: str) -> str:
+    return (
+        f"{len(orphans)} vector(s) belong to no current case and anchor nothing: "
+        f"{_sample(orphans)} — {remedy}"
+    )
+
+
+@dataclass(frozen=True)
+class _Pinned:
+    """One case as this run computed it: what to call it, and what to pin."""
+
+    case_id: str
+    tier: Tier
+    record: dict
+
+
+def _plan(
+    file_cases: tuple[FileCase, ...],
+    tree_cases: tuple[TreeCase, ...],
+    algorithms: list[Algorithm],
+    workdir: Path,
+) -> Iterator[_Pinned]:
+    """
+    Compute every case this run pins, materialising and deleting as it goes.
+
+    Files and trees differ in how they are built and in which fields are worth
+    pinning, and in nothing else — so they are both flattened to `_Pinned` here
+    and the record-or-compare decision is made once, by the caller. Each fixture
+    is removed as soon as its own configurations are done, so the disk high-water
+    mark stays at one case.
+    """
+    for case in file_cases:
+        directory = workdir / case.name
+        directory.mkdir(parents=True, exist_ok=True)
+        path = case.materialise(directory)
+        try:
+            for chunk_size, read_buffer in _configs_for(case.tier):
+                for algorithm in algorithms:
+                    with chunking(chunk_size, read_buffer):
+                        result = compute_checksum_localfs(str(path), algorithm)
+                    yield _Pinned(
+                        _file_case_id(case.name, algorithm, chunk_size, read_buffer),
+                        case.tier,
+                        _record(result),
+                    )
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    for tree in tree_cases:
+        directory = workdir / f"tree_{tree.name}"
+        directory.mkdir(parents=True, exist_ok=True)
+        root = tree.materialise(directory)
+        try:
+            for algorithm in algorithms:
+                with chunking(CHUNK_SIZE, READ_BUFFER):
+                    result = compute_checksum_localfs(str(root), algorithm)
+                yield _Pinned(
+                    _tree_case_id(tree.name, algorithm),
+                    tree.tier,
+                    # chunk_count is meaningless for a directory node (it has
+                    # children, not chunks), so only the digest and total are
+                    # pinned.
+                    {
+                        "content_digest": result.content_digest,
+                        "total_size": result.total_size,
+                    },
                 )
-    for tree in TREE_CASES:
-        for algorithm in Algorithm:
-            ids.add(f"tree_{tree.name}.{algorithm.value}.production")
-    return ids
-
-
-def _constants(tier: Tier) -> Iterator[Check]:
-    """
-    The eval's copy of the production constants must still be the real ones.
-
-    corpus.py restates CHUNK_SIZE and READ_BUFFER so a case can be described
-    relative to them without importing the module under test everywhere. If the
-    library's values move, the copies keep patching the old ones in: the config
-    these vectors label `production` quietly stops being production, and every
-    check here keeps passing while measuring a partitioning no caller will ever
-    get. Only `scale` would notice, and only at a tier CI does not run.
-    """
-    yield compare(
-        f"{NAME}.production_chunk_size",
-        NAME,
-        tier,
-        CHUNK_SIZE,
-        PRODUCTION_CHUNK_SIZE,
-        note="the eval's CHUNK_SIZE has drifted from the library's",
-    )
-    yield compare(
-        f"{NAME}.production_read_buffer",
-        NAME,
-        tier,
-        READ_BUFFER,
-        PRODUCTION_READ_BUFFER,
-        note="the eval's READ_BUFFER has drifted from the library's",
-    )
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 def _fields(case_id: str, tier: Tier, actual: dict, expected: dict) -> Iterator[Check]:
@@ -153,96 +225,33 @@ def _fields(case_id: str, tier: Tier, actual: dict, expected: dict) -> Iterator[
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
 
-    declined = gate(NAME, ctx, Tier.fast)
-    if declined:
-        yield declined
-        return
-
     algorithms = available_algorithms()
     file_cases, tree_cases = cases_for(ctx.tier)
     vectors = _load()
+    pinned = vectors.get("cases", {})
     recorded: dict[str, dict] = {}
     # Case ids this run expected to find a vector for and did not. Reported in
     # aggregate at the end: a per-case skip says which case is unpinned, but only
     # a verdict makes an unpinned case turn CI red.
     unpinned: list[str] = []
-    workdir = ctx.scratch("golden")
 
-    # Yielded even under --update-golden: re-pinning while the constants have
-    # drifted would bake the drift into the committed vectors.
-    yield from _constants(ctx.tier)
+    for case in _plan(file_cases, tree_cases, algorithms, ctx.scratch("golden")):
+        if ctx.update_golden:
+            recorded[case.case_id] = case.record
+            continue
+        expected = pinned.get(case.case_id)
+        if expected is None:
+            unpinned.append(case.case_id)
+            yield skip(
+                f"{NAME}.{case.case_id}",
+                NAME,
+                case.tier,
+                "no pinned vector; run with --update-golden at this tier",
+            )
+            continue
+        yield from _fields(case.case_id, case.tier, case.record, expected)
 
-    for case in file_cases:
-        directory = workdir / case.name
-        directory.mkdir(parents=True, exist_ok=True)
-        path = case.materialise(directory)
-        try:
-            for chunk_size, read_buffer in CONFIGS:
-                # A small-chunk configuration on a 256MB body would build a
-                # 65,000-entry manifest for no extra signal: the production
-                # configuration is the one that matters at that size.
-                if case.tier == Tier.full and chunk_size != CHUNK_SIZE:
-                    continue
-                for algorithm in algorithms:
-                    case_id = (
-                        f"{case.name}.{algorithm.value}."
-                        f"{_config_key(chunk_size, read_buffer)}"
-                    )
-                    with chunking(chunk_size, read_buffer):
-                        result = compute_checksum_localfs(str(path), algorithm)
-                    actual = _record(result)
-
-                    if ctx.update_golden:
-                        recorded[case_id] = actual
-                        continue
-                    expected = vectors.get("cases", {}).get(case_id)
-                    if expected is None:
-                        unpinned.append(case_id)
-                        yield skip(
-                            f"{NAME}.{case_id}",
-                            NAME,
-                            case.tier,
-                            "no pinned vector; run with --update-golden at this tier",
-                        )
-                        continue
-                    yield from _fields(case_id, case.tier, actual, expected)
-        finally:
-            shutil.rmtree(directory, ignore_errors=True)
-
-    for tree in tree_cases:
-        directory = workdir / f"tree_{tree.name}"
-        directory.mkdir(parents=True, exist_ok=True)
-        root = tree.materialise(directory)
-        try:
-            for algorithm in algorithms:
-                case_id = f"tree_{tree.name}.{algorithm.value}.production"
-                with chunking(CHUNK_SIZE, READ_BUFFER):
-                    result = compute_checksum_localfs(str(root), algorithm)
-                # chunk_count is meaningless for a directory node (it has
-                # children, not chunks), so only the digest and total are pinned.
-                actual = {
-                    "content_digest": result.content_digest,
-                    "total_size": result.total_size,
-                }
-
-                if ctx.update_golden:
-                    recorded[case_id] = actual
-                    continue
-                expected = vectors.get("cases", {}).get(case_id)
-                if expected is None:
-                    unpinned.append(case_id)
-                    yield skip(
-                        f"{NAME}.{case_id}",
-                        NAME,
-                        tree.tier,
-                        "no pinned vector; run with --update-golden at this tier",
-                    )
-                    continue
-                yield from _fields(case_id, tree.tier, actual, expected)
-        finally:
-            shutil.rmtree(directory, ignore_errors=True)
-
-    orphans = sorted(set(vectors.get("cases", {})) - _all_possible_case_ids())
+    orphans = sorted(set(pinned) - _all_possible_case_ids())
 
     if not ctx.update_golden:
         # The whole point of this dimension is that a digest change shows up as a
@@ -255,8 +264,7 @@ def run(ctx: Context) -> Iterator[Check]:
             ctx.tier,
             not unpinned,
             f"{len(unpinned)} case(s) have no committed vector, so nothing anchors "
-            f"their digests: {', '.join(unpinned[:5])}"
-            f"{' …' if len(unpinned) > 5 else ''} — re-pin with `make eval-golden` "
+            f"their digests: {_sample(unpinned)} — re-pin with `make eval-golden` "
             "and review the diff",
             unpinned=len(unpinned),
         )
@@ -268,17 +276,13 @@ def run(ctx: Context) -> Iterator[Check]:
             NAME,
             ctx.tier,
             not orphans,
-            f"{len(orphans)} vector(s) belong to no current case and anchor "
-            f"nothing: {', '.join(orphans[:5])}"
-            f"{' …' if len(orphans) > 5 else ''} — delete them from "
-            f"{VECTORS.name}",
+            _orphan_message(orphans, f"delete them from {VECTORS.name}"),
             orphans=len(orphans),
         )
-
-    if ctx.update_golden:
+    else:
         # Merge rather than replace: a fast-tier update must not delete the
         # full-tier vectors that only a full run can regenerate.
-        merged = dict(vectors.get("cases", {}))
+        merged = dict(pinned)
         merged.update(recorded)
         if orphans:
             # Surfaced at the moment someone is already reviewing the diff, since
@@ -288,9 +292,7 @@ def run(ctx: Context) -> Iterator[Check]:
                 f"{NAME}.orphan_vectors_kept",
                 NAME,
                 ctx.tier,
-                f"{len(orphans)} vector(s) belong to no current case and were "
-                f"kept by the merge: {', '.join(orphans[:5])}"
-                f"{' …' if len(orphans) > 5 else ''} — delete them by hand",
+                _orphan_message(orphans, "the merge kept them; delete them by hand"),
             )
         VECTORS.parent.mkdir(parents=True, exist_ok=True)
         with open(VECTORS, "w") as handle:

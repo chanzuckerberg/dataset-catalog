@@ -36,7 +36,6 @@ from evals.checksum.harness import (
     assert_that,
     chunking,
     compare,
-    gate,
 )
 
 NAME = "invariance"
@@ -68,11 +67,6 @@ def _digest(path: str, algorithm: Algorithm, chunk_size: int, read_buffer: int):
 
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
-
-    declined = gate(NAME, ctx, Tier.fast)
-    if declined:
-        yield declined
-        return
 
     algorithms = available_algorithms()
     rng = random.Random(ctx.seed)

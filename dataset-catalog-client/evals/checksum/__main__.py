@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from evals.checksum import report
-from evals.checksum.dimensions import DESCRIPTIONS, DIMENSIONS
+from evals.checksum.dimensions import DIMENSIONS
 from evals.checksum.harness import Context, Thresholds, Tier, run_dimension
 
 DEFAULT_REPORT_DIR = Path(__file__).resolve().parent / "reports"
@@ -22,7 +22,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Evaluate checksum generation and size computation.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="dimensions:\n"
-        + "\n".join(f"  {name:<12} {DESCRIPTIONS[name]}" for name in DIMENSIONS),
+        + "\n".join(
+            f"  {name:<12} {dimension.description}"
+            for name, dimension in DIMENSIONS.items()
+        ),
     )
     parser.add_argument(
         "--tier",
@@ -136,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         runs = []
         for name in selected:
             print(f"  running {name}…", file=sys.stderr, flush=True)
-            runs.append(run_dimension(name, DIMENSIONS[name], ctx))
+            runs.append(run_dimension(DIMENSIONS[name], ctx))
     finally:
         if owns_workdir:
             shutil.rmtree(workdir, ignore_errors=True)

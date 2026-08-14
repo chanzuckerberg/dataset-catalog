@@ -66,9 +66,8 @@ def _strip_part_count(value: str) -> str:
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
 
-    if not ctx.wants(Tier.aws):
-        yield skip(f"{NAME}.all", NAME, Tier.aws, "real-S3 checks need --tier aws")
-        return
+    # The tier gate lives in the registry; this is the other precondition, which
+    # only this dimension has: a bucket to write to.
     if not ctx.s3_bucket:
         yield skip(
             f"{NAME}.all",

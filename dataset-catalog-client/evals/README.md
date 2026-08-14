@@ -65,9 +65,12 @@ markdown for pasting into a PR. `--no-report` prints only.
 
 Tiers gate whole dimensions, not just corpus sizes: `full` implies `fast`, while
 `aws` implies nothing, so `--tier aws` reports every other dimension as an
-explicit skip rather than running some of it. A dimension that yields no checks at
-all is reported as an **error** — silence is a harness bug, and "0 checks, all
-passing" is the one result an eval must never be able to print.
+explicit skip rather than running some of it. Each dimension declares the tier it
+needs in the registry (`dimensions/__init__.py`) and `run_dimension` enforces it,
+so a dimension cannot be registered without stating its cost or run at a tier that
+never asked for it. A dimension that yields no checks at all is reported as an
+**error** — silence is a harness bug, and "0 checks, all passing" is the one result
+an eval must never be able to print.
 
 ## Dimensions
 
@@ -102,12 +105,11 @@ renamed or deleted case leaves vectors behind that nothing compares. Pruning the
 automatically would be wrong — a fast-tier re-pin cannot know the full-tier
 cases — so they are reported and deleted by hand.
 
-`golden` also pins the constants themselves. `corpus.py` restates `CHUNK_SIZE`
-and `READ_BUFFER` rather than importing them, so if the library's values move,
-the config these vectors label `production` silently stops being production while
-every digest check keeps passing. `production_chunk_size` and
-`production_read_buffer` compare the copies against the values captured from
-`hashing` at import, before any dimension can patch them.
+The config these vectors label `production` cannot silently stop being production:
+`corpus.py` binds `CHUNK_SIZE` and `READ_BUFFER` from the library at import rather
+than restating them, so there is no second copy to drift. Binding is by value
+because `chunking()` patches those attributes for the duration of a check, and a
+case's identity must not move with them.
 
 Vectors are recorded per `(case, algorithm, chunk_size, read_buffer)` because
 `merkle_root` is partition-dependent by design; small-chunk configurations are
@@ -159,13 +161,17 @@ variance:
 ## Adding a dimension
 
 Create `evals/checksum/dimensions/<name>.py` exposing `NAME` and
-`run(ctx) -> Iterator[Check]`, then register it in `dimensions/__init__.py`.
+`run(ctx) -> Iterator[Check]`, then add a `Dimension(...)` for it in
+`dimensions/__init__.py` with the cheapest tier it can run at. `run()` does not
+check the tier itself — `run_dimension` does that from the registry, so the guard
+cannot be forgotten.
+
 Yield checks, never assert: a dimension that raises loses every result after the
 failure, which is the opposite of what an eval is for. Build checks with
 `compare()` / `assert_that()` / `skip()` from `harness.py`, and tag each with the
 tier it can afford to run at.
 
-Start `run()` with `gate(NAME, ctx, <lowest tier it needs>)` and yield the skip it
-returns. Filtering the corpus is not enough on its own: any check that hardcodes
-its own tier would still run at a tier that never asked for it, and the dimension
-would report a clean "ok" over a handful of off-tier results.
+If the fast tier includes the new dimension, add its name to `expected_to_run` in
+`tests/test_checksum_eval.py`. That set is written out rather than derived from the
+registry on purpose: deriving it would make the test blind to a `needs` tier set
+too high, since the expectation would move along with the mistake.

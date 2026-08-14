@@ -10,20 +10,18 @@ from __future__ import annotations
 
 import time
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from catalog_client.utils.checksum import hashing
 from catalog_client.utils.checksum.algorithm import Algorithm, new_hasher
 
-# Captured at import, before any dimension can call `chunking()`. Reading
-# hashing.CHUNK_SIZE later would read whatever the running dimension patched it
-# to, which is exactly the value a drift check must not trust.
-PRODUCTION_CHUNK_SIZE = hashing.CHUNK_SIZE
-PRODUCTION_READ_BUFFER = hashing.READ_BUFFER
+if TYPE_CHECKING:  # imported for typing only; dimensions imports this module
+    from evals.checksum.dimensions import Dimension
 
 
 class Tier(StrEnum):
@@ -125,26 +123,6 @@ def skip(check_id: str, dimension: str, tier: Tier, why: str) -> Check:
     )
 
 
-def gate(name: str, ctx: Context, needs: Tier) -> Check | None:
-    """
-    The skip a dimension yields when the requested tier does not include it.
-
-    Every dimension calls this first. Without it a fast dimension asked to run at
-    `--tier aws` behaves two ways at once: the corpus-driven checks filter down to
-    nothing (a clean "ok" over zero verdicts) while any check that hardcodes its
-    own tier runs anyway. An explicit skip makes declining to run visible in the
-    report instead of inferable from a suspiciously small pass count.
-    """
-    if ctx.wants(needs):
-        return None
-    return skip(
-        f"{name}.all",
-        name,
-        needs,
-        f"{needs.value}-tier checks do not run at --tier {ctx.tier.value}",
-    )
-
-
 @dataclass
 class Thresholds:
     """
@@ -229,19 +207,33 @@ class DimensionRun:
     seconds: float
 
 
-def run_dimension(
-    name: str, runner: Callable[[Context], Iterator[Check]], ctx: Context
-) -> DimensionRun:
+def run_dimension(dimension: Dimension, ctx: Context) -> DimensionRun:
     """
-    Run one dimension, converting an unexpected exception into an errored check.
+    Run one dimension, enforcing its tier and containing its failures.
+
+    The tier is enforced here rather than inside each `run()` because a dimension
+    that forgets to check it does not fail — it quietly runs at a tier that never
+    asked for it (checks tagged `Tier.fast` still execute under `--tier aws`) and
+    reports a healthy pass count. Declaring `needs` in the registry makes that
+    unforgettable: a dimension cannot be registered without stating its tier, and
+    the skip is emitted from one place for all of them.
 
     A dimension that blows up mid-way keeps the checks it already yielded: they
     are real results, and discarding them would hide which case broke it.
     """
-    checks: list[Check] = []
+    name = dimension.name
     started = time.perf_counter()
+
+    if not ctx.wants(dimension.needs):
+        return DimensionRun(
+            name=name,
+            checks=[skip(f"{name}.all", name, dimension.needs, dimension.why)],
+            seconds=time.perf_counter() - started,
+        )
+
+    checks: list[Check] = []
     try:
-        for check in runner(ctx):
+        for check in dimension.run(ctx):
             checks.append(check)
     except Exception as exc:
         checks.append(
@@ -254,10 +246,11 @@ def run_dimension(
             )
         )
     if not checks:
-        # Zero checks is never a legitimate outcome: a dimension that cannot run
-        # yields a skip (see `gate`). Reaching here means a corpus filtered down
-        # to nothing or an early return, and the report would have shown a clean
-        # "ok" over an empty list — the one failure mode an eval must not have.
+        # Zero checks is never a legitimate outcome: a dimension the tier declines
+        # never gets here, and one that runs has something to say. Reaching here
+        # means a corpus filtered down to nothing or an early return, and the
+        # report would have shown a clean "ok" over an empty list — the one
+        # failure mode an eval must not have.
         checks.append(
             Check(
                 id=f"{name}.produced_no_checks",
@@ -265,8 +258,8 @@ def run_dimension(
                 tier=ctx.tier,
                 status=Status.errored,
                 message=(
-                    "the dimension yielded no checks at all; a dimension that "
-                    "cannot run at this tier must yield a skip instead"
+                    "the dimension ran at this tier and yielded no checks at all; "
+                    "a case list filtered down to nothing, or an early return"
                 ),
             )
         )

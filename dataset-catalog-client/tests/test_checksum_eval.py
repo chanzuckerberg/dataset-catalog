@@ -20,8 +20,8 @@ from evals.checksum.harness import Context, Status, Tier, run_dimension
 
 pytestmark = pytest.mark.eval
 
-# scale and aws_native self-skip below the tier they need; running them here
-# just produces one skip check each, which is the honest record.
+# scale and aws_native need a tier above this one; run_dimension skips them and
+# each produces one skip check, which is the honest record.
 DIMENSION_NAMES = sorted(DIMENSIONS)
 
 
@@ -29,9 +29,7 @@ DIMENSION_NAMES = sorted(DIMENSIONS)
 def fast_run(tmp_path_factory):
     """Run every dimension once at the fast tier and index the results by name."""
     ctx = Context(tier=Tier.fast, workdir=tmp_path_factory.mktemp("checksum-eval"))
-    return {
-        name: run_dimension(name, DIMENSIONS[name], ctx) for name in DIMENSION_NAMES
-    }
+    return {name: run_dimension(DIMENSIONS[name], ctx) for name in DIMENSION_NAMES}
 
 
 @pytest.mark.parametrize("dimension", DIMENSION_NAMES)
@@ -51,6 +49,18 @@ def test_eval_actually_ran_checks(fast_run):
     A dimension that yields nothing — a corpus filtered down to zero cases, an
     import that quietly no-ops — would make every test above pass while checking
     nothing at all.
+
+    `run_dimension` already errors on zero *checks*; this is the stronger claim
+    that these four produced at least one verdict, which is what catches a
+    dimension gated off by mistake — a `needs` tier raised too high in the
+    registry, returning one tidy skip.
+
+    Written out rather than derived from `DIMENSIONS[...].needs`, deliberately.
+    Deriving it makes the test blind to exactly that mistake: raising `needs` on a
+    dimension also removes it from the derived set, so the expectation moves with
+    the error and the test still passes (verified). A literal set is an independent
+    statement of intent, and a new dimension having to be added here is a decision
+    worth forcing rather than a maintenance cost worth avoiding.
     """
     verdicts = {
         name: sum(1 for check in run.checks if check.status is not Status.skipped)

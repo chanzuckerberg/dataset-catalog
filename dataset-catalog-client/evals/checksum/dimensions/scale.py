@@ -43,7 +43,6 @@ from evals.checksum.harness import (
     Tier,
     assert_that,
     compare,
-    skip,
 )
 
 NAME = "scale"
@@ -69,12 +68,6 @@ def _probe(path: Path, algorithm) -> dict:
 
 def run(ctx: Context) -> Iterator[Check]:
     from evals.checksum.harness import available_algorithms
-
-    if not ctx.wants(Tier.full):
-        yield skip(
-            f"{NAME}.all", NAME, Tier.full, "scale checks need --tier full (up to 1GB)"
-        )
-        return
 
     algorithms = available_algorithms()
     workdir = ctx.scratch("scale")

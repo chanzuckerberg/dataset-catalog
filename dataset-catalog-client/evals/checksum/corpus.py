@@ -23,12 +23,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from catalog_client.utils.checksum import hashing
 from evals.checksum.harness import Tier
 
-# Production constants, restated so a case can be described relative to them
-# without importing the module under test into every call site.
-CHUNK_SIZE = 256 * 1024 * 1024
-READ_BUFFER = 64 * 1024
+# The production constants, bound from the library rather than restated, so a
+# case can be described relative to them without the eval keeping its own copy
+# to drift out of step. Bound by value, not read through `hashing` at use time:
+# `chunking()` patches those attributes for the duration of a check, and a case's
+# identity must not move with them. Import happens before any dimension runs, so
+# these are always the unpatched values.
+CHUNK_SIZE = hashing.CHUNK_SIZE
+READ_BUFFER = hashing.READ_BUFFER
 
 _GENERATE_BLOCK = 1024 * 1024
 
