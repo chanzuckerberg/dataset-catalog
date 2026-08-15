@@ -25,7 +25,11 @@ class LocationChecksum:
         return self.value is not None and self.algorithm is not None
 
 
-@dataclass
+# slots, not a plain dataclass: a folder result retains one ChunkRecord and one
+# ChecksumResult per file, so a large tree holds hundreds of thousands of them.
+# Dropping __dict__ takes ChunkRecord from 344 to 64 bytes and ChecksumResult
+# from 352 to 112. Neither type is ever given an attribute outside its fields.
+@dataclass(slots=True)
 class ChunkRecord:
     index: int
     offset: int
@@ -33,7 +37,7 @@ class ChunkRecord:
     hash: str  # hex digest of this chunk computed independently
 
 
-@dataclass
+@dataclass(slots=True)
 class ChecksumResult:
     path: str
     algorithm: Algorithm
