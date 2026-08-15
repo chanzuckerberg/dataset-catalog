@@ -90,11 +90,15 @@ class TestSelectBestAlgorithm:
     @pytest.mark.parametrize(
         "algorithms, expected",
         [
-            ({"blake3", "crc32"}, "blake3"),
+            # S3-native ranks above user metadata: crc32 is a value S3 computed
+            # and can verify, where blake3 only exists because we wrote it.
+            ({"blake3", "crc32"}, "crc32"),
             ({"crc32", "crc64nvme"}, "crc64nvme"),
             ({"crc32"}, "crc32"),
             ({"blake2b", "crc64"}, "blake2b"),
-            ({"blake3", "blake2b", "crc64", "crc64nvme", "crc32"}, "blake3"),
+            ({"blake3", "blake2b", "crc64", "crc64nvme", "crc32"}, "crc64nvme"),
+            # crc64 is last: same width as crc64nvme but ~90x slower.
+            ({"crc64", "crc32"}, "crc32"),
             (set(), None),
         ],
     )
@@ -314,7 +318,7 @@ class TestSelectFolderAlgorithm:
             )
 
         selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
-        assert selection.algorithm == Algorithm.blake3
+        assert selection.algorithm == Algorithm.crc32  # S3-native outranks metadata
         assert len(selection.cached) == 2
 
     def test_no_child_has_a_checksum_falls_back_to_the_default(self, s3):
@@ -482,17 +486,29 @@ class TestGenerateForAssetsS3:
         the s3.py lookup depends on.
         """
         stored = hex_for("stored", Algorithm.blake3)
-        s3.put_object(
-            Bucket=BUCKET,
-            Key="file.txt",
-            Body=b"data",
-            Metadata={"x-checksum-blake3": stored},
-        )
+        # native="SHA256" so the object carries no algorithm this library reads
+        # natively, leaving the metadata blake3 as the only candidate. Without
+        # it S3's automatic CRC32 would win on priority and this would stop
+        # testing metadata lookup at all.
+        _put(s3, "file.txt", **{"x-checksum-blake3": stored})
 
         assets = [make_asset(f"s3://{BUCKET}/file.txt")]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum == stored
         assert result[0].checksum_alg == "blake3"
+
+    def test_auto_detect_file_prefers_a_native_checksum_over_metadata(self, s3):
+        """S3-native ranks above user metadata: the platform can verify it."""
+        _put(
+            s3,
+            "file.txt",
+            native="CRC32",
+            **{"x-checksum-blake3": hex_for("stored", Algorithm.blake3)},
+        )
+
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
+        assert result[0].checksum_alg == "crc32"
 
     def test_auto_detect_file_falls_back_to_blake3(self, s3, monkeypatch):
         """algorithm=None on S3 file with no stored checksums -> computes blake3.
@@ -512,15 +528,10 @@ class TestGenerateForAssetsS3:
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
-    def test_auto_detect_folder_common_algorithm(self, s3):
-        """algorithm=None on S3 folder where all children share blake3."""
+    def test_auto_detect_folder_where_every_child_shares_one_algorithm(self, s3):
+        """algorithm=None on an S3 folder whose children all carry blake3."""
         for name, digest in [("a.txt", "aa" * 32), ("b.txt", "bb" * 32)]:
-            s3.put_object(
-                Bucket=BUCKET,
-                Key=f"dataset/{name}",
-                Body=b"data",
-                Metadata={"x-checksum-blake3": digest},
-            )
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": digest})
 
         assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
