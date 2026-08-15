@@ -599,6 +599,7 @@ def compute_checksum(
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
     is_folder: bool | None = None,
+    max_workers: int | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for a local path or S3 URI (s3:// or s3a://).
@@ -606,9 +607,18 @@ def compute_checksum(
 
     is_folder is only consulted for S3 URIs; local paths are classified by
     os.path.isdir.
+
+    max_workers caps the threads used for a folder; None picks a default and 1
+    forces serial. It never affects the digest.
     """
     if path.startswith(("s3://", "s3a://")):
         return compute_checksum_s3(
-            path, algorithm, s3_client, use_stored, cached_results, is_folder
+            path,
+            algorithm,
+            s3_client,
+            use_stored,
+            cached_results,
+            is_folder,
+            max_workers,
         )
-    return compute_checksum_localfs(path, algorithm)
+    return compute_checksum_localfs(path, algorithm, max_workers)

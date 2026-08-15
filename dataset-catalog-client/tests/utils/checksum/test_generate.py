@@ -14,6 +14,7 @@ from catalog_client.models.asset import (
     DataAssetResponse,
     StoragePlatform,
 )
+from catalog_client.utils.checksum._parallel import DEFAULT_S3_WORKERS
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.generate import (
     UNSUPPORTED_PLATFORMS,
@@ -686,7 +687,12 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
     ):
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset])  # no s3_client
-    mock_client.assert_called_once_with("s3")
+    mock_client.assert_called_once()
+    assert mock_client.call_args.args == ("s3",)
+    # We own this client, so its pool is sized for the concurrent folder scan.
+    # A stock client caps at 10 and discards connections past that silently.
+    config = mock_client.call_args.kwargs["config"]
+    assert config.max_pool_connections >= DEFAULT_S3_WORKERS
 
 
 # ── Skip reporting: one mechanism for every skip ─────────────────────────────
