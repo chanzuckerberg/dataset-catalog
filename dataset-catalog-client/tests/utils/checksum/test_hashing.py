@@ -39,7 +39,10 @@ def _s3(head=None, body=b"hello"):
     """S3 client mock with configurable head_object and get_object responses."""
     s3 = MagicMock()
     s3.head_object.return_value = head or {}
-    s3.get_object.return_value = {"Body": io.BytesIO(body)}
+    # side_effect, not return_value: a single BytesIO would be shared by every
+    # key, so the second child to read it would see an exhausted stream. Serial
+    # execution made that deterministic; concurrent children would race on it.
+    s3.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(body)}
     return s3
 
 
