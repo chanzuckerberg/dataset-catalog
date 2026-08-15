@@ -79,6 +79,7 @@ an eval must never be able to print.
 | `conformance` | digest, width, `s3_base64` round-trip and router agreement vs one-shot oracles | fast + full |
 | `golden` | digests, `merkle_root`, chunk counts and sizes vs committed vectors | fast + full |
 | `invariance` | seeded fuzzing: partition-independence, manifest tiling, corruption sensitivity | fast |
+| `parallelism` | folder digests are identical at any worker count, across every tree shape | fast |
 | `sizes` | `total_size` vs `os.stat`/`os.walk`, plus sparse files, symlinks, hardlinks, unreadable children | fast |
 | `scale` | production 256MB chunking, throughput, peak RSS in a child process | full |
 | `aws_native` | real-S3 whole-object checksums, `FULL_OBJECT` vs `COMPOSITE`, multipart composites, prefix auto-detection | aws |
