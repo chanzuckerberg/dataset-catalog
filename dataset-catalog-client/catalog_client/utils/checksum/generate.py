@@ -12,9 +12,9 @@ from catalog_client.utils.checksum.hashing import (
 from catalog_client.utils.checksum.models import ChecksumResult, LocationChecksum
 from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
-    _find_common_algorithm_in_folder,
     _parse_s3_uri,
     _select_best_algorithm,
+    _select_folder_algorithm,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,13 +58,25 @@ class _S3Detection:
 
     Bundled rather than returned as a loose tuple because the compute phase
     needs every field to route correctly; dropping one silently changes
-    behaviour (see `has_cached_children`, which previously defaulted to False
+    behaviour (see `covers_all_children`, whose predecessor defaulted to False
     on the auto-detect path and made algorithm=None strictly worse than
     naming the algorithm auto-detection would have chosen).
     """
 
     algorithm: Algorithm | None
-    has_cached_children: bool = False
+    cached_children: int = 0
+    total_children: int = 0
+
+    @property
+    def covers_all_children(self) -> bool:
+        """
+        Whether the folder digest can be assembled without downloading anything.
+
+        Partial coverage is useful — it still saves a download per cached child
+        — but it is not the same as complete coverage, and only complete
+        coverage may proceed under compute_if_no_s3_checksum=False.
+        """
+        return self.total_children > 0 and self.cached_children == self.total_children
 
 
 def detect_and_cache_for_s3(
@@ -75,32 +87,35 @@ def detect_and_cache_for_s3(
     s3_client,
 ) -> _S3Detection:
     if asset_type == AssetType.folder:
-        common_algorithm, cached_children = _find_common_algorithm_in_folder(
-            location_uri, s3_client
+        # Every child carrying the chosen algorithm is reusable, whether that
+        # algorithm was named by the caller or picked here by cost. Coverage
+        # need not be universal: a child without it is one download, not a
+        # reason to discard the digests every other child already has.
+        selection = _select_folder_algorithm(location_uri, s3_client, algorithm)
+        if selection.algorithm is None:
+            return _S3Detection(algorithm=None)
+        cached_results.update(selection.cached)
+        return _S3Detection(
+            algorithm=selection.algorithm,
+            cached_children=len(selection.cached),
+            total_children=selection.total_children,
         )
-        # Children are reusable whenever the algorithm we are going to hash
-        # with is the one they all carry — whether that algorithm was named by
-        # the caller or discovered here.
-        if algorithm is None:
-            if common_algorithm is None:
-                return _S3Detection(algorithm=None)
-            cached_results.update(cached_children)
-            return _S3Detection(algorithm=common_algorithm, has_cached_children=True)
-        if common_algorithm == algorithm:
-            cached_results.update(cached_children)
-            return _S3Detection(algorithm=algorithm, has_cached_children=True)
-        return _S3Detection(algorithm=algorithm)
 
     bucket, key = _parse_s3_uri(location_uri)
     all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
     if algorithm is None:
+        # Not intersected with available_algorithms(): a stored digest is
+        # returned as-is and never re-hashed, so an uninstalled hasher is no
+        # obstacle here — unlike the folder path, which must combine children.
         detected = _select_best_algorithm(set(all_checksums.keys()))
         if detected is not None:
             cached_results[location_uri] = all_checksums[detected]
-        return _S3Detection(algorithm=detected)
+            return _S3Detection(detected, cached_children=1, total_children=1)
+        return _S3Detection(algorithm=None, total_children=1)
     if algorithm in all_checksums:
         cached_results[location_uri] = all_checksums[algorithm]
-    return _S3Detection(algorithm=algorithm)
+        return _S3Detection(algorithm, cached_children=1, total_children=1)
+    return _S3Detection(algorithm, total_children=1)
 
 
 def compute_for_s3(
@@ -118,8 +133,10 @@ def compute_for_s3(
         return cached_results[location_uri]
 
     # Assembling a folder digest from already-cached children needs no
-    # downloads, so compute_if_no_s3_checksum does not apply to it.
-    if not compute_if_no_s3_checksum and not detection.has_cached_children:
+    # downloads, so compute_if_no_s3_checksum does not apply to it. Partial
+    # coverage does not qualify: the children that are missing would still
+    # have to be fetched, which is exactly what this flag forbids.
+    if not compute_if_no_s3_checksum and not detection.covers_all_children:
         logger.debug(
             "Skipping %s: no stored S3 checksum and compute_if_no_s3_checksum=False",
             location_uri,
