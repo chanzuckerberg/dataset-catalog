@@ -207,6 +207,22 @@ def hash_bytes_independent(data: bytes, algorithm: Algorithm) -> str:
     return h.hexdigest()
 
 
+# Measured hashing throughput per algorithm, on an arm64 laptop. Only the order
+# of magnitude matters to the callers that price work with it, and only crc64 is
+# slow enough to change a decision: at ~450 MB/s it rivals the network feeding
+# it, where the others are one to two orders of magnitude faster.
+#
+# Here rather than beside a caller because it is a property of the algorithm,
+# like DIGEST_HEX_LENGTH below: the S3 cost model and the local pool gate both
+# reason about it, and two copies would be free to disagree.
+HASH_THROUGHPUT_MB_S: dict[Algorithm, float] = {
+    Algorithm.crc64nvme: 40_000.0,
+    Algorithm.crc32: 30_000.0,
+    Algorithm.blake3: 2_000.0,
+    Algorithm.blake2b: 1_300.0,
+    Algorithm.crc64: 450.0,
+}
+
 # Hex-digest width per algorithm. A digest of the wrong width cannot be packed
 # into the raw bytes a parent directory combines, so widths are checked at the
 # point a digest enters the system rather than failing later inside struct.pack.

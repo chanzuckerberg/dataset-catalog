@@ -20,6 +20,8 @@ from catalog_client.utils.checksum.s3 import (
     _fetch_s3_stored_checksum,
     _folder_prefix,
     _insert_key,
+    _is_folder_key,
+    _iter_listing,
     _parse_s3_uri,
 )
 
@@ -259,7 +261,7 @@ class _Row(NamedTuple):
     size: int  # 0 for directories; only used to decide whether to use a pool
 
 
-def _scan_dir(path: str) -> tuple[str, list[_Row]]:
+def _scan_dir(path: str) -> list[_Row]:
     """List one directory, sorted by name, dropping anything not a file or dir."""
     # `with`, because sorted() consumes the iterator and the fd should close
     # here rather than at the next collection.
@@ -275,7 +277,7 @@ def _scan_dir(path: str) -> tuple[str, list[_Row]]:
             rows.append(_Row(entry.name, False, entry.stat().st_size))
         elif entry.is_dir():
             rows.append(_Row(entry.name, True, 0))
-    return path, rows
+    return rows
 
 
 def _scan_levels(
@@ -314,10 +316,10 @@ def _scan_levels(
         levels.append(frontier)
         deeper: list[str] = []
         for directory in frontier:
-            scanned, listing = _scan_dir(directory)
-            rows[scanned] = listing
+            listing = _scan_dir(directory)
+            rows[directory] = listing
             deeper.extend(
-                os.path.join(scanned, row.name) for row in listing if row.is_dir
+                os.path.join(directory, row.name) for row in listing if row.is_dir
             )
         frontier = deeper
 
@@ -344,18 +346,26 @@ def _hash_files(
         and len(paths) > _MIN_FILES_FOR_POOL
         and total_bytes / len(paths) >= PARALLEL_MIN_MEAN_BYTES
     )
-    if not parallel:
-        return {path: _hash_local_file(path, algorithm) for path in paths}
+    # One path for both outcomes: ordered_map already runs inline, on this
+    # thread, when asked for a single worker, so the gate only has to decide a
+    # worker count and a read buffer. Writing a second serial loop here would
+    # oblige every future change to _hash_local_file's call shape to be made
+    # twice, with only the pooled copy under test.
+    workers = max_workers if parallel else 1
+    # The larger buffer is what makes threads pay off at all (see the constant),
+    # and it costs memory per stream in flight, so the serial walk keeps the
+    # small one.
+    read_buffer = PARALLEL_READ_BUFFER if parallel else None
 
-    # On the caller's thread: initialises any lazy state inside the hasher
-    # (crc64 builds its table on first use) and, more importantly, raises a
-    # missing optional dependency here rather than out of a worker's future.
-    new_hasher(algorithm)
+    if parallel:
+        # On the caller's thread: initialises any lazy state inside the hasher
+        # (crc64 builds its table on first use) and, more importantly, raises a
+        # missing optional dependency here rather than out of a worker's future.
+        new_hasher(algorithm)
 
     def hash_batch(batch: list[str]) -> list[tuple[str, ChecksumResult]]:
         return [
-            (path, _hash_local_file(path, algorithm, PARALLEL_READ_BUFFER))
-            for path in batch
+            (path, _hash_local_file(path, algorithm, read_buffer)) for path in batch
         ]
 
     # Batch size scales with the work available rather than being fixed. A flat
@@ -363,10 +373,10 @@ def _hash_files(
     # it serially — the exact case the pool exists for. Aiming for a few tasks
     # per worker gives one file per task there, and the cap only in trees large
     # enough that per-file dispatch would otherwise cost more than it saves.
-    per_task = max(1, min(_FILES_PER_TASK, len(paths) // (max_workers * 4)))
+    per_task = max(1, min(_FILES_PER_TASK, len(paths) // (workers * 4)))
     batches = [paths[i : i + per_task] for i in range(0, len(paths), per_task)]
     results: dict[str, ChecksumResult] = {}
-    for done in ordered_map(hash_batch, batches, max_workers):
+    for done in ordered_map(hash_batch, batches, workers):
         results.update(done)
     return results
 
@@ -386,20 +396,18 @@ def _hash_local_dir(
     workers = local_workers(max_workers)
     levels, rows = _scan_levels(path)
 
-    files = [
-        os.path.join(directory, row.name)
-        for level in levels
-        for directory in level
-        for row in rows[directory]
-        if not row.is_dir
-    ]
-    total_bytes = sum(
-        row.size
-        for level in levels
-        for directory in level
-        for row in rows[directory]
-        if not row.is_dir
-    )
+    # One traversal for both, rather than two identical comprehensions: they
+    # share the iteration and the is_dir filter, and a filter added to only one
+    # of them would leave the pool gate priced for a different set of files than
+    # the one actually hashed.
+    files: list[str] = []
+    total_bytes = 0
+    for level in levels:
+        for directory in level:
+            for row in rows[directory]:
+                if not row.is_dir:
+                    files.append(os.path.join(directory, row.name))
+                    total_bytes += row.size
     hashed = _hash_files(files, total_bytes, algorithm, workers)
 
     # Deepest level first, so every child is final before its parent reads it.
@@ -490,17 +498,18 @@ def _hash_s3_prefix(
     cached_results: dict[str, ChecksumResult] | None = None,
     max_workers: int | None = None,
 ) -> ChecksumResult:
-    """Hash all objects under an S3 prefix as a virtual directory tree."""
-    paginator = s3.get_paginator("list_objects_v2")
-    # The listing already reports every object's size, so a folder's total is
-    # known from this one call regardless of how each child's digest is later
-    # obtained (cache, stored checksum, or download).
-    sizes: dict[str, int | None] = {
-        obj["Key"]: obj.get("Size")
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
-        for obj in page.get("Contents", [])
-        if not obj["Key"].endswith("/")
-    }
+    """
+    Hash all objects under an S3 prefix as a virtual directory tree.
+
+    Listed through _iter_listing, the same helper the detect phase uses, so both
+    phases apply one definition of which objects a prefix contains — a folder
+    marker skipped by one and not the other would change the digest.
+
+    The listing reports every object's size, so a folder's total is known from
+    it regardless of how each child's digest is later obtained (cache, stored
+    checksum, or download).
+    """
+    sizes = dict(_iter_listing(s3, bucket, prefix))
     keys = sorted(sizes)
 
     tree: dict = {}
@@ -578,7 +587,7 @@ def compute_checksum_s3(
     """
     bucket, key = _parse_s3_uri(path)
     if is_folder is None:
-        is_folder = path.endswith("/") or not key
+        is_folder = _is_folder_key(key)
     if is_folder:
         return _hash_s3_prefix(
             bucket,

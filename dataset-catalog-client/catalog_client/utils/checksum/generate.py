@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
+from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
     compute_checksum_localfs,
@@ -25,12 +26,6 @@ class ChecksumWarning(UserWarning):
 
 
 UNSUPPORTED_PLATFORMS = {StoragePlatform.external, StoragePlatform.other}
-
-# Connection pool for an S3 client we construct ourselves. Higher than the
-# default worker count so the paginator and a full set of workers never
-# contend, and higher than botocore's default 10 because S3 work here is
-# latency-bound: more concurrent requests is the whole point.
-_OWNED_CLIENT_POOL = 16
 
 # for_assets preserves the caller's concrete asset type (DataAssetResponse is a
 # DataAssetRequest subclass that widens storage_platform to optional).
@@ -63,26 +58,19 @@ class _S3Detection:
     What the detect phase learned about an S3 location.
 
     Bundled rather than returned as a loose tuple because the compute phase
-    needs every field to route correctly; dropping one silently changes
+    needs both fields to route correctly; dropping one silently changes
     behaviour (see `covers_all_children`, whose predecessor defaulted to False
     on the auto-detect path and made algorithm=None strictly worse than
     naming the algorithm auto-detection would have chosen).
+
+    covers_all_children is a boolean rather than the child counts it is derived
+    from: only this answer has a reader, and carrying the counts obliged the
+    single-object branches to invent a total of 1 to make the arithmetic agree.
+    _FolderSelection still reports the counts, which is where they are real.
     """
 
     algorithm: Algorithm | None
-    cached_children: int = 0
-    total_children: int = 0
-
-    @property
-    def covers_all_children(self) -> bool:
-        """
-        Whether the folder digest can be assembled without downloading anything.
-
-        Partial coverage is useful — it still saves a download per cached child
-        — but it is not the same as complete coverage, and only complete
-        coverage may proceed under compute_if_no_s3_checksum=False.
-        """
-        return self.total_children > 0 and self.cached_children == self.total_children
+    covers_all_children: bool = False
 
 
 def detect_and_cache_for_s3(
@@ -104,27 +92,25 @@ def detect_and_cache_for_s3(
         if selection.algorithm is None:
             return _S3Detection(algorithm=None)
         cached_results.update(selection.cached)
-        return _S3Detection(
-            algorithm=selection.algorithm,
-            cached_children=len(selection.cached),
-            total_children=selection.total_children,
-        )
+        return _S3Detection(selection.algorithm, selection.covers_all_children)
 
     bucket, key = _parse_s3_uri(location_uri)
     all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
-    if algorithm is None:
-        # Not intersected with available_algorithms(): a stored digest is
-        # returned as-is and never re-hashed, so an uninstalled hasher is no
-        # obstacle here — unlike the folder path, which must combine children.
-        detected = _select_best_algorithm(set(all_checksums.keys()))
-        if detected is not None:
-            cached_results[location_uri] = all_checksums[detected]
-            return _S3Detection(detected, cached_children=1, total_children=1)
-        return _S3Detection(algorithm=None, total_children=1)
-    if algorithm in all_checksums:
-        cached_results[location_uri] = all_checksums[algorithm]
-        return _S3Detection(algorithm, cached_children=1, total_children=1)
-    return _S3Detection(algorithm, total_children=1)
+    # A named algorithm is used as named; otherwise pick the best one stored.
+    # Not intersected with available_algorithms(): a stored digest is returned
+    # as-is and never re-hashed, so an uninstalled hasher is no obstacle here —
+    # unlike the folder path, which must combine children.
+    chosen = (
+        algorithm
+        if algorithm is not None
+        else _select_best_algorithm(set(all_checksums))
+    )
+    # A single object is either covered or not, which is all the compute phase
+    # asks; there are no children to count.
+    if chosen is not None and chosen in all_checksums:
+        cached_results[location_uri] = all_checksums[chosen]
+        return _S3Detection(chosen, covers_all_children=True)
+    return _S3Detection(chosen)
 
 
 def compute_for_s3(
@@ -282,19 +268,9 @@ def for_assets(
     result: list[AssetT] = []
     cached_results: dict[str, ChecksumResult] = {}
     if s3_client is None:
-        # Imported here rather than at module scope: boto3/botocore pull in
-        # several hundred modules, and `import catalog_client` reaches this
-        # module transitively via catalog_client.utils.
-        import boto3
-        from botocore.config import Config
-
-        # A stock client caps its pool at 10, which would silently throttle the
-        # concurrent folder scan — botocore leaves urllib3 at block=False, so
-        # excess connections are discarded and re-handshaked rather than
-        # queued. We own this client, so size the pool to what we will use.
-        s3_client = boto3.client(
-            "s3", config=Config(max_pool_connections=_OWNED_CLIENT_POOL)
-        )
+        # Ours to configure, so the pool is sized for the workers the folder
+        # scan will ask for rather than left at botocore's default 10.
+        s3_client = owned_s3_client(max_workers)
 
     for asset in assets:
         asset_copy = asset.model_copy()

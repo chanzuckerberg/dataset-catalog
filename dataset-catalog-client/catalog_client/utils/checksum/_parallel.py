@@ -42,6 +42,10 @@ DEFAULT_S3_WORKERS = 8
 # for the consumer to advance, small enough that the queue stays bounded.
 _WINDOW_PER_WORKER = 4
 
+# Spare connections kept above the worker count on a client we build ourselves,
+# so the paginator driving a walk never contends with a full set of workers.
+_POOL_HEADROOM = 8
+
 
 def ordered_map(
     fn: Callable[[T], R], items: Iterable[T], max_workers: int
@@ -118,3 +122,24 @@ def s3_workers(s3, requested: int | None) -> int:
             limit,
         )
     return workers
+
+
+def owned_s3_client(max_workers: int | None = None):
+    """
+    A boto3 S3 client whose connection pool is sized for our own worker count.
+
+    Only for clients we construct: a client passed in by a caller is used as-is
+    and `s3_workers` clamps to whatever pool they chose. Lives beside
+    `s3_workers` because it is the same policy from the other side — that
+    function reads a pool limit, this one writes it, and when the two disagree
+    the walk silently pays a TLS handshake per excess request.
+
+    boto3 is imported here rather than at module scope: it pulls in several
+    hundred modules, and `import catalog_client` reaches this package
+    transitively via catalog_client.utils.
+    """
+    import boto3
+    from botocore.config import Config
+
+    pool = max(DEFAULT_S3_WORKERS, max_workers or 0) + _POOL_HEADROOM
+    return boto3.client("s3", config=Config(max_pool_connections=pool))

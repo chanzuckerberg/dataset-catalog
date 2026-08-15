@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from catalog_client.utils.checksum._parallel import ordered_map, s3_workers
 from catalog_client.utils.checksum.algorithm import (
+    HASH_THROUGHPUT_MB_S,
     Algorithm,
     available_algorithms,
     default_algorithm,
@@ -61,18 +62,6 @@ ALGORITHM_PRIORITY: dict[Algorithm, int] = {
 _REQUEST_BYTE_EQUIVALENT = 4 * 1024 * 1024
 _NETWORK_MB_S = 100.0
 
-# Measured on an arm64 laptop. Only the order of magnitude matters, and only
-# crc64 is slow enough to change a ranking: at ~450 MB/s it rivals the network
-# it is being fed by, where the others are one to two orders of magnitude
-# faster and are therefore priced almost identically.
-_HASH_MB_S: dict[Algorithm, float] = {
-    Algorithm.crc64nvme: 40_000.0,
-    Algorithm.crc32: 30_000.0,
-    Algorithm.blake3: 2_000.0,
-    Algorithm.blake2b: 1_300.0,
-    Algorithm.crc64: 450.0,
-}
-
 
 @dataclass(frozen=True)
 class _FolderSelection:
@@ -88,6 +77,18 @@ class _FolderSelection:
     algorithm: Algorithm | None = None
     cached: dict[str, ChecksumResult] = field(default_factory=dict)
     total_children: int = 0
+
+    @property
+    def covers_all_children(self) -> bool:
+        """
+        Whether the folder digest can be assembled without downloading anything.
+
+        Lives here, next to the two values it compares, so the rule is stated
+        once. Partial coverage is still useful — it saves a download per cached
+        child — but it is not the same as complete coverage, and only complete
+        coverage may proceed under compute_if_no_s3_checksum=False.
+        """
+        return self.total_children > 0 and len(self.cached) == self.total_children
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -112,6 +113,22 @@ def _folder_prefix(key: str) -> str:
     if not key or key.endswith("/"):
         return key
     return f"{key}/"
+
+
+def _is_folder_key(key: str) -> bool:
+    """
+    Whether an S3 key names a prefix rather than a single object.
+
+    A trailing slash means prefix, and so does an empty key — that is the bucket
+    root, which cannot be an object. The one statement of the rule, so an entry
+    point that infers the asset type cannot drift from the one that consumes it.
+    """
+    return not key or key.endswith("/")
+
+
+def _is_folder_uri(uri: str) -> bool:
+    """`_is_folder_key` for callers holding a whole URI rather than a key."""
+    return _is_folder_key(_parse_s3_uri(uri)[1])
 
 
 def _insert_key(tree: dict, parts: list[str], s3_key: str) -> None:
@@ -286,12 +303,12 @@ def _recompute_cost(
     effective_mb = (
         missing_bytes + missing_count * _REQUEST_BYTE_EQUIVALENT
     ) / 1_048_576
-    return effective_mb * (1.0 / _NETWORK_MB_S + 1.0 / _HASH_MB_S[algorithm])
+    return effective_mb * (1.0 / _NETWORK_MB_S + 1.0 / HASH_THROUGHPUT_MB_S[algorithm])
 
 
 def _cheapest_algorithm(
     per_child: dict[str, dict[Algorithm, ChecksumResult]],
-    sizes: dict[str, int],
+    sizes: dict[str, int | None],
 ) -> Algorithm:
     """
     The algorithm requiring the least recompute across a prefix's children.
@@ -313,9 +330,12 @@ def _cheapest_algorithm(
     candidates.add(default_algorithm())
 
     def rank(algorithm: Algorithm) -> tuple[float, int]:
-        missing = [path for path, r in per_child.items() if algorithm not in r]
+        missing = [child for child, r in per_child.items() if algorithm not in r]
+        # `or 0`: an unreported size prices as free rather than aborting the
+        # ranking. It only has to order the options, and a child whose size the
+        # listing withheld still costs its round trip via missing_count.
         cost = _recompute_cost(
-            sum(sizes.get(path, 0) for path in missing), len(missing), algorithm
+            sum(sizes.get(child) or 0 for child in missing), len(missing), algorithm
         )
         # Priority breaks ties only. A tie means both need the same recompute
         # -- usually none at all -- so nothing is paid for preferring one.
@@ -324,18 +344,30 @@ def _cheapest_algorithm(
     return min(candidates, key=rank)
 
 
-def _iter_listing(s3_client, bucket: str, prefix: str) -> Iterator[tuple[str, int]]:
-    """Yield (key, size) for every object under a prefix, skipping folder markers."""
+def _iter_listing(
+    s3_client, bucket: str, prefix: str
+) -> Iterator[tuple[str, int | None]]:
+    """
+    Yield (key, size) for every object under a prefix, skipping folder markers.
+
+    The single place the listing rules live, so detection and hashing always see
+    the same set of objects. Size stays None when the listing does not report
+    one: a folder total must distinguish "unknown" from 0, and callers that only
+    need a number for arithmetic coerce it themselves.
+    """
     paginator = s3_client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             if obj["Key"].endswith("/"):
                 continue
-            yield obj["Key"], obj.get("Size") or 0
+            yield obj["Key"], obj.get("Size")
 
 
 def _select_folder_algorithm(
-    path: str, s3_client, algorithm: Algorithm | None = None, max_workers=None
+    path: str,
+    s3_client,
+    algorithm: Algorithm | None = None,
+    max_workers: int | None = None,
 ) -> _FolderSelection:
     """
     Choose the algorithm to hash a prefix with, and collect reusable children.
@@ -362,30 +394,37 @@ def _select_folder_algorithm(
     # always see the same set of objects.
     prefix = _folder_prefix(key)
 
-    def head(item: tuple[str, int]) -> tuple[str, int, dict[Algorithm, ChecksumResult]]:
+    def head(
+        item: tuple[str, int | None],
+    ) -> tuple[str, int | None, dict[Algorithm, ChecksumResult]]:
         child_key, size = item
-        child_path = f"s3://{bucket}/{child_key}"
         return (
-            child_path,
+            child_key,
             size,
             _fetch_all_s3_stored_checksums(bucket, child_key, s3_client),
         )
 
-    # Size comes off the listing, which reports it for every object including
-    # the ones with no stored checksum at all -- those are exactly the ones the
-    # cost model needs to price.
-    sizes: dict[str, int] = {}
+    # Both maps are keyed by S3 key, not by s3:// path: the full paths are only
+    # needed for the children that survive selection, so building them for every
+    # object would retain an N-entry string map to discard most of it.
+    #
+    # Size comes off the listing, which reports it for every object including the
+    # ones with no stored checksum at all -- those are exactly the ones the cost
+    # model needs to price.
+    sizes: dict[str, int | None] = {}
     per_child: dict[str, dict[Algorithm, ChecksumResult]] = {}
 
-    # The listing is consumed lazily through ordered_map's window, so a prefix
-    # of a million objects never materialises a million keys or futures.
-    for child_path, size, stored in ordered_map(
+    # The listing is consumed lazily through ordered_map's window, so no matter
+    # how large the prefix is only a bounded number of futures exist at once.
+    # The accumulators below are still O(objects); it is the scheduling state,
+    # not the result set, that the window bounds.
+    for child_key, size, stored in ordered_map(
         head,
         _iter_listing(s3_client, bucket, prefix),
         s3_workers(s3_client, max_workers),
     ):
-        sizes[child_path] = size
-        per_child[child_path] = stored
+        sizes[child_key] = size
+        per_child[child_key] = stored
 
     if not per_child:
         # An empty or non-existent prefix. Pass an explicitly named algorithm
@@ -395,7 +434,11 @@ def _select_folder_algorithm(
     chosen = (
         algorithm if algorithm is not None else _cheapest_algorithm(per_child, sizes)
     )
-    cached = {p: r[chosen] for p, r in per_child.items() if chosen in r}
+    cached = {
+        f"s3://{bucket}/{child}": r[chosen]
+        for child, r in per_child.items()
+        if chosen in r
+    }
     logger.debug(
         "Selected %s for %s: %d of %d children already carry it",
         chosen,

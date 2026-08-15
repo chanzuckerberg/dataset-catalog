@@ -50,11 +50,21 @@ from catalog_client.models.dataset import (
 )
 from catalog_client.models.lineage import LineageType
 from catalog_client.utils.checksum import Algorithm, ChecksumResult, default_algorithm
+from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.generate import compute_for_s3
 from catalog_client.utils.checksum.hashing import (
     compute_checksum_localfs,
     compute_checksum_s3,
 )
+from catalog_client.utils.checksum.s3 import (
+    _MISSING_OBJECT_ERROR_CODES,
+    _is_folder_uri,
+    _missing_object_error_code,
+)
+
+# The SDK's "this object is not there" codes, plus the bucket case, which only a
+# caller naming a bucket outright can hit.
+_MISSING_S3_TARGET_CODES = _MISSING_OBJECT_ERROR_CODES | {"NoSuchBucket"}
 
 EXIT_ERROR = 1
 EXIT_USAGE = 2
@@ -64,7 +74,11 @@ EXIT_SERVER = 5
 
 
 def _fail_message(message: str, code: int) -> NoReturn:
-    """Report a problem on stderr and exit with ``code``."""
+    """Report a problem on stderr and exit with ``code``.
+
+    The one place this CLI writes an error and exits, so every subcommand
+    produces the same ``error: ...`` shape on the same stream.
+    """
     print(f"error: {message}", file=sys.stderr)
     raise SystemExit(code)
 
@@ -490,18 +504,20 @@ def _checksum_json(result: ChecksumResult) -> dict:
 def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
     # Imported here, not at module scope: botocore is several hundred modules
     # and no other subcommand needs it.
-    import boto3
-    from botocore.config import Config
     from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
     path: str = args.path
     algorithm: Algorithm | None = args.algorithm
-    # Pool sized for the concurrent folder scan: a stock client caps at 10 and
-    # silently discards connections past that rather than queueing them.
-    s3_client = boto3.client(
-        "s3", config=Config(max_pool_connections=max(10, args.workers or 16))
-    )
-    is_folder = args.folder or (path.endswith("/") if not args.file else False)
+    # The SDK owns pool sizing: it is the side that knows how many workers the
+    # walk will ask for, and it clamps the worker count back to this pool.
+    s3_client = owned_s3_client(args.workers)
+    # --folder/--file override the URI; argparse guarantees they are not both
+    # set. Otherwise defer to the SDK's rule rather than restating it, so a
+    # bucket root is classified the same way here as in compute_checksum_s3.
+    if args.folder or args.file:
+        is_folder = args.folder
+    else:
+        is_folder = _is_folder_uri(path)
 
     try:
         if args.recompute:
@@ -527,8 +543,7 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
             max_workers=args.workers,
         )
     except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code")
-        if code in ("404", "NotFound", "NoSuchKey", "NoSuchBucket"):
+        if _missing_object_error_code(exc) in _MISSING_S3_TARGET_CODES:
             _fail_message(f"{path}: no such object or bucket", EXIT_NOT_FOUND)
         _fail_message(f"S3 request failed: {exc}", EXIT_SERVER)
     except ParamValidationError as exc:
@@ -749,9 +764,8 @@ def main(argv: list[str] | None = None) -> None:
         _fail(exc, EXIT_ERROR, "request failed")
 
 
-def _fail(exc: CatalogError, code: int, hint: str) -> None:
-    print(f"error: {hint}: {exc}", file=sys.stderr)
-    raise SystemExit(code)
+def _fail(exc: CatalogError, code: int, hint: str) -> NoReturn:
+    _fail_message(f"{hint}: {exc}", code)
 
 
 if __name__ == "__main__":
