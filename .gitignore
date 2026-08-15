@@ -21,6 +21,10 @@ build/
 htmlcov/
 .tox/
 
+# Eval run output. The golden vectors under evals/checksum/vectors/ ARE tracked —
+# they are the anchor the eval compares against; only per-run reports are not.
+dataset-catalog-client/evals/checksum/reports/
+
 # Linting / type checking
 .ruff_cache/
 .mypy_cache/
