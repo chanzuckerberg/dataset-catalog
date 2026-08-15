@@ -241,19 +241,33 @@ if you need the same algorithm regardless of what is installed.
 
 When `algorithm=None`, the library inspects both S3 native checksum fields (`crc32`,
 `crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
-`x-checksum-crc64`) in a single `HeadObject` call, then picks the strongest algorithm
-present. Where a checksum was stored does not affect the choice — only which algorithm
-it is, ranked by `ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
+`x-checksum-crc64`) in a single `HeadObject` call.
 
-`blake3` > `blake2b` > `crc64` > `crc64nvme` > `crc32`
+**For a single file**, it picks the highest-priority algorithm present, ranked by
+`ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
 
-So a `blake3` value in user metadata is preferred over a native `crc32`. If no stored
-checksum exists, `default_algorithm()` is used and the object is downloaded to compute
-the hash.
+`crc64nvme` > `crc32` > `blake3` > `blake2b` > `crc64`
 
-For folders, the algorithm must be present on **every** object under the prefix; the
-strongest algorithm common to all children wins, and if there is no common algorithm the
-folder falls back to `default_algorithm()` and every object is downloaded.
+S3-native algorithms rank first: they are what S3 computes and can verify itself, so
+reusing one keeps the catalog digest comparable with what the platform reports. Where a
+checksum was stored does not otherwise affect the choice. If no stored checksum exists,
+`default_algorithm()` is used and the object is downloaded to compute the hash.
+
+**For a folder**, the algorithm does *not* have to be present on every object. The
+library ranks candidates by how much recompute each would need — the bytes and the
+number of objects that lack it — and picks the cheapest. Children that already carry the
+chosen algorithm contribute their stored digest; only the rest are downloaded. Priority
+breaks ties, which in practice means two algorithms that both need no downloads at all.
+
+Mixing stored and computed digests is safe: a child hashed locally produces the same
+value it would report as a stored checksum, so the folder digest is identical either
+way. If no child carries anything readable, the folder falls back to
+`default_algorithm()` and every object is downloaded.
+
+> **Digest width.** Selection optimises for recompute cost and does not impose a minimum
+> digest strength, so a prefix where `crc32` has better coverage than the alternatives
+> will be registered with a 32-bit digest. Distinct 32-bit values collide at around 65k
+> objects by the birthday bound. Pass an explicit `algorithm=` where that matters.
 
 ### Controlling downloads
 
