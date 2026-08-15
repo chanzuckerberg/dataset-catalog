@@ -1,8 +1,10 @@
 import base64
 import binascii
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from catalog_client.utils.checksum._parallel import ordered_map, s3_workers
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
     available_algorithms,
@@ -322,8 +324,18 @@ def _cheapest_algorithm(
     return min(candidates, key=rank)
 
 
+def _iter_listing(s3_client, bucket: str, prefix: str) -> Iterator[tuple[str, int]]:
+    """Yield (key, size) for every object under a prefix, skipping folder markers."""
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            if obj["Key"].endswith("/"):
+                continue
+            yield obj["Key"], obj.get("Size") or 0
+
+
 def _select_folder_algorithm(
-    path: str, s3_client, algorithm: Algorithm | None = None
+    path: str, s3_client, algorithm: Algorithm | None = None, max_workers=None
 ) -> _FolderSelection:
     """
     Choose the algorithm to hash a prefix with, and collect reusable children.
@@ -336,6 +348,11 @@ def _select_folder_algorithm(
 
     `algorithm` names the algorithm outright and skips selection; the scan
     still runs, because it is what finds the children that already carry it.
+
+    For a prefix whose children all carry a stored checksum this scan is the
+    entire operation — no object is ever read — so its HeadObjects are issued
+    concurrently. Results are consumed in listing order, which keeps an error
+    on one child reported the same way a serial loop reported it.
     """
     if not path.startswith(("s3://", "s3a://")):
         return _FolderSelection()
@@ -345,22 +362,30 @@ def _select_folder_algorithm(
     # always see the same set of objects.
     prefix = _folder_prefix(key)
 
+    def head(item: tuple[str, int]) -> tuple[str, int, dict[Algorithm, ChecksumResult]]:
+        child_key, size = item
+        child_path = f"s3://{bucket}/{child_key}"
+        return (
+            child_path,
+            size,
+            _fetch_all_s3_stored_checksums(bucket, child_key, s3_client),
+        )
+
     # Size comes off the listing, which reports it for every object including
     # the ones with no stored checksum at all -- those are exactly the ones the
     # cost model needs to price.
     sizes: dict[str, int] = {}
     per_child: dict[str, dict[Algorithm, ChecksumResult]] = {}
 
-    paginator = s3_client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            if obj["Key"].endswith("/"):
-                continue
-            child_path = f"s3://{bucket}/{obj['Key']}"
-            sizes[child_path] = obj.get("Size") or 0
-            per_child[child_path] = _fetch_all_s3_stored_checksums(
-                bucket, obj["Key"], s3_client
-            )
+    # The listing is consumed lazily through ordered_map's window, so a prefix
+    # of a million objects never materialises a million keys or futures.
+    for child_path, size, stored in ordered_map(
+        head,
+        _iter_listing(s3_client, bucket, prefix),
+        s3_workers(s3_client, max_workers),
+    ):
+        sizes[child_path] = size
+        per_child[child_path] = stored
 
     if not per_child:
         # An empty or non-existent prefix. Pass an explicitly named algorithm
