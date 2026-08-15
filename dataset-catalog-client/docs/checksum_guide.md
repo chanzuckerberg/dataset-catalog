@@ -166,6 +166,7 @@ catalog checksum data/folder/ --children
 catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored checksum
 catalog checksum s3://my-bucket/data/file.h5ad --recompute
 catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
+catalog checksum data/folder/ --workers 1                  # serial, for comparison
 ```
 
 Like `for_location`, omitting `--algorithm` lets a checksum already stored on the S3
@@ -383,6 +384,52 @@ an access, credential, or throttling error is reported (as a `ChecksumWarning` v
 handler) rather than being treated as "this object has no stored checksum" — which would have
 quietly triggered a full download, or a silent skip under `compute_if_no_s3_checksum=False`.
 Only a genuinely missing object counts as "no stored checksum".
+
+---
+
+## Parallelism
+
+Folders are hashed concurrently by default. `max_workers` (`--workers` on the CLI)
+caps the threads; `None` picks a default from the available CPUs and `1` forces the
+serial path.
+
+**It never changes a checksum.** A folder digest depends on the order children are
+*combined* in, which stays sorted by name regardless of the order they finish in. The
+eval's `parallelism` dimension asserts this for every tree shape, every algorithm and
+several worker counts, per path rather than only at the root.
+
+What it does and does not speed up:
+
+| workload | effect |
+|---|---|
+| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. |
+| Local folder of large files | 2–4.5x, measured. blake3 3.9x, blake2b 4.5x, crc32 2.3x, crc64nvme 2.1x on 8 × 8MB. |
+| Local folder of many small files | Unchanged. The pool only engages above a mean file size, because below it the cost is `open`/`close` in the kernel rather than hashing, and threads measured net-negative. |
+| Single file | Unchanged — there is nothing to parallelise across. |
+
+Two things stay serial deliberately, both because measurement said so: directory
+listing (concurrency made it monotonically worse on a local filesystem), and the
+per-asset loop in `for_assets` (so every `ChecksumWarning` is raised on the calling
+thread, keeping the contract under `warnings.simplefilter("error", ChecksumWarning)`).
+
+```python
+# Cap threads, or force the serial path.
+assets = for_assets(assets, s3_client=s3, max_workers=4)
+result = compute_checksum_localfs("/data/folder", Algorithm.blake3, max_workers=1)
+```
+
+If you pass your own `s3_client`, the S3 worker count is clamped to its
+`max_pool_connections` (10 on a stock client). Exceeding that pool does not queue —
+botocore discards and re-opens connections instead — so raise it on the client if you
+want more concurrency than that:
+
+```python
+import boto3
+from botocore.config import Config
+
+s3 = boto3.client("s3", config=Config(max_pool_connections=32))
+assets = for_assets(assets, s3_client=s3, max_workers=32)
+```
 
 ---
 

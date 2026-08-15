@@ -10,10 +10,12 @@ files the unit suite cannot afford to create:
      (an int overflow, a boundary that only misfires above some threshold) would
      ship green.
 
-  2. "no chunk is ever held in memory: peak usage is one READ_BUFFER regardless
-     of CHUNK_SIZE" (hashing.py). That is a comment. Here it is a measurement:
-     a child process hashes a 1GB file and reports peak RSS above its own
-     baseline, which must stay far below the file size.
+  2. "no chunk is ever held in memory: peak usage is one buffer per stream in
+     flight, regardless of CHUNK_SIZE" (hashing.py). That is a comment. Here it
+     is a measurement: a child process hashes a 1GB *file* and reports peak RSS
+     above its own baseline, which must stay far below the file size. A single
+     file never engages the thread pool, so this stays a statement about chunk
+     buffering rather than about worker count.
 
 Throughput is recorded per algorithm — useful as a trend line, and gated only
 loosely, since eval machines vary far more than the code does.
