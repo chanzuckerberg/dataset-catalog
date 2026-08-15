@@ -50,6 +50,26 @@ def default_algorithm() -> Algorithm:
     return Algorithm.blake3 if _HAS_BLAKE3 else Algorithm.blake2b
 
 
+def available_algorithms() -> set[Algorithm]:
+    """
+    The algorithms this install can actually compute.
+
+    blake2b and crc32 are stdlib and always present; the other three come from
+    the optional `checksum` extra. Callers that pick an algorithm from data
+    rather than from an argument — folder auto-detection reads whatever S3
+    happens to have stored — must intersect with this, or they will choose an
+    algorithm whose hasher raises ImportError halfway through a walk.
+    """
+    unavailable = set()
+    if not _HAS_BLAKE3:
+        unavailable.add(Algorithm.blake3)
+    if not _HAS_CRCMOD:
+        unavailable.add(Algorithm.crc64)
+    if not _HAS_AWSCRT:
+        unavailable.add(Algorithm.crc64nvme)
+    return set(Algorithm) - unavailable
+
+
 class _Hasher(Protocol):
     def update(self, data: bytes) -> None: ...
 
