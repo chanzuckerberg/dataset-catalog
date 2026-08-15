@@ -1,7 +1,13 @@
 import os
+import sys
 from dataclasses import replace
+from typing import NamedTuple
 
-from catalog_client.utils.checksum._parallel import ordered_map, s3_workers
+from catalog_client.utils.checksum._parallel import (
+    local_workers,
+    ordered_map,
+    s3_workers,
+)
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
     _Hasher,
@@ -31,6 +37,22 @@ READ_BUFFER = 64 * 1024  # 64KB I/O buffer
 # digest: file_hash never sees a buffer boundary, and chunk boundaries stay
 # exact as long as CHUNK_SIZE is a multiple of the buffer (256MB % 1MB == 0).
 PARALLEL_READ_BUFFER = 1024 * 1024
+
+# Mean file size at or above which a local tree is hashed through a pool.
+# Below it the per-file cost is dominated by open/close syscalls contending in
+# the kernel rather than by hashing, and threads measured net-negative on a
+# real 16k-file tree averaging 24KB. Derived from the ~25-30us of GIL-free work
+# per operation that thread handoff needs to pay for itself: at blake3's
+# 2.1 GB/s that is ~60KB, at crc64nvme's 48 GB/s ~1.4MB. 1MB is the cautious
+# end of that range, since the algorithm is not known when the gate is applied.
+PARALLEL_MIN_MEAN_BYTES = 1024 * 1024
+
+# Below this many files, creating a pool costs more than it saves.
+_MIN_FILES_FOR_POOL = 4
+
+# Files per pool task. Dispatch overhead is comparable to the work itself once
+# files are small, so batching amortises it.
+_FILES_PER_TASK = 128
 
 
 def _iter_stream(stream, read_buffer: int | None = None):
@@ -154,7 +176,7 @@ def _hash_stream(
     offset = 0
     chunk_len = 0
 
-    def close_chunk() -> None:
+    def close_chunk(final: bool = False) -> None:
         """Record the chunk accumulated so far and start a fresh chunk hasher."""
         nonlocal chunk_hasher, offset, chunk_len
         # hexdigest() is a non-destructive read of hasher state for every
@@ -175,7 +197,9 @@ def _hash_stream(
         )
         offset += chunk_len
         chunk_len = 0
-        chunk_hasher = new_hasher(algorithm)
+        # Nothing follows the last chunk, so allocating a hasher for it would
+        # throw one away per file — and most files are a single chunk.
+        chunk_hasher = None if final else new_hasher(algorithm)
 
     # Hashers are fed incrementally, so no chunk is ever held in memory: peak
     # usage is one buffer per stream in flight, regardless of CHUNK_SIZE. A
@@ -194,7 +218,7 @@ def _hash_stream(
             close_chunk()
 
     if chunk_len:
-        close_chunk()
+        close_chunk(final=True)
 
     # Use raw_from_hex so CRC algorithms produce 4/8-byte packed ints
     # while crypto algorithms produce raw hash bytes
@@ -214,26 +238,181 @@ def _hash_stream(
 # ── Local filesystem ────────────────────────────────────────────────────────────
 
 
-def _hash_local_file(path: str, algorithm: Algorithm) -> ChecksumResult:
+def _hash_local_file(
+    path: str, algorithm: Algorithm, read_buffer: int | None = None
+) -> ChecksumResult:
     with open(path, "rb") as fh:
         # fstat on the open handle rather than os.path.getsize(path): it sizes
         # the exact file being hashed, with no second path lookup and no window
         # for the path to be replaced between the stat and the read.
         size = os.fstat(fh.fileno()).st_size
-        return _hash_stream(fh, algorithm, path, total_size=size)
+        return _hash_stream(
+            fh, algorithm, path, total_size=size, read_buffer=read_buffer
+        )
 
 
-def _hash_local_dir(path: str, algorithm: Algorithm) -> ChecksumResult:
-    """Recursively hash a local directory into a Merkle/composite tree."""
-    children: dict[str, ChecksumResult] = {}
+class _Row(NamedTuple):
+    """One entry in a directory listing, as the walk needs it."""
 
-    for entry in sorted(os.scandir(path), key=lambda e: e.name):
+    name: str
+    is_dir: bool
+    size: int  # 0 for directories; only used to decide whether to use a pool
+
+
+def _scan_dir(path: str) -> tuple[str, list[_Row]]:
+    """List one directory, sorted by name, dropping anything not a file or dir."""
+    # `with`, because sorted() consumes the iterator and the fd should close
+    # here rather than at the next collection.
+    with os.scandir(path) as entries:
+        listing = sorted(entries, key=lambda e: e.name)
+
+    rows: list[_Row] = []
+    for entry in listing:
+        # Both predicates follow symlinks, as they always have: a symlinked
+        # file is hashed under the link name and a symlinked directory is
+        # descended into. _scan_levels bounds the resulting cycles.
         if entry.is_file():
-            children[entry.name] = _hash_local_file(entry.path, algorithm)
+            rows.append(_Row(entry.name, False, entry.stat().st_size))
         elif entry.is_dir():
-            children[entry.name] = _hash_local_dir(entry.path, algorithm)
+            rows.append(_Row(entry.name, True, 0))
+    return path, rows
 
-    return _directory_result(path, children, algorithm)
+
+def _scan_levels(
+    root: str,
+) -> tuple[list[list[str]], dict[str, list[_Row]]]:
+    """
+    List a tree breadth-first: directory paths per level, and each one's rows.
+
+    Breadth-first rather than recursive for two reasons: it costs no Python
+    stack, so nesting depth stops being a limit, and it yields the whole size
+    profile before any file is hashed, which is what lets _hash_files decide
+    on measured data whether a pool is worth it.
+
+    Deliberately serial. Listing is pure syscall work that the kernel
+    serialises anyway, and concurrency makes it monotonically worse: scanning
+    16324 files across ~2400 directories on APFS measured 104ms at one thread
+    and 203ms at eight. A latency-bound filesystem would want the opposite, but
+    that is unmeasured here and the local regression is not.
+
+    Depth is capped because is_dir() follows symlinks. A plain symlink cycle
+    is stopped earlier by the kernel's own ELOOP, but nothing else bounds a
+    breadth-first walk, which would grow the frontier until memory ran out
+    where recursion would have raised RecursionError.
+    """
+    limit = sys.getrecursionlimit()
+    levels: list[list[str]] = []
+    rows: dict[str, list[_Row]] = {}
+    frontier = [root]
+
+    while frontier:
+        if len(levels) >= limit:
+            raise RuntimeError(
+                f"Directory nesting under {root!r} exceeded {limit} levels at "
+                f"{frontier[0]!r}; a symlinked directory cycle is the usual cause"
+            )
+        levels.append(frontier)
+        deeper: list[str] = []
+        for directory in frontier:
+            scanned, listing = _scan_dir(directory)
+            rows[scanned] = listing
+            deeper.extend(
+                os.path.join(scanned, row.name) for row in listing if row.is_dir
+            )
+        frontier = deeper
+
+    return levels, rows
+
+
+def _hash_files(
+    paths: list[str], total_bytes: int, algorithm: Algorithm, max_workers: int
+) -> dict[str, ChecksumResult]:
+    """
+    Hash every file in a tree, using a pool only where one actually pays.
+
+    The gate is measured, not guessed: the scan already knows every file and
+    its size. Threads win on large files — blake3 measured 3.5x — but lose on
+    trees of many small ones, where the cost is `open`/`close` contending in
+    the kernel rather than hashing, and 8 workers measured 0.55-0.87x on a real
+    16k-file tree. Mean size separates the two cases.
+    """
+    if not paths:
+        return {}
+
+    parallel = (
+        max_workers > 1
+        and len(paths) > _MIN_FILES_FOR_POOL
+        and total_bytes / len(paths) >= PARALLEL_MIN_MEAN_BYTES
+    )
+    if not parallel:
+        return {path: _hash_local_file(path, algorithm) for path in paths}
+
+    # On the caller's thread: initialises any lazy state inside the hasher
+    # (crc64 builds its table on first use) and, more importantly, raises a
+    # missing optional dependency here rather than out of a worker's future.
+    new_hasher(algorithm)
+
+    def hash_batch(batch: list[str]) -> list[tuple[str, ChecksumResult]]:
+        return [
+            (path, _hash_local_file(path, algorithm, PARALLEL_READ_BUFFER))
+            for path in batch
+        ]
+
+    # Batch size scales with the work available rather than being fixed. A flat
+    # batch of 128 would put a tree of 8 large files into a single task and run
+    # it serially — the exact case the pool exists for. Aiming for a few tasks
+    # per worker gives one file per task there, and the cap only in trees large
+    # enough that per-file dispatch would otherwise cost more than it saves.
+    per_task = max(1, min(_FILES_PER_TASK, len(paths) // (max_workers * 4)))
+    batches = [paths[i : i + per_task] for i in range(0, len(paths), per_task)]
+    results: dict[str, ChecksumResult] = {}
+    for done in ordered_map(hash_batch, batches, max_workers):
+        results.update(done)
+    return results
+
+
+def _hash_local_dir(
+    path: str, algorithm: Algorithm, max_workers: int | None = None
+) -> ChecksumResult:
+    """
+    Hash a local directory into a Merkle/composite tree.
+
+    Three passes: list the structure, hash the files, then fold the tree from
+    the leaves up. Splitting them is what lets the middle pass run concurrently
+    while keeping the digest identical — children are inserted into each
+    directory in the same sorted order the old recursive walk inserted them,
+    and _directory_result depends on nothing else.
+    """
+    workers = local_workers(max_workers)
+    levels, rows = _scan_levels(path)
+
+    files = [
+        os.path.join(directory, row.name)
+        for level in levels
+        for directory in level
+        for row in rows[directory]
+        if not row.is_dir
+    ]
+    total_bytes = sum(
+        row.size
+        for level in levels
+        for directory in level
+        for row in rows[directory]
+        if not row.is_dir
+    )
+    hashed = _hash_files(files, total_bytes, algorithm, workers)
+
+    # Deepest level first, so every child is final before its parent reads it.
+    folded: dict[str, ChecksumResult] = {}
+    for level in reversed(levels):
+        for directory in level:
+            children: dict[str, ChecksumResult] = {}
+            for row in rows[directory]:
+                child = os.path.join(directory, row.name)
+                children[row.name] = folded.pop(child) if row.is_dir else hashed[child]
+            folded[directory] = _directory_result(directory, children, algorithm)
+
+    return folded[path]
 
 
 # ── S3 ──────────────────────────────────────────────────────────────────────────
@@ -361,12 +540,18 @@ def _hash_s3_prefix(
     return hash_tree(tree, prefix)
 
 
-def compute_checksum_localfs(path: str, algorithm: Algorithm) -> ChecksumResult:
+def compute_checksum_localfs(
+    path: str, algorithm: Algorithm, max_workers: int | None = None
+) -> ChecksumResult:
     """
     Compute a checksum for a local path (file or directory). Defaults to blake3.
+
+    max_workers caps the threads used to walk a directory; None picks a default
+    from the available CPUs and 1 forces the serial path. It has no effect on a
+    single file, and never affects the digest.
     """
     if os.path.isdir(path):
-        return _hash_local_dir(path, algorithm)
+        return _hash_local_dir(path, algorithm, max_workers)
     return _hash_local_file(path, algorithm)
 
 
