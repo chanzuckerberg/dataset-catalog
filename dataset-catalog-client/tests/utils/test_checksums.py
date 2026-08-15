@@ -6,6 +6,8 @@ deliberately mocks out (metadata key casing, HeadObject response fields, error t
 """
 
 import hashlib
+import threading
+import time
 from unittest.mock import patch
 
 import boto3
@@ -381,6 +383,50 @@ class TestSelectFolderAlgorithm:
         selection = _select_folder_algorithm("/local/path", None)
         assert selection.algorithm is None
         assert selection.cached == {}
+
+    def test_children_are_scanned_concurrently(self, s3, monkeypatch):
+        # For a folder whose children all carry a checksum, these HeadObjects
+        # are the entire operation -- nothing is ever downloaded -- so they are
+        # the requests worth overlapping. The barrier only clears if four are
+        # in flight at once, so a serialised scan fails here rather than hangs.
+        for i in range(4):
+            _put(s3, f"dataset/{i}.txt", **{"x-checksum-blake3": hex64(str(i))})
+
+        barrier = threading.Barrier(4, timeout=10)
+        real = _fetch_all_s3_stored_checksums
+
+        def blocking(bucket, key, client):
+            barrier.wait()
+            return real(bucket, key, client)
+
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums", blocking
+        )
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert len(selection.cached) == 4
+
+    def test_a_failing_child_raises_in_listing_order(self, s3, monkeypatch):
+        # Concurrency must not make which error surfaces depend on thread
+        # timing: b.txt fails slowly and c.txt fails instantly, and b.txt is
+        # what a serial scan would have hit first.
+        for name in ["a.txt", "b.txt", "c.txt"]:
+            _put(s3, f"dataset/{name}")
+
+        def failing(bucket, key, client):
+            if key.endswith("b.txt"):
+                time.sleep(0.05)
+                raise RuntimeError("b.txt is unreadable")
+            if key.endswith("c.txt"):
+                raise RuntimeError("c.txt is unreadable")
+            return {}
+
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums", failing
+        )
+
+        with pytest.raises(RuntimeError, match="b.txt is unreadable"):
+            _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
 
 
 # ── for_assets: Core Behaviors ─────────────────────────────────────────────────
