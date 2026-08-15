@@ -148,6 +148,35 @@ uv run pytest -v
 uv run pytest --cov=catalog_client
 ```
 
+#### Running the Checksum Eval
+
+Checksum and size generation has an evaluation harness alongside its unit tests,
+in `dataset-catalog-client/evals/`. It covers what the unit suite structurally
+cannot: digests compared against independent implementations, digests pinned to
+golden vectors committed to git, and behaviour at the production 256MB chunk
+size. See [evals/README.md](dataset-catalog-client/evals/README.md).
+
+```bash
+# Fast tier (~1s, no credentials). Also runs as part of `uv run pytest`.
+make eval
+
+# Adds the real 256MB chunk boundary, a 768MB body and a 1GB memory probe
+make eval-full
+
+# Conformance against real S3 rather than moto. Opt-in; creates and deletes
+# objects under a random prefix in the bucket you name.
+CATALOG_EVAL_S3_BUCKET=my-bucket make eval-aws
+```
+
+If you intentionally change how a digest is computed, re-pin the vectors with
+`make eval-golden` and include the `golden.json` diff in your pull request — that
+diff is the signal that checksums already stored in the catalog will no longer
+match.
+
+Adding or renaming a corpus case also fails the eval until you re-pin, and a
+rename leaves the old vectors behind for you to delete by hand: the merge cannot
+tell a rename from a fast-tier run that simply did not visit the full-tier cases.
+
 #### Code Formatting
 
 We use `ruff` for code formatting and linting. Run these before submitting:
