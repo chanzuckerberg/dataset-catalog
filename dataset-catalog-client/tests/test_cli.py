@@ -6,7 +6,7 @@ import pytest
 from moto import mock_aws
 from pytest_httpx import HTTPXMock
 
-from catalog_client.cli import main
+from catalog_client.cli import EXIT_USAGE, main
 from catalog_client.utils.checksum import Algorithm
 from catalog_client.utils.checksum.hashing import compute_checksum_localfs
 
@@ -446,3 +446,28 @@ def test_checksum_bad_s3_uri_exits_usage(aws_env, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["checksum", "s3://", "--algorithm", "crc32"])
     assert exc.value.code == 2
+
+
+def test_checksum_workers_does_not_change_the_digest(tmp_path, capsys):
+    """--workers is a throughput knob, never a digest one."""
+    for index in range(6):
+        target = tmp_path / f"sub{index % 2}" / f"f{index}.bin"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bytes([index]) * (1000 + index))
+
+    digests = []
+    for workers in ("1", "2", "8"):
+        main(
+            ["checksum", str(tmp_path), "--algorithm", "blake2b", "--workers", workers]
+        )
+        digests.append(_output(capsys)["content_digest"])
+
+    assert len(set(digests)) == 1
+
+
+def test_checksum_rejects_a_non_numeric_worker_count(tmp_path, capsys):
+    target = tmp_path / "data.bin"
+    target.write_bytes(b"x")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["checksum", str(target), "--workers", "lots"])
+    assert excinfo.value.code == EXIT_USAGE

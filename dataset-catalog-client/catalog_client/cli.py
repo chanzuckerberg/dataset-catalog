@@ -491,11 +491,16 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
     # Imported here, not at module scope: botocore is several hundred modules
     # and no other subcommand needs it.
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
     path: str = args.path
     algorithm: Algorithm | None = args.algorithm
-    s3_client = boto3.client("s3")
+    # Pool sized for the concurrent folder scan: a stock client caps at 10 and
+    # silently discards connections past that rather than queueing them.
+    s3_client = boto3.client(
+        "s3", config=Config(max_pool_connections=max(10, args.workers or 16))
+    )
     is_folder = args.folder or (path.endswith("/") if not args.file else False)
 
     try:
@@ -506,6 +511,7 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
                 s3_client,
                 use_stored=False,
                 is_folder=is_folder,
+                max_workers=args.workers,
             )
         # compute_for_s3 (not compute_checksum) so that --algorithm stays
         # optional: it detects the algorithm already stored on the object and
@@ -518,6 +524,7 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
             {},
             s3_client,
             compute_if_no_s3_checksum=True,
+            max_workers=args.workers,
         )
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code")
@@ -542,7 +549,9 @@ def _compute(args: argparse.Namespace) -> ChecksumResult:
     # Local paths are classified by os.path.isdir, so --file/--folder do not
     # apply; there is no stored checksum to short-circuit either, which makes
     # --recompute a no-op here as well.
-    return compute_checksum_localfs(args.path, args.algorithm or default_algorithm())
+    return compute_checksum_localfs(
+        args.path, args.algorithm or default_algorithm(), args.workers
+    )
 
 
 def cmd_checksum(args: argparse.Namespace) -> None:
@@ -708,6 +717,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--children",
         action="store_true",
         help="also list every descendant of a folder, not just its total",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        metavar="N",
+        help="threads to use for a folder (default: chosen from available CPUs; "
+        "1 forces serial). Never changes the checksum.",
     )
     p.set_defaults(func=cmd_checksum)
 

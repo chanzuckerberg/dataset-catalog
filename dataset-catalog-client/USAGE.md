@@ -704,6 +704,8 @@ Flags:
 - `--folder` / `--file` — treat an S3 key as a prefix or a single object instead of
   inferring from a trailing `/`. Local paths are always classified by `os.path.isdir`.
 - `--children` — list every descendant of a folder, not just its total.
+- `--workers N` — threads to use for a folder. Defaults to a value chosen from the
+  available CPUs; `1` forces serial. Never changes the checksum.
 - `-o json` — the full `ChecksumResult`: `chunks`, `children`, `merkle_root`,
   `content_digest`, and the base64 forms S3 headers expect (`s3_base64`, plus
   `s3_composite_base64` for files).

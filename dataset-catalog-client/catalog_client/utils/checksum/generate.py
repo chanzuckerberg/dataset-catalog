@@ -26,6 +26,12 @@ class ChecksumWarning(UserWarning):
 
 UNSUPPORTED_PLATFORMS = {StoragePlatform.external, StoragePlatform.other}
 
+# Connection pool for an S3 client we construct ourselves. Higher than the
+# default worker count so the paginator and a full set of workers never
+# contend, and higher than botocore's default 10 because S3 work here is
+# latency-bound: more concurrent requests is the whole point.
+_OWNED_CLIENT_POOL = 16
+
 # for_assets preserves the caller's concrete asset type (DataAssetResponse is a
 # DataAssetRequest subclass that widens storage_platform to optional).
 AssetT = TypeVar("AssetT", bound=DataAssetRequest)
@@ -85,13 +91,16 @@ def detect_and_cache_for_s3(
     algorithm: Algorithm | None,
     cached_results: dict[str, ChecksumResult],
     s3_client,
+    max_workers: int | None = None,
 ) -> _S3Detection:
     if asset_type == AssetType.folder:
         # Every child carrying the chosen algorithm is reusable, whether that
         # algorithm was named by the caller or picked here by cost. Coverage
         # need not be universal: a child without it is one download, not a
         # reason to discard the digests every other child already has.
-        selection = _select_folder_algorithm(location_uri, s3_client, algorithm)
+        selection = _select_folder_algorithm(
+            location_uri, s3_client, algorithm, max_workers
+        )
         if selection.algorithm is None:
             return _S3Detection(algorithm=None)
         cached_results.update(selection.cached)
@@ -125,9 +134,10 @@ def compute_for_s3(
     cached_results: dict[str, ChecksumResult],
     s3_client,
     compute_if_no_s3_checksum: bool,
+    max_workers: int | None = None,
 ) -> ChecksumResult | None:
     detection = detect_and_cache_for_s3(
-        location_uri, asset_type, algorithm, cached_results, s3_client
+        location_uri, asset_type, algorithm, cached_results, s3_client, max_workers
     )
     if detection.algorithm and location_uri in cached_results:
         return cached_results[location_uri]
@@ -150,6 +160,7 @@ def compute_for_s3(
         use_stored=False,
         cached_results=cached_results,
         is_folder=asset_type == AssetType.folder,
+        max_workers=max_workers,
     )
 
 
@@ -161,6 +172,7 @@ def for_location(
     s3_client=None,
     cached_results: dict[str, ChecksumResult] | None = None,
     compute_if_no_s3_checksum: bool = True,
+    max_workers: int | None = None,
 ) -> LocationChecksum:
     """
     Compute the checksum for a single location.
@@ -169,6 +181,10 @@ def for_location(
     fails; every such case also emits a ChecksumWarning, so a caller can turn
     all of them into errors with
     `warnings.simplefilter("error", ChecksumWarning)`.
+
+    max_workers caps the threads used for a folder; None picks a default and 1
+    forces serial. It never affects the digest. Warnings are always raised on
+    the calling thread, so the ChecksumWarning contract above holds either way.
     """
     if not location_uri:
         _skip("Cannot generate a checksum for an empty location_uri")
@@ -195,10 +211,13 @@ def for_location(
                 cached_results,
                 s3_client,
                 compute_if_no_s3_checksum,
+                max_workers,
             )
         else:
             hash_result = compute_checksum_localfs(
-                location_uri, algorithm=algorithm or default_algorithm()
+                location_uri,
+                algorithm=algorithm or default_algorithm(),
+                max_workers=max_workers,
             )
 
         if hash_result is not None:
@@ -224,6 +243,7 @@ def for_assets(
     algorithm: Algorithm | None = None,
     compute_if_no_s3_checksum: bool = True,
     s3_client=None,
+    max_workers: int | None = None,
 ) -> list[AssetT]:
     """
     Return copies of the given assets with `checksum`, `checksum_alg` and
@@ -249,6 +269,12 @@ def for_assets(
 
     Unsupported platforms (external, other, None) are passed through with a
     ChecksumWarning. Failures also warn and pass the asset through unchanged.
+
+    max_workers caps the threads used within each folder; None picks a default
+    and 1 forces serial. Assets themselves are always processed one at a time,
+    so every ChecksumWarning is raised on the calling thread. It never affects
+    a digest. A client passed in here is used as-is, including its connection
+    pool limit, which the S3 worker count is clamped to.
     """
     if not assets:
         return []
@@ -260,8 +286,15 @@ def for_assets(
         # several hundred modules, and `import catalog_client` reaches this
         # module transitively via catalog_client.utils.
         import boto3
+        from botocore.config import Config
 
-        s3_client = boto3.client("s3")
+        # A stock client caps its pool at 10, which would silently throttle the
+        # concurrent folder scan — botocore leaves urllib3 at block=False, so
+        # excess connections are discarded and re-handshaked rather than
+        # queued. We own this client, so size the pool to what we will use.
+        s3_client = boto3.client(
+            "s3", config=Config(max_pool_connections=_OWNED_CLIENT_POOL)
+        )
 
     for asset in assets:
         asset_copy = asset.model_copy()
@@ -277,6 +310,7 @@ def for_assets(
             s3_client,
             cached_results,
             compute_if_no_s3_checksum=compute_if_no_s3_checksum,
+            max_workers=max_workers,
         )
 
         if result_checksum:
