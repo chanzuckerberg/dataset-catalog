@@ -1,8 +1,14 @@
 import base64
 import binascii
 import logging
+from dataclasses import dataclass, field
 
-from catalog_client.utils.checksum.algorithm import Algorithm, is_valid_digest
+from catalog_client.utils.checksum.algorithm import (
+    Algorithm,
+    available_algorithms,
+    default_algorithm,
+    is_valid_digest,
+)
 from catalog_client.utils.checksum.models import ChecksumResult
 
 logger = logging.getLogger(__name__)
@@ -30,6 +36,45 @@ ALGORITHM_PRIORITY: dict[Algorithm, int] = {
     Algorithm.crc64nvme: 70,
     Algorithm.crc32: 60,
 }
+
+# Weights for ranking folder algorithms by how much recompute each would cost.
+# Deliberately coarse: they only have to order the options, not predict a
+# duration, and the caller's real bandwidth is unknowable from here.
+#
+# _REQUEST_BYTE_EQUIVALENT is what makes the ranking sensitive to file *count*
+# and not only to bytes. A folder of a hundred thousand tiny objects is
+# dominated by round trips, so an algorithm covering more objects can win even
+# when it covers fewer bytes.
+_REQUEST_BYTE_EQUIVALENT = 4 * 1024 * 1024
+_NETWORK_MB_S = 100.0
+
+# Measured on an arm64 laptop. Only the order of magnitude matters, and only
+# crc64 is slow enough to change a ranking: at ~450 MB/s it rivals the network
+# it is being fed by, where the others are one to two orders of magnitude
+# faster and are therefore priced almost identically.
+_HASH_MB_S: dict[Algorithm, float] = {
+    Algorithm.crc64nvme: 40_000.0,
+    Algorithm.crc32: 30_000.0,
+    Algorithm.blake3: 2_000.0,
+    Algorithm.blake2b: 1_300.0,
+    Algorithm.crc64: 450.0,
+}
+
+
+@dataclass(frozen=True)
+class _FolderSelection:
+    """
+    The algorithm to hash a prefix with, and the children already carrying it.
+
+    total_children is the count the prefix listing found, so a caller can tell
+    complete coverage (assembling the folder digest needs no downloads) from
+    partial coverage (some children must be fetched), which is the distinction
+    compute_if_no_s3_checksum turns on.
+    """
+
+    algorithm: Algorithm | None = None
+    cached: dict[str, ChecksumResult] = field(default_factory=dict)
+    total_children: int = 0
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -221,61 +266,105 @@ def _fetch_s3_stored_checksum(
     return _fetch_all_s3_stored_checksums(bucket, key, s3).get(algorithm)
 
 
-def _find_common_algorithm_in_folder(
-    path: str, s3_client
-) -> tuple[Algorithm | None, dict[str, ChecksumResult]]:
-    """
-    Find the best common algorithm across all files under a folder.
+def _recompute_cost(
+    missing_bytes: int, missing_count: int, algorithm: Algorithm
+) -> float:
+    """Rough seconds to fetch and hash the children that lack `algorithm`."""
+    effective_mb = (
+        missing_bytes + missing_count * _REQUEST_BYTE_EQUIVALENT
+    ) / 1_048_576
+    return effective_mb * (1.0 / _NETWORK_MB_S + 1.0 / _HASH_MB_S[algorithm])
 
-    Returns:
-        (algorithm, child_checksums)
-        - algorithm: highest-priority algorithm shared by ALL children,
-                     or None if no common algorithm exists.
-        - child_checksums: dict mapping child_path -> ChecksumResult for the
-                           chosen algorithm. Empty if no common algorithm found.
+
+def _cheapest_algorithm(
+    per_child: dict[str, dict[Algorithm, ChecksumResult]],
+    sizes: dict[str, int],
+) -> Algorithm:
+    """
+    The algorithm requiring the least recompute across a prefix's children.
+
+    Coverage does not have to be universal. Every child that already carries
+    the chosen algorithm is reused; only the rest are downloaded and hashed.
+    Mixing the two is sound because a stored digest and a computed one are the
+    same value — see ChecksumResult.content_digest.
+
+    Candidates are intersected with what this install can compute: an algorithm
+    S3 stored but whose hasher is missing cannot combine children into a folder
+    digest, so choosing it would fail partway through the walk.
+    """
+    candidates = {
+        algorithm for results in per_child.values() for algorithm in results
+    } & available_algorithms()
+    # Always an option, and the answer when nothing has a stored checksum:
+    # hash every child from scratch. blake2b is stdlib, so this is never empty.
+    candidates.add(default_algorithm())
+
+    def rank(algorithm: Algorithm) -> tuple[float, int]:
+        missing = [path for path, r in per_child.items() if algorithm not in r]
+        cost = _recompute_cost(
+            sum(sizes.get(path, 0) for path in missing), len(missing), algorithm
+        )
+        # Priority breaks ties only. A tie means both need the same recompute
+        # -- usually none at all -- so nothing is paid for preferring one.
+        return cost, -ALGORITHM_PRIORITY.get(algorithm, 0)
+
+    return min(candidates, key=rank)
+
+
+def _select_folder_algorithm(
+    path: str, s3_client, algorithm: Algorithm | None = None
+) -> _FolderSelection:
+    """
+    Choose the algorithm to hash a prefix with, and collect reusable children.
+
+    Scans every child once. Unlike a "common algorithm" rule, a child with no
+    stored checksum does not discard the rest: it just becomes one object to
+    download, while every other child still contributes its stored digest.
+    Requiring universality meant a single checksumless object in a 100k-object
+    prefix forced 100k downloads.
+
+    `algorithm` names the algorithm outright and skips selection; the scan
+    still runs, because it is what finds the children that already carry it.
     """
     if not path.startswith(("s3://", "s3a://")):
-        return None, {}
+        return _FolderSelection()
 
     bucket, key = _parse_s3_uri(path)
     # Same normalisation the compute phase applies, so detection and hashing
     # always see the same set of objects.
     prefix = _folder_prefix(key)
-    common_algorithms: set[Algorithm] | None = None
-    per_child_all_checksums: dict[str, dict[Algorithm, ChecksumResult]] = {}
+
+    # Size comes off the listing, which reports it for every object including
+    # the ones with no stored checksum at all -- those are exactly the ones the
+    # cost model needs to price.
+    sizes: dict[str, int] = {}
+    per_child: dict[str, dict[Algorithm, ChecksumResult]] = {}
 
     paginator = s3_client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             if obj["Key"].endswith("/"):
                 continue
-
             child_path = f"s3://{bucket}/{obj['Key']}"
-            all_checksums = _fetch_all_s3_stored_checksums(
+            sizes[child_path] = obj.get("Size") or 0
+            per_child[child_path] = _fetch_all_s3_stored_checksums(
                 bucket, obj["Key"], s3_client
             )
 
-            if not all_checksums:
-                return None, {}
+    if not per_child:
+        # An empty or non-existent prefix. Pass an explicitly named algorithm
+        # through unchanged; there is nothing to detect one from.
+        return _FolderSelection(algorithm=algorithm)
 
-            child_algos = set(all_checksums.keys())
-
-            if common_algorithms is None:
-                common_algorithms = child_algos
-            else:
-                common_algorithms &= child_algos
-
-            if not common_algorithms:
-                return None, {}
-
-            per_child_all_checksums[child_path] = all_checksums
-
-    if not common_algorithms:
-        return None, {}
-
-    best_algorithm = _select_best_algorithm(common_algorithms)
-    if best_algorithm is None:
-        return None, {}
-    return best_algorithm, {
-        p: results[best_algorithm] for p, results in per_child_all_checksums.items()
-    }
+    chosen = (
+        algorithm if algorithm is not None else _cheapest_algorithm(per_child, sizes)
+    )
+    cached = {p: r[chosen] for p, r in per_child.items() if chosen in r}
+    logger.debug(
+        "Selected %s for %s: %d of %d children already carry it",
+        chosen,
+        path,
+        len(cached),
+        len(per_child),
+    )
+    return _FolderSelection(chosen, cached, len(per_child))
