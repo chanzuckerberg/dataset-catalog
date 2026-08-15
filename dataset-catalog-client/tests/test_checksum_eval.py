@@ -51,7 +51,7 @@ def test_eval_actually_ran_checks(fast_run):
     nothing at all.
 
     `run_dimension` already errors on zero *checks*; this is the stronger claim
-    that these four produced at least one verdict, which is what catches a
+    that each of these produced at least one verdict, which is what catches a
     dimension gated off by mistake — a `needs` tier raised too high in the
     registry, returning one tidy skip.
 
@@ -66,6 +66,12 @@ def test_eval_actually_ran_checks(fast_run):
         name: sum(1 for check in run.checks if check.status is not Status.skipped)
         for name, run in fast_run.items()
     }
-    expected_to_run = {"conformance", "golden", "invariance", "sizes"}
+    expected_to_run = {
+        "conformance",
+        "golden",
+        "invariance",
+        "parallelism",
+        "sizes",
+    }
     empty = {name for name in expected_to_run if not verdicts[name]}
     assert not empty, f"dimensions produced no verdicts at the fast tier: {empty}"

@@ -20,6 +20,7 @@ from evals.checksum.dimensions import (
     conformance,
     golden,
     invariance,
+    parallelism,
     scale,
     sizes,
 )
@@ -64,6 +65,12 @@ DIMENSIONS: dict[str, Dimension] = {
             invariance.run,
             "seeded fuzzing of stability, partitioning and sensitivity",
             why="fuzzing is not run at --tier aws",
+        ),
+        Dimension(
+            parallelism.NAME,
+            parallelism.run,
+            "digests are identical at any worker count",
+            why="parallelism checks are not run at --tier aws",
         ),
         Dimension(
             sizes.NAME,
