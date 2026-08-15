@@ -516,12 +516,12 @@ def _hash_s3_prefix(
     for key in keys:
         _insert_key(tree, key[len(prefix) :].split("/"), key)
 
-    # Every object is fetched before the tree is folded, so the walk below sees
+    # Every object is resolved before the tree is folded, so the walk below sees
     # a completed map and runs exactly as it did serially. Only the order the
     # objects are *retrieved* in changes; the order they are *combined* in is
     # still sorted(node.items()), which is what the digest depends on.
-    def fetch(key: str) -> tuple[str, ChecksumResult]:
-        return key, _hash_s3_file(
+    def fetch(key: str) -> ChecksumResult:
+        return _hash_s3_file(
             bucket,
             key,
             algorithm,
@@ -532,9 +532,27 @@ def _hash_s3_prefix(
             read_buffer=PARALLEL_READ_BUFFER,
         )
 
-    fetched: dict[str, ChecksumResult] = dict(
-        ordered_map(fetch, keys, s3_workers(s3, max_workers))
-    )
+    # Children the detect phase already resolved are taken inline: _hash_s3_file
+    # returns those straight from cached_results without issuing a request, and
+    # routing a dict lookup through the pool costs more in dispatch than the
+    # lookup itself. A prefix whose children all carry a stored checksum is the
+    # case that phase exists for, and it now creates no pool at all.
+    cached = cached_results or {}
+    fetched: dict[str, ChecksumResult] = {}
+    misses: list[str] = []
+    for key in keys:
+        if f"s3://{bucket}/{key}" in cached:
+            fetched[key] = fetch(key)
+        else:
+            misses.append(key)
+    if misses:
+        fetched.update(
+            zip(
+                misses,
+                ordered_map(fetch, misses, s3_workers(s3, max_workers)),
+                strict=True,
+            )
+        )
 
     def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
         children: dict[str, ChecksumResult] = {}
