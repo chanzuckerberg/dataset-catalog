@@ -28,13 +28,24 @@ _NON_S3_NATIVE_ALGORITHMS: set[Algorithm] = {
     a for a in Algorithm if a not in _S3_NATIVE_RESPONSE_KEY
 }
 
-# Algorithm priority for selection (higher = preferred, computed over native)
+# Preference order among algorithms (higher wins). S3-native first: those are
+# the values S3 computes and can verify itself, so reusing one keeps a catalog
+# digest comparable with what the platform reports, and they are also the
+# fastest to recompute when a child is missing one.
+#
+# For folders this only breaks ties in _cheapest_algorithm — a tie means both
+# options need the same recompute, usually none, so preferring one costs
+# nothing. For single files it is the whole selection.
+#
+# crc64 ranks last deliberately: it is ~90x slower than crc64nvme for the same
+# 64-bit width, needs a third-party package, and is the one algorithm here
+# whose extension never releases the GIL, so it cannot be parallelised either.
 ALGORITHM_PRIORITY: dict[Algorithm, int] = {
-    Algorithm.blake3: 100,
-    Algorithm.blake2b: 90,
-    Algorithm.crc64: 80,
-    Algorithm.crc64nvme: 70,
-    Algorithm.crc32: 60,
+    Algorithm.crc64nvme: 100,
+    Algorithm.crc32: 90,
+    Algorithm.blake3: 80,
+    Algorithm.blake2b: 70,
+    Algorithm.crc64: 60,
 }
 
 # Weights for ranking folder algorithms by how much recompute each would cost.
