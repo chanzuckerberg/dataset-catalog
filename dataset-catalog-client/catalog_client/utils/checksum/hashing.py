@@ -1,6 +1,7 @@
 import os
 from dataclasses import replace
 
+from catalog_client.utils.checksum._parallel import ordered_map, s3_workers
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
     _Hasher,
@@ -18,11 +19,27 @@ from catalog_client.utils.checksum.s3 import (
 
 READ_BUFFER = 64 * 1024  # 64KB I/O buffer
 
+# The buffer used when hashing through a thread pool. Larger, because the
+# buffer size decides how long each update() holds the GIL released, and that
+# is what determines whether threads help at all: scaling appears once the
+# GIL-free stretch exceeds roughly 25-30us. blake3 clears that at 64KB
+# (65536B / 2.1 GB/s ~= 31us), but crc32 and crc64nvme run at 30-48 GB/s and
+# spend only ~1.5us per 64KB buffer, so the handoff costs as much as the work
+# and eight threads measured *slower* than one. At 1MB they scale 3.3x.
+#
+# Safe to differ from READ_BUFFER because buffer size is not an input to any
+# digest: file_hash never sees a buffer boundary, and chunk boundaries stay
+# exact as long as CHUNK_SIZE is a multiple of the buffer (256MB % 1MB == 0).
+PARALLEL_READ_BUFFER = 1024 * 1024
 
-def _iter_stream(stream):
-    """Yield READ_BUFFER-sized chunks from any file-like object."""
+
+def _iter_stream(stream, read_buffer: int | None = None):
+    """Yield `read_buffer`-sized chunks from any file-like object."""
+    # Resolved per call rather than defaulted at def time: the eval harness
+    # patches hashing.READ_BUFFER, and a default bound at import would ignore it.
+    size = read_buffer or READ_BUFFER
     while True:
-        chunk = stream.read(READ_BUFFER)
+        chunk = stream.read(size)
         if not chunk:
             break
         yield chunk
@@ -100,7 +117,11 @@ def _directory_result(
 
 
 def _hash_stream(
-    stream, algorithm: Algorithm, path: str, total_size: int | None = None
+    stream,
+    algorithm: Algorithm,
+    path: str,
+    total_size: int | None = None,
+    read_buffer: int | None = None,
 ) -> ChecksumResult:
     """
     Hash a readable binary stream, building a chunk manifest.
@@ -156,14 +177,15 @@ def _hash_stream(
         chunk_len = 0
         chunk_hasher = new_hasher(algorithm)
 
-    # Hashers are fed incrementally, so no chunk is ever held in memory:
-    # peak usage is one READ_BUFFER regardless of CHUNK_SIZE. A chunk is closed
-    # only between reads, so boundaries land exactly where a buffered
-    # implementation would put them as long as CHUNK_SIZE is a multiple of
-    # READ_BUFFER (256MB and 64KB are). file_hash never sees a boundary, so it
-    # is unaffected either way; only the manifest and merkle_root would shift.
+    # Hashers are fed incrementally, so no chunk is ever held in memory: peak
+    # usage is one buffer per stream in flight, regardless of CHUNK_SIZE. A
+    # chunk is closed only between reads, so boundaries land exactly where a
+    # buffered implementation would put them as long as CHUNK_SIZE is a
+    # multiple of the buffer (256MB is a multiple of both 64KB and 1MB).
+    # file_hash never sees a boundary, so it is unaffected either way; only the
+    # manifest and merkle_root would shift.
     # See tests/utils/checksum/test_invariance.py.
-    for raw in _iter_stream(stream):
+    for raw in _iter_stream(stream, read_buffer):
         file_hasher.update(raw)
         if chunk_hasher is not None:
             chunk_hasher.update(raw)
@@ -241,6 +263,7 @@ def _hash_s3_file(
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
     size: int | None = None,
+    read_buffer: int | None = None,
 ) -> ChecksumResult:
     """
     Return a ChecksumResult for an S3 object.
@@ -274,7 +297,9 @@ def _hash_s3_file(
     # (None) rather than fatal.
     if size is None:
         size = resp.get("ContentLength")
-    return _hash_stream(resp["Body"], algorithm, path, total_size=size)
+    return _hash_stream(
+        resp["Body"], algorithm, path, total_size=size, read_buffer=read_buffer
+    )
 
 
 def _hash_s3_prefix(
@@ -284,6 +309,7 @@ def _hash_s3_prefix(
     s3,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
+    max_workers: int | None = None,
 ) -> ChecksumResult:
     """Hash all objects under an S3 prefix as a virtual directory tree."""
     paginator = s3.get_paginator("list_objects_v2")
@@ -302,19 +328,31 @@ def _hash_s3_prefix(
     for key in keys:
         _insert_key(tree, key[len(prefix) :].split("/"), key)
 
+    # Every object is fetched before the tree is folded, so the walk below sees
+    # a completed map and runs exactly as it did serially. Only the order the
+    # objects are *retrieved* in changes; the order they are *combined* in is
+    # still sorted(node.items()), which is what the digest depends on.
+    def fetch(key: str) -> tuple[str, ChecksumResult]:
+        return key, _hash_s3_file(
+            bucket,
+            key,
+            algorithm,
+            s3,
+            use_stored,
+            cached_results,
+            size=sizes.get(key),
+            read_buffer=PARALLEL_READ_BUFFER,
+        )
+
+    fetched: dict[str, ChecksumResult] = dict(
+        ordered_map(fetch, keys, s3_workers(s3, max_workers))
+    )
+
     def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
         children: dict[str, ChecksumResult] = {}
         for name, value in sorted(node.items()):
             if isinstance(value, tuple) and value[0] == "file":
-                children[name] = _hash_s3_file(
-                    bucket,
-                    value[1],
-                    algorithm,
-                    s3,
-                    use_stored,
-                    cached_results,
-                    size=sizes.get(value[1]),
-                )
+                children[name] = fetched[value[1]]
             elif isinstance(value, dict):
                 children[name] = hash_tree(value, f"{virtual_path}{name}/")
 
@@ -339,6 +377,7 @@ def compute_checksum_s3(
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
     is_folder: bool | None = None,
+    max_workers: int | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for an S3 URI (s3:// or s3a://).
@@ -363,6 +402,7 @@ def compute_checksum_s3(
             s3_client,
             use_stored,
             cached_results,
+            max_workers,
         )
     return _hash_s3_file(bucket, key, algorithm, s3_client, use_stored, cached_results)
 

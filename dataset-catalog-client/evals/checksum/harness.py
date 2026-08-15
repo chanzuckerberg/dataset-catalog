@@ -191,13 +191,23 @@ def chunking(chunk_size: int, read_buffer: int) -> Iterator[None]:
     Patched on `hashing`, not `models`: hashing.py binds CHUNK_SIZE by value at
     import, so patching models.CHUNK_SIZE has no effect (same reason the unit
     suite patches it there).
+
+    PARALLEL_READ_BUFFER is patched to the same value. It is a separate
+    constant only so that pooled reads can use a larger buffer than serial
+    ones; a configuration under test must apply to both, or a check that runs
+    through a pool would silently keep the production buffer.
     """
-    original_chunk, original_buffer = hashing.CHUNK_SIZE, hashing.READ_BUFFER
-    hashing.CHUNK_SIZE, hashing.READ_BUFFER = chunk_size, read_buffer
+    original = (hashing.CHUNK_SIZE, hashing.READ_BUFFER, hashing.PARALLEL_READ_BUFFER)
+    hashing.CHUNK_SIZE = chunk_size
+    hashing.READ_BUFFER = hashing.PARALLEL_READ_BUFFER = read_buffer
     try:
         yield
     finally:
-        hashing.CHUNK_SIZE, hashing.READ_BUFFER = original_chunk, original_buffer
+        (
+            hashing.CHUNK_SIZE,
+            hashing.READ_BUFFER,
+            hashing.PARALLEL_READ_BUFFER,
+        ) = original
 
 
 @dataclass

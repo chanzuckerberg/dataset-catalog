@@ -166,6 +166,25 @@ def test_a_read_buffer_that_does_not_divide_the_chunk_shifts_the_manifest(
     assert exact.content_digest == shifted.content_digest
 
 
+@pytest.mark.parametrize(
+    "buffer_name", ["READ_BUFFER", "PARALLEL_READ_BUFFER"], ids=["serial", "parallel"]
+)
+def test_every_production_read_buffer_divides_the_chunk_size(buffer_name):
+    """The precondition the test above describes, asserted on the real values.
+
+    There are two production buffers — pooled reads use a larger one, because
+    buffer size decides how long each update() holds the GIL released. They may
+    differ freely, since content_digest does not depend on the buffer at all,
+    but each must still divide CHUNK_SIZE or the manifest it produces would not
+    match the pinned golden vectors.
+    """
+    read_buffer = getattr(hashing, buffer_name)
+    assert hashing.CHUNK_SIZE % read_buffer == 0, (
+        f"CHUNK_SIZE={hashing.CHUNK_SIZE} is not a multiple of "
+        f"{buffer_name}={read_buffer}; chunk boundaries would shift"
+    )
+
+
 @algorithms
 def test_a_read_buffer_larger_than_the_file_yields_a_single_chunk(hashed, algorithm):
     """The degenerate end of the same constraint: one read, one chunk."""

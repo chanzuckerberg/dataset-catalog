@@ -167,6 +167,46 @@ def test_every_child_of_a_prefix_matches_s3s_own_value(
         assert child.content_digest == local_copy.content_digest
 
 
+@native_algorithms
+@pytest.mark.parametrize("workers", [1, 2, 3, 8], ids=lambda w: f"w{w}")
+def test_a_prefix_digest_is_the_same_at_any_worker_count(
+    s3, algorithm, response_key, workers
+):
+    """Fetching children concurrently must not move a single digest byte.
+
+    Worker counts 2 and 3 divide 7 children unevenly on purpose, so the
+    completion order genuinely differs between runs. What the digest depends on
+    is the order children are *combined* in, which stays sorted regardless.
+    """
+    keys = ["a.bin", "b.bin", "sub/c.bin", "sub/d.bin", "sub/deep/e.bin", "f.bin", "g"]
+    for index, key in enumerate(keys):
+        s3.put_object(
+            Bucket=BUCKET,
+            Key=f"ds/{key}",
+            Body=payload(index * 3_000),
+            ChecksumAlgorithm=s3_algorithm_name(algorithm),
+        )
+
+    serial = compute_checksum_s3(
+        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, max_workers=1
+    )
+    parallel = compute_checksum_s3(
+        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, max_workers=workers
+    )
+
+    def digest_map(node, prefix=""):
+        flat = {prefix or ".": node.content_digest}
+        for name, child in node.children.items():
+            flat.update(digest_map(child, f"{prefix}{name}/"))
+        return flat
+
+    assert parallel.content_digest == serial.content_digest
+    assert parallel.total_size == serial.total_size
+    # Per-path, so a failure names the child rather than only the root, and so
+    # two children swapping digests cannot pass on a root comparison alone.
+    assert digest_map(parallel) == digest_map(serial)
+
+
 # ── The native/non-native split is real, not just a comment ──────────────────
 
 
