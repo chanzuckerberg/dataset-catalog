@@ -6,6 +6,7 @@
       "changelog-sections": [
         {"type": "feat", "section": "Features"},
         {"type": "fix", "section": "Bug Fixes"},
+        {"type": "perf", "section": "Performance Improvements", "hidden": false},
         {"type": "chore", "section": "Miscellaneous", "hidden": false},
         {"type": "doc", "section": "Documentation", "hidden": false},
         {"type": "test", "section": "Tests", "hidden": false}
@@ -24,6 +25,7 @@
       "changelog-sections": [
         {"type": "feat", "section": "Features"},
         {"type": "fix", "section": "Bug Fixes"},
+        {"type": "perf", "section": "Performance Improvements", "hidden": false},
         {"type": "chore", "section": "Miscellaneous", "hidden": false},
         {"type": "doc", "section": "Documentation", "hidden": false},
         {"type": "test", "section": "Tests", "hidden": false}
