@@ -1,10 +1,11 @@
-"""Read-only command-line interface for querying the Scientific Dataset Catalog.
+"""Read-only command-line interface for the Scientific Dataset Catalog.
 
-Installed as the ``catalog`` console script. Every subcommand issues only GET
-requests. Output is a human-readable table when stdout is a terminal and JSON
-when piped; override with ``--output/-o``.
+Installed as the ``catalog`` console script. Nothing here mutates the catalog:
+the query subcommands issue only GET requests, and ``checksum`` only reads
+bytes. Output is a human-readable table when stdout is a terminal and JSON when
+piped; override with ``--output/-o``.
 
-Configuration comes from the environment:
+The query subcommands are configured from the environment:
     CATALOG_API_URL    base URL of the catalog (e.g. https://catalog.example.com)
     CATALOG_API_TOKEN  API token (issue one at <catalog>/tokens in a logged-in browser)
 
@@ -15,6 +16,8 @@ Subcommands:
     list         exact-coordinate dataset listing
     lineage      walk provenance edges up/down from a dataset
     collections  browse collections and their entries
+    checksum     hash a local path or S3 URI (no catalog credentials needed;
+                 s3:// URIs use the ambient AWS credentials)
 
 Exit codes:
     0  success            3  authentication error (401)
@@ -25,6 +28,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -38,12 +42,29 @@ from catalog_client.exceptions import (
     CatalogServerError,
     NotFoundError,
 )
+from catalog_client.models.asset import AssetType
 from catalog_client.models.dataset import (
     DatasetModality,
     DatasetRef,
     DatasetSortOption,
 )
 from catalog_client.models.lineage import LineageType
+from catalog_client.utils.checksum import Algorithm, ChecksumResult, default_algorithm
+from catalog_client.utils.checksum._parallel import owned_s3_client
+from catalog_client.utils.checksum.generate import compute_for_s3
+from catalog_client.utils.checksum.hashing import (
+    compute_checksum_localfs,
+    compute_checksum_s3,
+)
+from catalog_client.utils.checksum.s3 import (
+    _MISSING_OBJECT_ERROR_CODES,
+    _is_folder_uri,
+    _missing_object_error_code,
+)
+
+# The SDK's "this object is not there" codes, plus the bucket case, which only a
+# caller naming a bucket outright can hit.
+_MISSING_S3_TARGET_CODES = _MISSING_OBJECT_ERROR_CODES | {"NoSuchBucket"}
 
 EXIT_ERROR = 1
 EXIT_USAGE = 2
@@ -52,10 +73,19 @@ EXIT_NOT_FOUND = 4
 EXIT_SERVER = 5
 
 
+def _fail_message(message: str, code: int) -> NoReturn:
+    """Report a problem on stderr and exit with ``code``.
+
+    The one place this CLI writes an error and exits, so every subcommand
+    produces the same ``error: ...`` shape on the same stream.
+    """
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
 def _usage_error(message: str) -> NoReturn:
     """Report a configuration/usage problem and exit with EXIT_USAGE."""
-    print(f"error: {message}", file=sys.stderr)
-    raise SystemExit(EXIT_USAGE)
+    _fail_message(message, EXIT_USAGE)
 
 
 def _client() -> CatalogClient:
@@ -77,19 +107,30 @@ def _model(m: Any) -> dict:
 # ------------------------------------------------------------------ rendering
 
 
-def _truncate(value: Any, width: int = 40) -> str:
+def _truncate(value: Any, width: int | None = 40) -> str:
     text = "" if value is None else str(value)
+    if width is None:
+        return text
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _print_table(rows: list[dict], columns: list[tuple[str, str]]) -> None:
-    """Print ``rows`` as an aligned text table over ``(key, header)`` columns."""
+def _print_table(
+    rows: list[dict], columns: list[tuple[str, str]], cell_width: int | None = 40
+) -> None:
+    """Print ``rows`` as an aligned text table over ``(key, header)`` columns.
+
+    ``cell_width`` is the truncation width for every cell; pass ``None`` when
+    every value has to stay usable rather than merely readable — a shortened
+    digest or path cannot be compared or passed to another command.
+    """
     if not rows:
         print("(no results)")
         return
     keys = [key for key, _ in columns]
     headers = [header for _, header in columns]
-    cells = [[_truncate(row.get(key)) for key in keys] for row in rows]
+    cells = [
+        [_truncate(row.get(key), width=cell_width) for key in keys] for row in rows
+    ]
     widths = [len(header) for header in headers]
     for line in cells:
         widths = [max(width, len(cell)) for width, cell in zip(widths, line)]
@@ -416,6 +457,141 @@ def cmd_collections(args: argparse.Namespace) -> None:
                 _print_table([_model(c) for c in parents.results], _COLLECTION_COLUMNS)
 
 
+# -------------------------------------------------------------------- checksum
+
+
+_CHECKSUM_COLUMNS = [
+    ("digest", "DIGEST"),
+    ("algorithm", "ALG"),
+    ("total_size", "SIZE"),
+    ("source", "SOURCE"),
+    ("kind", "KIND"),
+    ("path", "PATH"),
+]
+
+
+def _checksum_row(result: ChecksumResult) -> dict:
+    return {
+        "digest": result.content_digest,
+        "algorithm": result.algorithm.value,
+        "total_size": result.total_size,
+        "source": result.source,
+        "kind": "folder" if result.is_directory else "file",
+        "path": result.path,
+    }
+
+
+def _checksum_rows(result: ChecksumResult, children: bool) -> list[dict]:
+    """The folder total first, then one row per descendant when asked."""
+    rows = [_checksum_row(result)]
+    if children:
+        for child in result.children.values():
+            rows.extend(_checksum_rows(child, children=True))
+    return rows
+
+
+def _checksum_json(result: ChecksumResult) -> dict:
+    payload = dataclasses.asdict(result)
+    payload["content_digest"] = result.content_digest
+    payload["s3_base64"] = result.s3_base64
+    # Only defined for files: a directory merkle_root is not an S3 multipart
+    # composite checksum, and the property raises rather than implying it is.
+    if not result.is_directory:
+        payload["s3_composite_base64"] = result.s3_composite_base64
+    return payload
+
+
+def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
+    # Imported here, not at module scope: botocore is several hundred modules
+    # and no other subcommand needs it.
+    from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
+
+    path: str = args.path
+    algorithm: Algorithm | None = args.algorithm
+    # The SDK owns pool sizing: it is the side that knows how many workers the
+    # walk will ask for, and it clamps the worker count back to this pool.
+    s3_client = owned_s3_client(args.workers)
+    # --folder/--file override the URI; argparse guarantees they are not both
+    # set. Otherwise defer to the SDK's rule rather than restating it, so a
+    # bucket root is classified the same way here as in compute_checksum_s3.
+    if args.folder or args.file:
+        is_folder = args.folder
+    else:
+        is_folder = _is_folder_uri(path)
+
+    try:
+        if args.recompute:
+            return compute_checksum_s3(
+                path,
+                algorithm or default_algorithm(),
+                s3_client,
+                use_stored=False,
+                is_folder=is_folder,
+                max_workers=args.workers,
+            )
+        # compute_for_s3 (not compute_checksum) so that --algorithm stays
+        # optional: it detects the algorithm already stored on the object and
+        # reuses that digest, instead of downloading the bytes to re-hash them
+        # with default_algorithm().
+        result = compute_for_s3(
+            path,
+            AssetType.folder if is_folder else AssetType.file,
+            algorithm,
+            {},
+            s3_client,
+            compute_if_no_s3_checksum=True,
+            max_workers=args.workers,
+        )
+    except ClientError as exc:
+        if _missing_object_error_code(exc) in _MISSING_S3_TARGET_CODES:
+            _fail_message(f"{path}: no such object or bucket", EXIT_NOT_FOUND)
+        _fail_message(f"S3 request failed: {exc}", EXIT_SERVER)
+    except ParamValidationError as exc:
+        # A malformed URI such as "s3://" parses into an empty bucket name and
+        # is only rejected by botocore — that is a usage error, not a server one.
+        _fail_message(f"{path}: {exc}", EXIT_USAGE)
+    except BotoCoreError as exc:  # credentials, endpoint, connection
+        _fail_message(f"S3 request failed: {exc}", EXIT_SERVER)
+
+    if result is None:  # pragma: no cover - unreachable with compute_if_no_s3_checksum
+        _fail_message(f"no checksum could be produced for {path}", EXIT_ERROR)
+    return result
+
+
+def _compute(args: argparse.Namespace) -> ChecksumResult:
+    if args.path.startswith(("s3://", "s3a://")):
+        return _compute_s3(args)
+    # Local paths are classified by os.path.isdir, so --file/--folder do not
+    # apply; there is no stored checksum to short-circuit either, which makes
+    # --recompute a no-op here as well.
+    return compute_checksum_localfs(
+        args.path, args.algorithm or default_algorithm(), args.workers
+    )
+
+
+def cmd_checksum(args: argparse.Namespace) -> None:
+    try:
+        result = _compute(args)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        _fail_message(f"{args.path}: {exc.strerror or exc}", EXIT_NOT_FOUND)
+    except ImportError as exc:
+        # The hashers raise this with the exact `pip install` to run.
+        _fail_message(str(exc), EXIT_USAGE)
+    except ValueError as exc:  # e.g. a malformed s3:// URI
+        _fail_message(str(exc), EXIT_USAGE)
+    except OSError as exc:
+        _fail_message(f"{args.path}: {exc.strerror or exc}", EXIT_ERROR)
+
+    if args.output == "json":
+        _dump(_checksum_json(result))
+        return
+    # Nothing here is truncated: a blake2b digest is 128 hex characters and a
+    # shortened digest or path is no longer comparable or re-usable.
+    _print_table(
+        _checksum_rows(result, args.children), _CHECKSUM_COLUMNS, cell_width=None
+    )
+
+
 # ------------------------------------------------------------------------ main
 
 
@@ -523,6 +699,49 @@ def build_parser() -> argparse.ArgumentParser:
     _add_paging(p, limit=100)
     p.set_defaults(func=cmd_collections)
 
+    p = sub.add_parser(
+        "checksum",
+        parents=[common],
+        help="hash a local path or s3:// URI (no catalog credentials needed)",
+    )
+    p.add_argument("path", help="local file/directory, or an s3:// or s3a:// URI")
+    p.add_argument(
+        "--algorithm",
+        type=Algorithm,
+        choices=list(Algorithm),
+        help="default: reuse a checksum already stored on the S3 object, "
+        f"else {default_algorithm().value}",
+    )
+    p.add_argument(
+        "--recompute",
+        action="store_true",
+        help="ignore any stored S3 checksum and hash the bytes (integrity audit)",
+    )
+    kind = p.add_mutually_exclusive_group()
+    kind.add_argument(
+        "--folder",
+        action="store_true",
+        help="treat an S3 key as a prefix, whether or not it ends in /",
+    )
+    kind.add_argument(
+        "--file",
+        action="store_true",
+        help="treat an S3 key as a single object, whether or not it ends in /",
+    )
+    p.add_argument(
+        "--children",
+        action="store_true",
+        help="also list every descendant of a folder, not just its total",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        metavar="N",
+        help="threads to use for a folder (default: chosen from available CPUs; "
+        "1 forces serial). Never changes the checksum.",
+    )
+    p.set_defaults(func=cmd_checksum)
+
     return parser
 
 
@@ -545,9 +764,8 @@ def main(argv: list[str] | None = None) -> None:
         _fail(exc, EXIT_ERROR, "request failed")
 
 
-def _fail(exc: CatalogError, code: int, hint: str) -> None:
-    print(f"error: {hint}: {exc}", file=sys.stderr)
-    raise SystemExit(code)
+def _fail(exc: CatalogError, code: int, hint: str) -> NoReturn:
+    _fail_message(f"{hint}: {exc}", code)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,14 @@ catalog get <dataset-uuid> --lineage
 catalog lineage <dataset-uuid> --direction up
 ```
 
+The `checksum` subcommand hashes data instead of querying the catalog, so it needs no catalog URL or token (only AWS credentials for `s3://` paths):
+
+```bash
+catalog checksum data/sample.h5ad
+catalog checksum data/run-01/ --children
+catalog checksum s3://my-bucket/prefix/object.tif --algorithm crc32
+```
+
 Output is a human-readable table on a terminal and JSON when piped (override with `-o table|json`). See the [CLI section of USAGE.md](USAGE.md#command-line-interface) for all subcommands, flags, and exit codes.
 
 ## Documentation

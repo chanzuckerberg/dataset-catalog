@@ -154,6 +154,29 @@ stored checksum is downloaded and hashed. Set it to `False` on either to skip su
 objects instead. An empty result is falsy, so `if result:` distinguishes the two cases.
 A size alone never makes a result truthy — `total_size` is ignored by that check.
 
+### From the command line
+
+The installed `catalog` script exposes the same machinery as `catalog checksum PATH`,
+for one local path or S3 URI at a time. It needs no catalog URL or token — only AWS
+credentials, and only for `s3://` paths.
+
+```bash
+catalog checksum data/file.h5ad
+catalog checksum data/folder/ --children
+catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored checksum
+catalog checksum s3://my-bucket/data/file.h5ad --recompute
+catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
+catalog checksum data/folder/ --workers 1                  # serial, for comparison
+```
+
+Like `for_location`, omitting `--algorithm` lets a checksum already stored on the S3
+object decide the algorithm, so nothing is downloaded. The table's `SOURCE` column
+reports which path was taken (`computed`, `s3_native`, `s3_metadata`), and `-o json`
+adds the fields the Python API exposes as properties: `content_digest`, `s3_base64`,
+and `s3_composite_base64` (files only). See the [CLI section of
+USAGE.md](../USAGE.md#checksums-from-the-command-line) for every flag and the exit
+codes.
+
 ---
 
 ## Asset sizes
@@ -219,19 +242,33 @@ if you need the same algorithm regardless of what is installed.
 
 When `algorithm=None`, the library inspects both S3 native checksum fields (`crc32`,
 `crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
-`x-checksum-crc64`) in a single `HeadObject` call, then picks the strongest algorithm
-present. Where a checksum was stored does not affect the choice — only which algorithm
-it is, ranked by `ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
+`x-checksum-crc64`) in a single `HeadObject` call.
 
-`blake3` > `blake2b` > `crc64` > `crc64nvme` > `crc32`
+**For a single file**, it picks the highest-priority algorithm present, ranked by
+`ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
 
-So a `blake3` value in user metadata is preferred over a native `crc32`. If no stored
-checksum exists, `default_algorithm()` is used and the object is downloaded to compute
-the hash.
+`crc64nvme` > `crc32` > `blake3` > `blake2b` > `crc64`
 
-For folders, the algorithm must be present on **every** object under the prefix; the
-strongest algorithm common to all children wins, and if there is no common algorithm the
-folder falls back to `default_algorithm()` and every object is downloaded.
+S3-native algorithms rank first: they are what S3 computes and can verify itself, so
+reusing one keeps the catalog digest comparable with what the platform reports. Where a
+checksum was stored does not otherwise affect the choice. If no stored checksum exists,
+`default_algorithm()` is used and the object is downloaded to compute the hash.
+
+**For a folder**, the algorithm does *not* have to be present on every object. The
+library ranks candidates by how much recompute each would need — the bytes and the
+number of objects that lack it — and picks the cheapest. Children that already carry the
+chosen algorithm contribute their stored digest; only the rest are downloaded. Priority
+breaks ties, which in practice means two algorithms that both need no downloads at all.
+
+Mixing stored and computed digests is safe: a child hashed locally produces the same
+value it would report as a stored checksum, so the folder digest is identical either
+way. If no child carries anything readable, the folder falls back to
+`default_algorithm()` and every object is downloaded.
+
+> **Digest width.** Selection optimises for recompute cost and does not impose a minimum
+> digest strength, so a prefix where `crc32` has better coverage than the alternatives
+> will be registered with a 32-bit digest. Distinct 32-bit values collide at around 65k
+> objects by the birthday bound. Pass an explicit `algorithm=` where that matters.
 
 ### Controlling downloads
 
@@ -347,6 +384,52 @@ an access, credential, or throttling error is reported (as a `ChecksumWarning` v
 handler) rather than being treated as "this object has no stored checksum" — which would have
 quietly triggered a full download, or a silent skip under `compute_if_no_s3_checksum=False`.
 Only a genuinely missing object counts as "no stored checksum".
+
+---
+
+## Parallelism
+
+Folders are hashed concurrently by default. `max_workers` (`--workers` on the CLI)
+caps the threads; `None` picks a default from the available CPUs and `1` forces the
+serial path.
+
+**It never changes a checksum.** A folder digest depends on the order children are
+*combined* in, which stays sorted by name regardless of the order they finish in. The
+eval's `parallelism` dimension asserts this for every tree shape, every algorithm and
+several worker counts, per path rather than only at the root.
+
+What it does and does not speed up:
+
+| workload | effect |
+|---|---|
+| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. |
+| Local folder of large files | 2–4.5x, measured. blake3 3.9x, blake2b 4.5x, crc32 2.3x, crc64nvme 2.1x on 8 × 8MB. |
+| Local folder of many small files | Unchanged. The pool only engages above a mean file size, because below it the cost is `open`/`close` in the kernel rather than hashing, and threads measured net-negative. |
+| Single file | Unchanged — there is nothing to parallelise across. |
+
+Two things stay serial deliberately, both because measurement said so: directory
+listing (concurrency made it monotonically worse on a local filesystem), and the
+per-asset loop in `for_assets` (so every `ChecksumWarning` is raised on the calling
+thread, keeping the contract under `warnings.simplefilter("error", ChecksumWarning)`).
+
+```python
+# Cap threads, or force the serial path.
+assets = for_assets(assets, s3_client=s3, max_workers=4)
+result = compute_checksum_localfs("/data/folder", Algorithm.blake3, max_workers=1)
+```
+
+If you pass your own `s3_client`, the S3 worker count is clamped to its
+`max_pool_connections` (10 on a stock client). Exceeding that pool does not queue —
+botocore discards and re-opens connections instead — so raise it on the client if you
+want more concurrency than that:
+
+```python
+import boto3
+from botocore.config import Config
+
+s3 = boto3.client("s3", config=Config(max_pool_connections=32))
+assets = for_assets(assets, s3_client=s3, max_workers=32)
+```
 
 ---
 

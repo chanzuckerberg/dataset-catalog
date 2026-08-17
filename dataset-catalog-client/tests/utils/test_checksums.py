@@ -6,6 +6,9 @@ deliberately mocks out (metadata key casing, HeadObject response fields, error t
 """
 
 import hashlib
+import threading
+import time
+from unittest.mock import patch
 
 import boto3
 import pytest
@@ -14,16 +17,14 @@ from moto import mock_aws
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils import checksum as checksums
 from catalog_client.utils.checksum.algorithm import DIGEST_HEX_LENGTH, Algorithm
-from catalog_client.utils.checksum.models import ChecksumResult
 from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
-    _find_common_algorithm_in_folder,
     _parse_s3_uri,
     _select_best_algorithm,
+    _select_folder_algorithm,
 )
 
 BUCKET = "test-bucket"
-HEX64 = "aa" * 32  # a valid blake3-length hex digest
 
 
 def hex64(seed: str) -> str:
@@ -91,11 +92,15 @@ class TestSelectBestAlgorithm:
     @pytest.mark.parametrize(
         "algorithms, expected",
         [
-            ({"blake3", "crc32"}, "blake3"),
+            # S3-native ranks above user metadata: crc32 is a value S3 computed
+            # and can verify, where blake3 only exists because we wrote it.
+            ({"blake3", "crc32"}, "crc32"),
             ({"crc32", "crc64nvme"}, "crc64nvme"),
             ({"crc32"}, "crc32"),
             ({"blake2b", "crc64"}, "blake2b"),
-            ({"blake3", "blake2b", "crc64", "crc64nvme", "crc32"}, "blake3"),
+            ({"blake3", "blake2b", "crc64", "crc64nvme", "crc32"}, "crc64nvme"),
+            # crc64 is last: same width as crc64nvme but ~90x slower.
+            ({"crc64", "crc32"}, "crc32"),
             (set(), None),
         ],
     )
@@ -213,86 +218,215 @@ class TestFetchAllS3StoredChecksums:
             _fetch_all_s3_stored_checksums("no-such-bucket-here", "k.txt", s3)
 
 
-# ── Folder Common Algorithm Detection ──────────────────────────────────────────
+# ── Folder Algorithm Selection ─────────────────────────────────────────────────
 
 
-class TestFindCommonAlgorithmInFolder:
-    def test_common_algorithm_found(self, s3):
+def _put(s3, key, body=b"data", *, native="SHA256", **metadata):
+    """Put an object, controlling which native checksum S3 attaches to it.
+
+    moto — like S3 itself now does — attaches a native checksum to every
+    upload, so "this object carries only a blake3" has to be stated rather
+    than assumed. SHA256 is not one of the algorithms this library reads
+    (see _S3_NATIVE_RESPONSE_KEY), so it stands in for "no usable native
+    checksum" without having to defeat the platform's default.
+    """
+    s3.put_object(
+        Bucket=BUCKET, Key=key, Body=body, ChecksumAlgorithm=native, Metadata=metadata
+    )
+
+
+class TestSelectFolderAlgorithm:
+    """Selection ranks algorithms by how much recompute each would cost.
+
+    The property under test throughout is that a child without a stored
+    checksum costs one download, never the whole folder. The predecessor of
+    this function required an algorithm common to every child, so one
+    checksumless object in a 100k-object prefix discarded 99,999 usable
+    digests and re-downloaded everything.
+    """
+
+    def test_full_coverage_selects_that_algorithm_and_caches_every_child(self, s3):
         for name in ["a.txt", "b.txt", "c.txt"]:
-            s3.put_object(
-                Bucket=BUCKET,
-                Key=f"dataset/{name}",
-                Body=b"data",
-                Metadata={"x-checksum-blake3": hex64(name)},
-            )
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": hex64(name)})
 
-        algo, per_child = _find_common_algorithm_in_folder(
-            f"s3://{BUCKET}/dataset/", s3
-        )
-        assert algo == "blake3"
-        assert len(per_child) == 3
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.blake3
+        assert len(selection.cached) == 3
+        assert selection.total_children == 3
 
-    def test_early_exit_on_missing_checksum(self, s3, monkeypatch):
-        """When a child has no stored checksums, exit early with None."""
-        s3.put_object(Bucket=BUCKET, Key="dataset/a.txt", Body=b"data")
-        s3.put_object(Bucket=BUCKET, Key="dataset/b.txt", Body=b"data")
+    def test_one_checksumless_child_keeps_every_other_stored_digest(self, s3):
+        # The regression this whole change exists for.
+        for name in ["a.txt", "b.txt", "c.txt"]:
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": hex64(name)})
+        _put(s3, "dataset/d.txt")  # no checksum at all
 
-        def _mock_fetch(bucket, key, client):
-            if key == "dataset/a.txt":
-                return {
-                    "blake3": ChecksumResult(
-                        path=f"s3://{bucket}/{key}",
-                        algorithm="blake3",
-                        file_hash=HEX64,
-                        merkle_root=HEX64,
-                        source="s3_metadata",
-                    )
-                }
-            return {}  # b.txt has no checksums
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.blake3
+        assert len(selection.cached) == 3  # not 0
+        assert selection.total_children == 4
 
-        monkeypatch.setattr(
-            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums",
-            _mock_fetch,
-        )
-        algo, per_child = _find_common_algorithm_in_folder(
-            f"s3://{BUCKET}/dataset/", s3
-        )
-        assert algo is None
-        assert per_child == {}
-
-    def test_intersection_finds_shared_algorithm(self, s3):
-        """File A has {blake3, crc64}, File B has {crc64} -> crc64 is common."""
-        s3.put_object(
-            Bucket=BUCKET,
-            Key="dataset/a.txt",
-            Body=b"data",
-            Metadata={
+    def test_full_coverage_beats_partial_coverage(self, s3):
+        # a has {blake3, crc64}, b has {crc64}: crc64 needs no downloads at all,
+        # blake3 would need one. Cost decides, not the priority table.
+        _put(
+            s3,
+            "dataset/a.txt",
+            **{
                 "x-checksum-blake3": hex_for("b3", Algorithm.blake3),
                 "x-checksum-crc64": hex_for("c64-a", Algorithm.crc64),
             },
         )
-        s3.put_object(
-            Bucket=BUCKET,
-            Key="dataset/b.txt",
-            Body=b"data",
-            Metadata={"x-checksum-crc64": hex_for("c64-b", Algorithm.crc64)},
+        _put(
+            s3,
+            "dataset/b.txt",
+            **{"x-checksum-crc64": hex_for("c64-b", Algorithm.crc64)},
         )
 
-        algo, per_child = _find_common_algorithm_in_folder(
-            f"s3://{BUCKET}/dataset/", s3
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.crc64
+        assert len(selection.cached) == 2
+
+    def test_selection_follows_bytes_when_counts_are_equal(self, s3):
+        # Each algorithm covers exactly one of the two objects, so only the
+        # size of what is left decides: picking blake3 means downloading 4MB,
+        # picking crc32 means downloading one byte.
+        _put(s3, "dataset/big.bin", b"x" * 4_000_000, native="CRC32")
+        _put(s3, "dataset/small.bin", b"x", **{"x-checksum-blake3": hex64("b3")})
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.crc32
+
+    def test_selection_follows_object_count_when_bytes_are_equal(self, s3):
+        # Both options leave 20,000 bytes to fetch. crc32 leaves them in one
+        # object, blake3 in twenty. Round trips are the only difference, which
+        # is the half of the cost model that bytes alone would miss.
+        for i in range(20):
+            _put(s3, f"dataset/many-{i:02d}.bin", b"x" * 1_000, native="CRC32")
+        _put(s3, "dataset/one.bin", b"x" * 20_000, **{"x-checksum-blake3": hex64("b3")})
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.crc32
+        assert len(selection.cached) == 20
+
+    def test_priority_breaks_ties_when_recompute_is_equal(self, s3):
+        # Every child carries both, so neither needs a download and the cost
+        # model cannot separate them. Only then does the priority table decide.
+        for name in ["a.txt", "b.txt"]:
+            _put(
+                s3,
+                f"dataset/{name}",
+                native="CRC32",
+                **{"x-checksum-blake3": hex64(name)},
+            )
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == Algorithm.crc32  # S3-native outranks metadata
+        assert len(selection.cached) == 2
+
+    def test_no_child_has_a_checksum_falls_back_to_the_default(self, s3):
+        _put(s3, "dataset/a.txt")
+        _put(s3, "dataset/b.txt")
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm == checksums.default_algorithm()
+        assert selection.cached == {}
+        assert selection.total_children == 2
+
+    def test_an_algorithm_this_install_cannot_compute_is_never_selected(
+        self, s3, monkeypatch
+    ):
+        # Combining children into a folder digest needs a working hasher, so an
+        # algorithm S3 stored but that this install cannot build would fail
+        # partway through the walk rather than at selection time.
+        for name in ["a.txt", "b.txt"]:
+            _put(
+                s3,
+                f"dataset/{name}",
+                **{"x-checksum-crc64": hex_for(name, Algorithm.crc64)},
+            )
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.s3.available_algorithms",
+            lambda: {Algorithm.blake3, Algorithm.blake2b, Algorithm.crc32},
         )
-        assert algo == "crc64"
-        assert len(per_child) == 2
 
-    def test_empty_folder_returns_none(self, s3):
-        algo, per_child = _find_common_algorithm_in_folder(f"s3://{BUCKET}/empty/", s3)
-        assert algo is None
-        assert per_child == {}
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert selection.algorithm != Algorithm.crc64
+        assert selection.cached == {}
 
-    def test_local_path_returns_none(self):
-        algo, per_child = _find_common_algorithm_in_folder("/local/path", None)
-        assert algo is None
-        assert per_child == {}
+    def test_an_explicit_algorithm_skips_selection_but_still_reuses_children(self, s3):
+        # Naming an algorithm used to discard every cached child unless all of
+        # them carried it. The children that do carry it are still reusable.
+        _put(s3, "dataset/a.txt", native="CRC32")
+        _put(s3, "dataset/b.txt")  # no algorithm this library reads
+
+        selection = _select_folder_algorithm(
+            f"s3://{BUCKET}/dataset/", s3, Algorithm.crc32
+        )
+        assert selection.algorithm == Algorithm.crc32
+        assert list(selection.cached) == [f"s3://{BUCKET}/dataset/a.txt"]
+        assert selection.total_children == 2
+
+    def test_empty_folder_selects_nothing(self, s3):
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/empty/", s3)
+        assert selection.algorithm is None
+        assert selection.cached == {}
+        assert selection.total_children == 0
+
+    def test_empty_folder_passes_an_explicit_algorithm_through(self, s3):
+        selection = _select_folder_algorithm(
+            f"s3://{BUCKET}/empty/", s3, Algorithm.crc32
+        )
+        assert selection.algorithm == Algorithm.crc32
+        assert selection.total_children == 0
+
+    def test_local_path_selects_nothing(self):
+        selection = _select_folder_algorithm("/local/path", None)
+        assert selection.algorithm is None
+        assert selection.cached == {}
+
+    def test_children_are_scanned_concurrently(self, s3, monkeypatch):
+        # For a folder whose children all carry a checksum, these HeadObjects
+        # are the entire operation -- nothing is ever downloaded -- so they are
+        # the requests worth overlapping. The barrier only clears if four are
+        # in flight at once, so a serialised scan fails here rather than hangs.
+        for i in range(4):
+            _put(s3, f"dataset/{i}.txt", **{"x-checksum-blake3": hex64(str(i))})
+
+        barrier = threading.Barrier(4, timeout=10)
+        real = _fetch_all_s3_stored_checksums
+
+        def blocking(bucket, key, client):
+            barrier.wait()
+            return real(bucket, key, client)
+
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums", blocking
+        )
+
+        selection = _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
+        assert len(selection.cached) == 4
+
+    def test_a_failing_child_raises_in_listing_order(self, s3, monkeypatch):
+        # Concurrency must not make which error surfaces depend on thread
+        # timing: b.txt fails slowly and c.txt fails instantly, and b.txt is
+        # what a serial scan would have hit first.
+        for name in ["a.txt", "b.txt", "c.txt"]:
+            _put(s3, f"dataset/{name}")
+
+        def failing(bucket, key, client):
+            if key.endswith("b.txt"):
+                time.sleep(0.05)
+                raise RuntimeError("b.txt is unreadable")
+            if key.endswith("c.txt"):
+                raise RuntimeError("c.txt is unreadable")
+            return {}
+
+        monkeypatch.setattr(
+            "catalog_client.utils.checksum.s3._fetch_all_s3_stored_checksums", failing
+        )
+
+        with pytest.raises(RuntimeError, match="b.txt is unreadable"):
+            _select_folder_algorithm(f"s3://{BUCKET}/dataset/", s3)
 
 
 # ── for_assets: Core Behaviors ─────────────────────────────────────────────────
@@ -398,17 +532,29 @@ class TestGenerateForAssetsS3:
         the s3.py lookup depends on.
         """
         stored = hex_for("stored", Algorithm.blake3)
-        s3.put_object(
-            Bucket=BUCKET,
-            Key="file.txt",
-            Body=b"data",
-            Metadata={"x-checksum-blake3": stored},
-        )
+        # native="SHA256" so the object carries no algorithm this library reads
+        # natively, leaving the metadata blake3 as the only candidate. Without
+        # it S3's automatic CRC32 would win on priority and this would stop
+        # testing metadata lookup at all.
+        _put(s3, "file.txt", **{"x-checksum-blake3": stored})
 
         assets = [make_asset(f"s3://{BUCKET}/file.txt")]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum == stored
         assert result[0].checksum_alg == "blake3"
+
+    def test_auto_detect_file_prefers_a_native_checksum_over_metadata(self, s3):
+        """S3-native ranks above user metadata: the platform can verify it."""
+        _put(
+            s3,
+            "file.txt",
+            native="CRC32",
+            **{"x-checksum-blake3": hex_for("stored", Algorithm.blake3)},
+        )
+
+        assets = [make_asset(f"s3://{BUCKET}/file.txt")]
+        result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
+        assert result[0].checksum_alg == "crc32"
 
     def test_auto_detect_file_falls_back_to_blake3(self, s3, monkeypatch):
         """algorithm=None on S3 file with no stored checksums -> computes blake3.
@@ -428,38 +574,60 @@ class TestGenerateForAssetsS3:
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
-    def test_auto_detect_folder_common_algorithm(self, s3):
-        """algorithm=None on S3 folder where all children share blake3."""
+    def test_auto_detect_folder_where_every_child_shares_one_algorithm(self, s3):
+        """algorithm=None on an S3 folder whose children all carry blake3."""
         for name, digest in [("a.txt", "aa" * 32), ("b.txt", "bb" * 32)]:
-            s3.put_object(
-                Bucket=BUCKET,
-                Key=f"dataset/{name}",
-                Body=b"data",
-                Metadata={"x-checksum-blake3": digest},
-            )
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": digest})
 
         assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
 
-    def test_auto_detect_folder_no_common_falls_back_to_blake3(self, s3, monkeypatch):
-        """algorithm=None on S3 folder with no common algorithm -> computes blake3.
+    def test_auto_detect_folder_with_no_usable_checksums_falls_back_to_blake3(self, s3):
+        """algorithm=None where no child carries a readable checksum -> blake3.
 
-        Stubbed for the same reason as the file case: every PutObject carries a
-        native CRC32, so children always share at least one algorithm in practice.
+        No longer needs stubbing: SHA256 is a native checksum this library does
+        not read, so it produces a genuinely unreadable folder through the real
+        code path rather than a mocked one.
         """
         for name in ["a.txt", "b.txt"]:
-            s3.put_object(Bucket=BUCKET, Key=f"dataset/{name}", Body=b"data")
-        monkeypatch.setattr(
-            "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-            lambda *a, **k: (None, {}),
-        )
+            _put(s3, f"dataset/{name}")
 
         assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
         result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
         assert result[0].checksum is not None
         assert result[0].checksum_alg == "blake3"
+
+    def test_auto_detect_folder_with_one_gap_downloads_only_that_child(self, s3):
+        """A child without a stored checksum costs one download, not the folder.
+
+        The download count is the assertion that matters: requiring an
+        algorithm common to every child meant one gap re-fetched everything,
+        and a digest-only assertion would not have noticed.
+        """
+        for name in ["a.txt", "c.txt", "d.txt"]:
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": hex64(name)})
+        _put(s3, "dataset/b.txt")  # the only child that must be read
+
+        assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
+        with patch.object(s3, "get_object", wraps=s3.get_object) as spy:
+            result = checksums.for_assets(assets, algorithm=None, s3_client=s3)
+
+        assert spy.call_count == 1
+        assert spy.call_args.kwargs["Key"] == "dataset/b.txt"
+        assert result[0].checksum_alg == "blake3"
+        assert result[0].checksum is not None
+
+    def test_auto_detect_folder_with_full_coverage_downloads_nothing(self, s3):
+        for name in ["a.txt", "b.txt", "c.txt"]:
+            _put(s3, f"dataset/{name}", **{"x-checksum-blake3": hex64(name)})
+
+        assets = [make_asset(f"s3://{BUCKET}/dataset/", asset_type=AssetType.folder)]
+        with patch.object(s3, "get_object", wraps=s3.get_object) as spy:
+            checksums.for_assets(assets, algorithm=None, s3_client=s3)
+
+        spy.assert_not_called()
 
     def test_access_error_warns(self, s3):
         """A real botocore NoSuchBucket error is caught and surfaced as a warning."""

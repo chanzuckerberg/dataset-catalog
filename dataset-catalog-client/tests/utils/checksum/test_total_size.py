@@ -166,7 +166,9 @@ def test_directory_size_is_none_when_any_child_size_is_unknown():
     # A partial sum would understate the folder while looking authoritative.
     s3 = MagicMock()
     s3.head_object.return_value = {}
-    s3.get_object.return_value = {"Body": io.BytesIO(b"x")}
+    # A fresh stream per call: both children are read, and a shared BytesIO
+    # would leave whichever ran second with an exhausted one.
+    s3.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(b"x")}
     paginator = MagicMock()
     paginator.paginate.return_value = [
         {"Contents": [{"Key": "ds/known.bin", "Size": 5}, {"Key": "ds/unknown.bin"}]}

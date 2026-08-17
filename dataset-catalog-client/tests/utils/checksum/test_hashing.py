@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from catalog_client.utils.checksum import hashing
 from catalog_client.utils.checksum.algorithm import Algorithm
 from catalog_client.utils.checksum.hashing import (
     compute_checksum,
@@ -39,7 +40,10 @@ def _s3(head=None, body=b"hello"):
     """S3 client mock with configurable head_object and get_object responses."""
     s3 = MagicMock()
     s3.head_object.return_value = head or {}
-    s3.get_object.return_value = {"Body": io.BytesIO(body)}
+    # side_effect, not return_value: a single BytesIO would be shared by every
+    # key, so the second child to read it would see an exhausted stream. Serial
+    # execution made that deterministic; concurrent children would race on it.
+    s3.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(body)}
     return s3
 
 
@@ -447,3 +451,101 @@ def test_content_digest_is_well_defined_for_directories(tmp_path):
     (tmp_path / "f.bin").write_bytes(b"data")
     result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
     assert result.content_digest == result.file_hash == result.merkle_root
+
+
+# ── compute_checksum_localfs — the pool gate ─────────────────────────────────
+#
+# Whether a tree is walked concurrently is a throughput decision, not a digest
+# one: the eval's `parallelism` dimension already proves the digest is the same
+# either way. What matters here is that the decision itself is made on measured
+# data — mean file size — rather than on file count alone, because threads
+# measured net-negative on trees of many small files.
+
+
+def _decide(file_count, mean_bytes, workers):
+    """Run the gate without touching a filesystem, by counting pool use."""
+    paths = [f"/nonexistent/{i}" for i in range(file_count)]
+    seen: list[str] = []
+
+    def fake_hash(path, algorithm, read_buffer=None):
+        seen.append(read_buffer)
+        return _make_result(path)
+
+    with patch.object(hashing, "_hash_local_file", fake_hash):
+        hashing._hash_files(paths, mean_bytes * file_count, Algorithm.blake3, workers)
+    # The pooled branch is the only one that passes an explicit buffer.
+    return any(buffer is not None for buffer in seen)
+
+
+def test_large_files_are_hashed_through_a_pool():
+    assert _decide(64, hashing.PARALLEL_MIN_MEAN_BYTES, workers=8) is True
+
+
+def test_many_small_files_are_hashed_serially():
+    # 16k files averaging 24KB: the profile measured at 0.55-0.87x with threads,
+    # where open/close contend in the kernel and hashing is not the bottleneck.
+    assert _decide(16_000, 24 * 1024, workers=8) is False
+
+
+def test_a_handful_of_files_is_hashed_serially_however_large():
+    # Below the file-count floor a pool costs more to create than it saves.
+    assert _decide(2, 100 * hashing.PARALLEL_MIN_MEAN_BYTES, workers=8) is False
+
+
+def test_one_worker_never_uses_a_pool():
+    assert _decide(64, hashing.PARALLEL_MIN_MEAN_BYTES, workers=1) is False
+
+
+def test_no_files_is_not_a_division_by_zero():
+    assert hashing._hash_files([], 0, Algorithm.blake3, 8) == {}
+
+
+# ── compute_checksum_localfs — pathological trees ────────────────────────────
+
+
+def test_a_symlinked_directory_cycle_terminates(tmp_path):
+    """is_dir() follows symlinks, so a directory cycle is reachable.
+
+    The kernel stops it first: resolving the repeated link raises ELOOP after
+    ~32 levels, naming the offending path. That is already a clear failure, so
+    it is left to propagate rather than wrapped. What matters is that the walk
+    ends rather than looping until it exhausts memory, which is the failure
+    mode breadth-first traversal would have and recursion did not.
+    """
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "f.bin").write_bytes(b"x")
+    (tmp_path / "a" / "loop").symlink_to(tmp_path / "a", target_is_directory=True)
+
+    with pytest.raises(OSError, match="[Ss]ymbolic links"):
+        compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+
+
+def test_nesting_past_the_depth_cap_is_reported(tmp_path, monkeypatch):
+    """The backstop for cycles the OS does not catch.
+
+    ELOOP covers a plain symlink loop, but a bind mount or a filesystem that
+    resolves links differently would not raise it, and a breadth-first walk has
+    no stack to run out of. The cap is what makes that terminate.
+    """
+    monkeypatch.setattr("sys.getrecursionlimit", lambda: 8)
+    deep = tmp_path.joinpath(*("d" * 20))
+    deep.mkdir(parents=True)
+    (deep / "leaf.bin").write_bytes(b"leaf")
+
+    with pytest.raises(RuntimeError, match="exceeded 8 levels"):
+        compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+
+
+def test_a_deeply_nested_tree_does_not_exhaust_the_stack(tmp_path):
+    """Depth the old recursive walk could not reach.
+
+    Single-character names on purpose: the interesting limit is Python's
+    recursion depth, and multi-character ones would hit the OS path length
+    first and test nothing.
+    """
+    deep = tmp_path.joinpath(*("d" * 300))
+    deep.mkdir(parents=True)
+    (deep / "leaf.bin").write_bytes(b"leaf")
+
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+    assert result.total_size == 4

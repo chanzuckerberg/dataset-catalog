@@ -14,6 +14,7 @@ from catalog_client.models.asset import (
     DataAssetResponse,
     StoragePlatform,
 )
+from catalog_client.utils.checksum._parallel import DEFAULT_S3_WORKERS
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.generate import (
     UNSUPPORTED_PLATFORMS,
@@ -22,6 +23,7 @@ from catalog_client.utils.checksum.generate import (
     for_location,
 )
 from catalog_client.utils.checksum.models import ChecksumResult
+from catalog_client.utils.checksum.s3 import _FolderSelection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -318,10 +320,10 @@ _FOLDER_RESULT = make_result(S3_FOLDER, Algorithm.blake3, HASH, is_directory=Tru
     return_value=_FOLDER_RESULT,
 )
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
 )
-def test_s3_folder_common_algo_builds_merkle_from_cached_children(
+def test_s3_folder_full_coverage_builds_merkle_from_cached_children(
     mock_find, mock_compute, mock_s3
 ):
     asset = make_asset(S3_FOLDER, AssetType.folder)
@@ -337,10 +339,10 @@ def test_s3_folder_common_algo_builds_merkle_from_cached_children(
     return_value=_FOLDER_RESULT,
 )
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(None, {}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(),
 )
-def test_s3_folder_no_common_algo_falls_back_to_blake3(
+def test_s3_folder_with_nothing_detectable_falls_back_to_blake3(
     mock_find, mock_compute, mock_s3
 ):
     asset = make_asset(S3_FOLDER, AssetType.folder)
@@ -355,8 +357,8 @@ def test_s3_folder_no_common_algo_falls_back_to_blake3(
     return_value=_FOLDER_RESULT,
 )
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
 )
 def test_s3_folder_auto_detect_no_compute_flag_still_uses_cached_children(
     mock_find, mock_compute, mock_s3
@@ -373,8 +375,8 @@ def test_s3_folder_auto_detect_no_compute_flag_still_uses_cached_children(
 
 
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
 )
 def test_s3_folder_auto_detect_matches_explicit_algo_under_no_compute_flag(
     mock_find, mock_s3
@@ -402,10 +404,10 @@ def test_s3_folder_auto_detect_matches_explicit_algo_under_no_compute_flag(
 
 
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(None, {}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(),
 )
-def test_s3_folder_no_common_algo_no_compute_flag_leaves_checksum_unset(
+def test_s3_folder_with_nothing_detectable_no_compute_flag_leaves_checksum_unset(
     mock_find, mock_s3
 ):
     asset = make_asset(S3_FOLDER, AssetType.folder)
@@ -415,6 +417,46 @@ def test_s3_folder_no_common_algo_no_compute_flag_leaves_checksum_unset(
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
     mock_compute.assert_not_called()
     assert result[0].checksum is None
+
+
+# Two children, one of which carries the algorithm: coverage is real but partial.
+_PARTIAL = _FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 2)
+
+
+@patch(
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_PARTIAL,
+)
+def test_s3_folder_partial_coverage_no_compute_flag_skips(mock_find, mock_s3):
+    # Partial coverage is not complete coverage. The uncovered child would have
+    # to be downloaded, which is exactly what compute_if_no_s3_checksum=False
+    # forbids, so the folder is skipped rather than partly fetched.
+    asset = make_asset(S3_FOLDER, AssetType.folder)
+    with patch(
+        "catalog_client.utils.checksum.generate.compute_checksum_s3"
+    ) as mock_compute:
+        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
+    mock_compute.assert_not_called()
+    assert result[0].checksum is None
+
+
+@patch(
+    "catalog_client.utils.checksum.generate.compute_checksum_s3",
+    return_value=_FOLDER_RESULT,
+)
+@patch(
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_PARTIAL,
+)
+def test_s3_folder_partial_coverage_still_reuses_the_covered_children(
+    mock_find, mock_compute, mock_s3
+):
+    # With downloads allowed, the child that already has a digest must still be
+    # reused rather than re-fetched — that saving is the point of the change.
+    asset = make_asset(S3_FOLDER, AssetType.folder)
+    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
+    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
+    assert result[0].checksum == HASH
 
 
 @patch(
@@ -460,8 +502,10 @@ _FOLDER_RESULT_CRC32 = make_result(S3_FOLDER, Algorithm.crc32, HASH, is_director
     return_value=_FOLDER_RESULT_CRC32,
 )
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(
+        Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}, 1
+    ),
 )
 def test_s3_folder_explicit_algo_matching_children_compute_flag_true_uses_stored(
     mock_find, mock_compute, mock_s3
@@ -485,8 +529,10 @@ def test_s3_folder_explicit_algo_matching_children_compute_flag_true_uses_stored
     return_value=_FOLDER_RESULT_CRC32,
 )
 @patch(
-    "catalog_client.utils.checksum.generate._find_common_algorithm_in_folder",
-    return_value=(Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}),
+    "catalog_client.utils.checksum.generate._select_folder_algorithm",
+    return_value=_FolderSelection(
+        Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}, 1
+    ),
 )
 def test_s3_folder_explicit_algo_matching_children_compute_flag_false_uses_stored(
     mock_find, mock_compute, mock_s3
@@ -641,7 +687,12 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
     ):
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset])  # no s3_client
-    mock_client.assert_called_once_with("s3")
+    mock_client.assert_called_once()
+    assert mock_client.call_args.args == ("s3",)
+    # We own this client, so its pool is sized for the concurrent folder scan.
+    # A stock client caps at 10 and discards connections past that silently.
+    config = mock_client.call_args.kwargs["config"]
+    assert config.max_pool_connections >= DEFAULT_S3_WORKERS
 
 
 # ── Skip reporting: one mechanism for every skip ─────────────────────────────
