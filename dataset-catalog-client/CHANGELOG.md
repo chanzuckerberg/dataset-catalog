@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.6.0...catalog-client-v0.7.0) (2026-08-17)
+
+
+### Features
+
+* **checksum:** parallel folder hashing and a checksum CLI subcommand ([#69](https://github.com/chanzuckerberg/dataset-catalog/issues/69)) ([f29bc78](https://github.com/chanzuckerberg/dataset-catalog/commit/f29bc7811bb8366a84cdd7198206493a8d80ae84))
+
 ## [0.6.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.5.1...catalog-client-v0.6.0) (2026-08-14)
 
 
