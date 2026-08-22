@@ -50,6 +50,13 @@ The list route may ignore an unsupported parameter and appear to match
 everything. If a filter should reduce `total` but does not, report that the filter
 may have been ignored rather than trusting the count.
 
+The API surface itself is in flux: endpoint paths and parameters documented in
+`reference/rest.md` are snapshots, not contracts. On a `404`/`405` for a
+documented path or a `422` for a documented parameter, rediscover the current
+surface with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py"` (read-only,
+auto-approved) and adapt the call — never conclude from a stale path that the
+data or capability is missing.
+
 ## Output hygiene
 
 * Lead a search or list with the **number of matches** and the exact filters or

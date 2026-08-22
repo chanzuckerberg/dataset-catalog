@@ -4,36 +4,42 @@ Use this reference when you need REST Catalog API access, or manual ontology exp
 
 For ordinary reads, use Python’s standard-library REST path. It requires no installation. The `catalog` CLI and `catalog_client` SDK provide optional conveniences such as pagination, fan-out, result union, and typed post-processing.
 
-## The OpenAPI spec is the source of truth
+## Endpoints are discovered, not memorized
 
-`GET /api/meta/openapi.json` (token header required, same as any read) is the
-authoritative, always-current description of the API. The parameter lists and
-response shapes below are a guide captured at authoring time — **they can
-drift**. Before building a request you are unsure of, confirm the parameter
-names, allowed enum values, and response schema against the live spec. An
-invalid parameter value returns `422`; catch it at authoring time from the
-spec, not by trial and error.
-
-Fetch it once per session and extract only what you need:
+**The API is still in flux.** Every literal path, parameter list, and response
+shape in this document is a snapshot captured at authoring time — treat them
+as defaults that can drift, not as contracts. The live OpenAPI spec is the
+only source of truth, and the bundled discovery script is how you read it
+without pulling thousands of spec lines into context:
 
 ```bash
-python3 - <<'PY'
-import json, os, urllib.request
-BASE = (os.environ.get("CATALOG_API_URL") or "https://datacatalog.prod-sci-data.prod.czi.team").rstrip("/")
-req = urllib.request.Request(f"{BASE}/api/meta/openapi.json",
-                             headers={"X-catalog-api-token": os.environ["CATALOG_API_TOKEN"]})
-spec = json.load(urllib.request.urlopen(req, timeout=30))
-op = spec["paths"]["/api/datasets/search/"]["get"]
-for p in op.get("parameters", []):
-    s = p.get("schema", {})
-    print(f"{p['name']:16} required={p.get('required')} type={s.get('type')} default={s.get('default')}")
-PY
+# every operation the API currently exposes (method, path, summary):
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py"
+
+# params (with enums/defaults) + response fields for matching operations:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" datasets/search
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" lineage --json
 ```
 
-The allowed values for `facets`, `fields`, and `sort` live in each parameter's
-`description`. Response shapes are under `components.schemas` (resolve the
-`200` response's `$ref`). Note: the interactive `/docs` page may sit behind
-SSO — use the `/api/meta/openapi.json` path with the token header, not `/docs`.
+The script probes the known spec locations (`/api/meta/openapi.json` and
+fallbacks) with the token header, so a relocated spec degrades to a slower
+first call rather than a broken skill. It is read-only and auto-approved by
+the plugin hook.
+
+When to discover:
+
+* **Once per session, before the first scripted call** — confirm the paths and
+  parameters you're about to rely on.
+* **On any `404`/`405` for a documented path, or a `422` for a documented
+  parameter** — the surface moved; rediscover and adapt. Never conclude "the
+  data is gone" or "the filter doesn't exist" from a stale path.
+* **Before parsing a response shape you haven't seen this session.**
+
+Allowed values for parameters like `facets`, `fields`, and `sort` often live
+in the parameter `description` — `api_map.py` prints it. If the script is
+unavailable, fetch the spec directly (`GET /api/meta/openapi.json` with the
+token header) and extract the same information; the interactive `/docs` page
+may sit behind SSO, so don't use it.
 
 ## Direct REST
 
@@ -48,7 +54,7 @@ with urllib.request.urlopen(urllib.request.Request(f"{BASE}/api/datasets/search/
     data = json.load(r)
 ```
 
-## Read endpoints
+## Read endpoints (as of authoring — discover the current set with `api_map.py`)
 
 | Path                                   | Purpose                                    |
 | -------------------------------------- | ------------------------------------------ |
@@ -350,6 +356,7 @@ pivot to these routes.
 | `422` | Invalid parameter or value (e.g. a `facets`/`sort` value outside the allowed list, `limit=0`, list `limit>100`). Fix the parameter; check the spec. |
 | `503` | Search backend unavailable. Retry once, then report — never substitute guessed data. |
 | `404` on a dataset id | Wrong or tombstoned id; re-run search or the list route to get a current id. |
+| `404`/`405` on a documented *path*, or `422` on a documented *parameter* | The API surface moved since this doc was written. Run `scripts/api_map.py` to discover the current path/params and adapt — do not report the data or feature as missing. |
 
 Always surface the HTTP status and response body on failure — a silent "not
 found" that was actually an auth or validation error wastes the user's time.

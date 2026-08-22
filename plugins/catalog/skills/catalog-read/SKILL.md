@@ -35,9 +35,14 @@ ontology terms here — that is `catalog-search` (see *Decision rules*).
 
 ## Source of truth
 
-`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for endpoints, filters,
-pagination, facet behavior, and the dataset record shape. Read it before
-constructing a call you are unsure of. This skill defines **workflow, limits,
+`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for read *semantics*
+— filters vs. search, facet behavior, pagination styles, data cautions, and the
+dataset record shape. Read it before constructing a call you are unsure of.
+The literal endpoint paths and parameters it shows are snapshots of an API
+still in flux: the live spec is authoritative for those — discover them with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" [path-substring]` once per
+session or whenever a documented path/parameter errors (see *Endpoints are
+discovered, not memorized* in `rest.md`). This skill defines **workflow, limits,
 output, and visualization** only. Installation of the optional CLI/SDK:
 `${CLAUDE_PLUGIN_ROOT}/reference/install.md`.
 
