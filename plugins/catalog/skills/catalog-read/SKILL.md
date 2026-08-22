@@ -35,9 +35,14 @@ ontology terms here — that is `catalog-search` (see *Decision rules*).
 
 ## Source of truth
 
-`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for endpoints, filters,
-pagination, facet behavior, and the dataset record shape. Read it before
-constructing a call you are unsure of. This skill defines **workflow, limits,
+`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for read *semantics*
+— filters vs. search, facet behavior, pagination styles, data cautions, and the
+dataset record shape. Read it before constructing a call you are unsure of.
+The literal endpoint paths and parameters it shows are snapshots of an API
+still in flux: the live spec is authoritative for those — discover them with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" [path-substring]` once per
+session or whenever a documented path/parameter errors (see *Endpoints are
+discovered, not memorized* in `rest.md`). This skill defines **workflow, limits,
 output, and visualization** only. Installation of the optional CLI/SDK:
 `${CLAUDE_PLUGIN_ROOT}/reference/install.md`.
 
@@ -47,7 +52,13 @@ output, and visualization** only. Installation of the optional CLI/SDK:
   `catalog-reader` subagent.
 * Bring **at most ~50 rows** into the main conversation. A larger result set must
   be reduced (see *Analysis*) or delegated, never dumped.
-* Page size max is 100; `limit > 100` returns HTTP 422.
+* Page-size caps differ by route: list routes (`/api/datasets/`,
+  `/api/collections/*`, `/api/lineage/`) cap `limit` at 100 (`limit > 100`
+  returns HTTP 422); search allows up to 1000 (100 with `hydrate=true`).
+  Search pages with `cursor`/`next_cursor`, list routes with `offset` — see
+  *Pagination* in `reference/rest.md`.
+* When several hits need full records, prefer one `hydrate=true` search over a
+  detail call per hit — it spends one call, not one per record.
 
 When a ceiling is reached, return what you have, **labeled partial**, with the
 exact limit named. A ceiling is a stopping point, not a trigger to escalate.

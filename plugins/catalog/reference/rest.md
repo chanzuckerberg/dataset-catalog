@@ -2,7 +2,44 @@
 
 Use this reference when you need REST Catalog API access, or manual ontology expansion.
 
-For ordinary reads, use Python’s standard-library REST path. It requires no installation. The `catalog` CLI and `catalog_client` SDK provide optional conveniences such as pagination, fan-out, result union, and typed post-processing.
+For ordinary reads, use Python’s standard-library REST path. It requires no installation. The `catalog` CLI and `catalog_client` SDK provide optional conveniences such as pagination, fan-out, result union, and typed post-processing. The bundled scripts' REST fallback self-heals on endpoint moves: on a 404/405 it re-resolves the current dataset routes from the live spec and retries once.
+
+## Endpoints are discovered, not memorized
+
+**The API is still in flux.** Every literal path, parameter list, and response
+shape in this document is a snapshot captured at authoring time — treat them
+as defaults that can drift, not as contracts. The live OpenAPI spec is the
+only source of truth, and the bundled discovery script is how you read it
+without pulling thousands of spec lines into context:
+
+```bash
+# every operation the API currently exposes (method, path, summary):
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py"
+
+# params (with enums/defaults) + response fields for matching operations:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" datasets/search
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" lineage --json
+```
+
+The script probes the known spec locations (`/api/meta/openapi.json` and
+fallbacks) with the token header, so a relocated spec degrades to a slower
+first call rather than a broken skill. It is read-only and auto-approved by
+the plugin hook.
+
+When to discover:
+
+* **Once per session, before the first scripted call** — confirm the paths and
+  parameters you're about to rely on.
+* **On any `404`/`405` for a documented path, or a `422` for a documented
+  parameter** — the surface moved; rediscover and adapt. Never conclude "the
+  data is gone" or "the filter doesn't exist" from a stale path.
+* **Before parsing a response shape you haven't seen this session.**
+
+Allowed values for parameters like `facets`, `fields`, and `sort` often live
+in the parameter `description` — `api_map.py` prints it. If the script is
+unavailable, fetch the spec directly (`GET /api/meta/openapi.json` with the
+token header) and extract the same information; the interactive `/docs` page
+may sit behind SSO, so don't use it.
 
 ## Direct REST
 
@@ -17,28 +54,39 @@ with urllib.request.urlopen(urllib.request.Request(f"{BASE}/api/datasets/search/
     data = json.load(r)
 ```
 
-## Read endpoints
+## Read endpoints (as of authoring — discover the current set with `api_map.py`)
 
-List-style responses have this shape: `{total, limit, offset, results:[…]}`.
-Search also returns `facets`.
-
-| Path                                | Purpose                                    |
-| ----------------------------------- | ------------------------------------------ |
-| `GET /api/datasets/search/`         | Free-text dataset search                   |
-| `GET /api/datasets/`                | List datasets or apply exact-match filters |
-| `GET /api/datasets/{id}`            | Fetch one full dataset record              |
-| `GET /api/collections/`             | List collections                           |
-| `GET /api/collections/{id}`         | Fetch one collection                       |
-| `GET /api/collections/{id}/entries` | Fetch child membership                     |
-| `GET /api/collections/{id}/parents` | Fetch parent membership                    |
-| `GET /api/lineage/`                 | List lineage edges                         |
-| `GET /api/lineage/{edge_id}`        | Fetch one lineage edge                     |
+| Path                                   | Purpose                                    |
+| -------------------------------------- | ------------------------------------------ |
+| `GET /api/datasets/search/`            | Free-text dataset search (ranked, faceted) |
+| `GET /api/datasets/`                   | List datasets or apply exact-match filters |
+| `GET /api/datasets/{id}`               | Fetch one full dataset record              |
+| `GET /api/datasets/{id}/history`       | Version history for a dataset              |
+| `GET /api/collections/`                | List collections                           |
+| `GET /api/collections/{id}`            | Fetch one collection                       |
+| `GET /api/collections/{id}/entries`    | Fetch child membership                     |
+| `GET /api/collections/{id}/parents`    | Fetch parent membership                    |
+| `GET /api/lineage/`                    | List lineage edges                         |
+| `GET /api/lineage/{edge_id}`           | Fetch one lineage edge                     |
+| `GET /api/meta/openapi.json`           | Live OpenAPI spec (source of truth)        |
 
 `/api/datasets/{id}` requires the dataset UUID, not its `canonical_id`. Resolve a canonical ID through the list route:
 
 ```
 GET /api/datasets/?canonical_id=<value>
 ```
+
+## Pagination — differs by endpoint
+
+* `/api/datasets/search/` paginates with an **opaque cursor**: each page
+  returns `next_cursor`; pass it back as `cursor` to fetch the next page
+  (`null` means done). It does **not** page with `offset`.
+* `/api/datasets/`, `/api/collections/*`, and `/api/lineage/` paginate with
+  `offset`/`limit`. List-style responses have the shape
+  `{total, limit, offset, results: […]}`.
+* Search `limit` ranges 1–1000 (1–100 when `hydrate=true`); `limit=0` returns
+  `422`. The default is 10.
+* The list routes cap `limit` at 100; `limit > 100` returns HTTP 422.
 
 ## Search or list?
 
@@ -50,44 +98,39 @@ Use:
 GET /api/datasets/search/
 ```
 
-Supported parameters include:
+Query parameters (all optional; confirm the current set against the spec):
 
-* `q`
-* `modality`
-* `project`
-* `is_latest`
-* `access_scope`
-* `organism`
-* `tissue`
-* `sub_modality`
-* `assay`
-* `disease`
-* `development_stage`
-* `sort`
-* `facets`
-* `offset`
-* `limit`
+* `q` — full-text search across indexed fields; name and description are
+  weighted highest.
+* Exact-match filters: `modality`, `sub_modality`, `assay`, `organism`,
+  `tissue`, `disease`, `development_stage`, `project`, `cohort`,
+  `access_scope`, `file_format`, `storage_platform`, `is_latest`.
+* `facets` — field(s) to return value counts for; repeat for multiple.
+* `fields` — extra fields to include per hit beyond the core set; repeat for
+  multiple (e.g. `description`, `data_owner`, `data_steward`, `locations`,
+  `collections`, `doi` — full list in the spec).
+* `sort` — `relevance` (default), `alphabetical`, `last_modified`, `newest`,
+  `oldest`.
+* `hydrate` — `true` re-reads each hit from the DB and returns the full
+  dataset record. Use it when several hits need full records: one hydrated
+  search replaces a detail call per hit.
+* `cursor` — pass the previous page's `next_cursor` to page forward.
+* `limit` — see *Pagination* above.
 
-`sort` may be:
-
-```text
-relevance
-alphabetical
-last_modified
-newest
-oldest
-```
-
-The default limit is 10.
-
-Search returns lightweight hits containing fields such as:
+Search hits are lightweight by default, containing fields such as:
 
 ```text
 id, canonical_id, version, name, modality, dataset_type,
 project, is_latest, access_scope, score
 ```
 
-Search hits do not contain `locations`. Fetch the full record to inspect assets.
+Default hits do not contain `locations`. Add `fields=locations`, set
+`hydrate=true`, or fetch the full record to inspect assets.
+
+`q` is weak on accession-named data: some projects name datasets by an
+external accession rather than a descriptive title, so a natural-language `q`
+can legitimately return 0 for data that exists. Drive discovery of such
+projects with exact-match filters plus facets, not `q`.
 
 ### Exact-match filtering
 
@@ -149,34 +192,32 @@ facets=["tissue", "modality"]
 facets="tissue,modality"
 ```
 
-Likely facet fields are:
+Allowed facet fields (confirm against the spec's `facets` parameter
+description, which is authoritative):
 
-| Field               | Notes                           |
-| ------------------- | ------------------------------- |
-| `modality`          | Confirmed                       |
-| `organism`          | Confirmed                       |
-| `dataset_type`      | Search facet, not a list filter |
-| `tissue`            | Expected                        |
-| `assay`             | Expected                        |
-| `disease`           | Expected                        |
-| `sub_modality`      | Expected                        |
-| `development_stage` | Expected                        |
-| `project`           | Expected                        |
-| `access_scope`      | Expected                        |
+```text
+access_scope, assay, cohort, dataset_type, development_stage, disease,
+file_format, license, modality, organism, project, storage_platform,
+sub_modality, tissue
+```
 
-The client does not validate facet names. Unsupported fields may simply be absent from the response, so verify each requested field empirically.
+The client does not validate facet names; an unsupported field returns `422`
+from search. Facet semantics:
 
-Facet buckets are capped to the top ~50 values. They do not provide a complete distinct-value list.
+* Buckets include **only non-null values**. Datasets missing the field
+  contribute to no bucket, so bucket counts can sum to less than `total`.
+* Facet counts are independent of `limit` — use `limit=1` to fetch a facet
+  breakdown without pulling records.
+* Whether the bucket list is capped varies by deployment; before treating a
+  bucket list as the complete distinct-value set, confirm against the spec or
+  sanity-check against a known enumeration.
 
-## Pagination and data cautions
+## Data cautions
 
-* The maximum list-page size is 100.
-* Use `offset` to retrieve subsequent pages.
-* `limit > 100` returns HTTP 422.
-* `/docs` and `/openapi.json` may require SSO; the API token may not be sufficient.
-* Aggregate fields like `data_summary.cell_count` may be collection-level values repeated on every constituent datasets. Do not sum them blindly. Report per-dataset values or deduplicate canonical datasets first.
+* Aggregate fields like `data_summary.cell_count` may be collection-level values repeated on every constituent dataset. Do not sum them blindly. Report per-dataset values or deduplicate canonical datasets first.
+* Tombstoned records are excluded by default; only surface them when the user is explicitly auditing deletions.
 
-SDK pagination example:
+SDK pagination example (list routes):
 
 ```python
 def iter_datasets(catalog, **filters):
@@ -255,14 +296,70 @@ metadata: {
 }
 ```
 
-`incoming_lineage`, `outgoing_lineage`, and `collections` are populated when their corresponding include flags are enabled.
-
 Allowed values include:
 
 ```text
 modality: imaging | sequencing | mass spec | unknown
 dataset_type: raw | processed
 ```
+
+### Where fields live
+
+Domain metadata is nested, not top-level; inspect a sample record (or
+`components.schemas` in the spec) before parsing. Common groupings:
+
+| Group | Path on the dataset record |
+| --- | --- |
+| Experiment (assay, protocols, source records, …) | `metadata.experiment.*` |
+| Sample (organism, tissue, disease, …) | `metadata.sample.*` (ontology label + id) |
+| Pipeline / compute context | `metadata.additional_metadata.*` |
+| QC / metrics | `data_quality.*` (e.g. `data_quality.metrics`) |
+| File paths + formats | `locations[].location_uri`, `locations[].file_format` |
+| Governance | `governance.*` (`access_scope`, `data_steward`, `data_owner`, …) |
+
+A given attribute may only appear on one record type in a lineage chain (e.g.
+present on a raw input but not on its derived output) — join it from the
+record that actually carries it.
+
+## Lineage and collections
+
+**Search does not expand relationships.** Take dataset ids from search and
+pivot to these routes.
+
+> **Gotcha:** the detail endpoint `GET /api/datasets/{id}` returns
+> `incoming_lineage`, `outgoing_lineage`, and `collections` as **`null`** — it
+> does *not* embed relationships. To get lineage or collections for a known
+> dataset, use the list route with the include flags —
+> `GET /api/datasets/?canonical_id=<cid>&include_lineage=true&include_collections=true`
+> — or the dedicated `/api/lineage/` endpoint. **Never conclude "no lineage"
+> from a detail-endpoint response.** An empty edge list from `/api/lineage/`
+> (or `total=0`) is the real "no lineage recorded" answer.
+
+* Lineage edges are directed records (`source_dataset_id`,
+  `destination_dataset_id`, optional asset-level ids, `lineage_type`,
+  `metadata`). Query `/api/lineage/?source_dataset_id=<id>` for downstream,
+  `?destination_dataset_id=<id>` for upstream.
+* **Edges carry only ids, not the linked records.** To get a neighbor's name,
+  format, or file path, fetch that dataset by id.
+* Collection entries (`GET /api/collections/{id}/entries`) each have an
+  `entry_type` (`dataset` or `child_collection`) with the full member object
+  embedded under `entry`, so listing entries yields complete records in one
+  call. Collections can nest; walk upward with `/parents`.
+
+## Failure modes
+
+| Symptom | Handling |
+| --- | --- |
+| HTML redirect to an SSO login page | The call went out without (or with a bad) `X-catalog-api-token`, or hit a non-`/api` path behind the auth proxy. Set the header; use `/api/...` paths. |
+| `401` `{"detail":"Missing required header: X-catalog-api-token"}` | Header name/value wrong. It is `X-catalog-api-token`, not `Authorization: Bearer`. |
+| `401` (token rejected) | Token missing/expired/wrong environment. Ask the user to refresh `CATALOG_API_TOKEN`; do not retry in a loop. |
+| `422` | Invalid parameter or value (e.g. a `facets`/`sort` value outside the allowed list, `limit=0`, list `limit>100`). Fix the parameter; check the spec. |
+| `503` | Search backend unavailable. Retry once, then report — never substitute guessed data. |
+| `404` on a dataset id | Wrong or tombstoned id; re-run search or the list route to get a current id. |
+| `404`/`405` on a documented *path*, or `422` on a documented *parameter* | The API surface moved since this doc was written. Run `scripts/api_map.py` to discover the current path/params and adapt — do not report the data or feature as missing. |
+
+Always surface the HTTP status and response body on failure — a silent "not
+found" that was actually an auth or validation error wastes the user's time.
 
 ## OLS term expansion
 

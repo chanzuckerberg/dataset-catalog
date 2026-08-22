@@ -187,7 +187,9 @@ unset — empty is honest; a fabricated value is a data-quality bug.
      `ontologyId=<NCBITaxon|UBERON|EFO|...>` when you know the expected ontology to
      disambiguate; fall back to the generic `search` tool otherwise). Take the top
      match's CURIE as `ontology_id` (e.g. `Homo sapiens` → `NCBITaxon:9606`) only if the label is an exact match (case-insensitive) to the returned `label` or its `synonyms`.
-   - If the `ols` server isn't connected skip this.
+   - If the `ols` server isn't connected (e.g. a headless run), fall back to the
+     bundled handler: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ols.py" search <label> --ontology <id>`
+     — same resolution, no MCP required. Skip resolution only if that also fails.
    - **Non-200 / error response from `ols`.** If a `searchClasses`/`search` call
      comes back as an error rather than a result set (HTTP 4xx/5xx, rate-limit
      `429`, timeout, or a malformed/empty body), treat it as *unresolved*, not as
@@ -306,4 +308,4 @@ Get token from catalog's `/tokens` page (open in a logged-in browser; SSO-gated)
   to update it in place (see *Registering*).
 - `ValueError: update_if_exists and error_on_duplicate cannot both be True` →
   both flags were set; `update_if_exists=True` requires `error_on_duplicate=False`.
-- `AuthenticationError` (401) → bad/expired token; ask user to reissue at `/token` page.
+- `AuthenticationError` (401) → bad/expired token; ask user to reissue at `/tokens` page.

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -25,6 +26,24 @@ from typing import Any, NoReturn
 
 DEFAULT_API_URL = "https://datacatalog.prod-sci-data.prod.czi.team/"
 DEFAULT_TIMEOUT = 30.0
+
+# Candidate OpenAPI-spec locations, most likely first. The API is in flux;
+# probing these lets a relocated spec (or endpoint) degrade to one extra
+# request instead of a broken script.
+SPEC_PATHS = (
+    "/api/meta/openapi.json",
+    "/api/openapi.json",
+    "/openapi.json",
+)
+
+# Dataset routes as of authoring — the fast path. If one of them 404s/405s the
+# REST client re-resolves the current routes from the live spec (once) and
+# retries, so an endpoint move degrades to one extra round-trip.
+DEFAULT_DATASET_ROUTES = {
+    "search": "/api/datasets/search/",
+    "list": "/api/datasets/",
+    "get": "/api/datasets/{id}",
+}
 
 # Enum vocabularies, duplicated here so a script can validate CLI choices with
 # no SDK installed. Keep in sync with catalog_client.models.dataset.
@@ -84,34 +103,37 @@ def _page(data: dict) -> SimpleNamespace:
 
 
 class _RestDatasets:
-    def __init__(self, request):
-        self._request = request
+    def __init__(self, client):
+        self._client = client
 
     def search(self, *, q=None, limit=10, **filters):
-        return _page(
-            self._request("/api/datasets/search/", {"q": q, "limit": limit, **filters})
-        )
+        return _page(self._client._call("search", {"q": q, "limit": limit, **filters}))
 
     def list(self, *, offset=0, limit=100, **filters):
         return _page(
-            self._request(
-                "/api/datasets/", {"offset": offset, "limit": limit, **filters}
-            )
+            self._client._call("list", {"offset": offset, "limit": limit, **filters})
         )
 
     def get(self, dataset_id):
-        return SimpleNamespace(**self._request(f"/api/datasets/{dataset_id}", {}))
+        return SimpleNamespace(**self._client._call("get", {}, path_arg=dataset_id))
 
 
 class _RestClient:
-    """Minimal read-only catalog client over ``urllib`` — no third-party deps."""
+    """Minimal read-only catalog client over ``urllib`` — no third-party deps.
+
+    Dataset routes start from ``DEFAULT_DATASET_ROUTES``; on the first
+    404/405 the client re-resolves them from the live OpenAPI spec and
+    retries, so an endpoint move self-heals instead of breaking the script.
+    """
 
     def __init__(self, base_url: str, token: str, timeout: float = DEFAULT_TIMEOUT):
         self._base = base_url.rstrip("/")
         # The token travels as a header, never as a command-line argument.
         self._headers = {"X-catalog-api-token": token, "Accept": "application/json"}
         self._timeout = timeout
-        self.datasets = _RestDatasets(self._request)
+        self._routes = dict(DEFAULT_DATASET_ROUTES)
+        self._rediscovered = False  # spec is consulted at most once per client
+        self.datasets = _RestDatasets(self)
 
     def _request(self, path: str, params: dict) -> dict:
         clean = {k: _param(v) for k, v in params.items() if v is not None}
@@ -122,15 +144,89 @@ class _RestClient:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            raise CatalogError(f"HTTP {exc.code} {exc.reason} for {path}") from exc
+            error = CatalogError(f"HTTP {exc.code} {exc.reason} for {path}")
+            error.status = exc.code  # type: ignore[attr-defined]
+            raise error from exc
         except urllib.error.URLError as exc:
             raise CatalogError(f"request to {path} failed: {exc.reason}") from exc
+
+    def _call(self, role: str, params: dict, path_arg=None) -> dict:
+        """Request a dataset route by role, re-resolving from the spec on 404/405.
+
+        A 404 on the ``get`` route can also mean a genuinely missing id, so the
+        retry only happens when rediscovery yields a *different* path; otherwise
+        the original error propagates untouched.
+        """
+
+        def build(route: str) -> str:
+            if path_arg is not None:
+                quoted = urllib.parse.quote(str(path_arg), safe="")
+                route = re.sub(r"\{[^}]+\}", quoted, route)
+            return route
+
+        try:
+            return self._request(build(self._routes[role]), params)
+        except CatalogError as exc:
+            if getattr(exc, "status", None) not in (404, 405) or self._rediscovered:
+                raise
+            stale = build(self._routes[role])
+            self._rediscover()
+            fresh = build(self._routes[role])
+            if fresh == stale:  # e.g. a missing id, not a moved route
+                raise
+            return self._request(fresh, params)
+
+    def _rediscover(self) -> None:
+        """Refresh dataset routes from the live OpenAPI spec (best-effort)."""
+        self._rediscovered = True
+        for spec_path in SPEC_PATHS:
+            try:
+                spec = self._request(spec_path, {})
+            except (CatalogError, ValueError):
+                # ValueError covers a non-JSON body (e.g. an SSO login page).
+                continue
+            if isinstance(spec, dict) and "paths" in spec:
+                self._routes.update(_dataset_routes_from_spec(spec))
+                return
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+
+def _dataset_routes_from_spec(spec: dict) -> dict:
+    """Map the spec's dataset GET paths onto the search/list/get roles.
+
+    Classification is structural, so a rename survives: a single trailing
+    ``{param}`` segment is the detail route, the bare collection path is the
+    list route, and a parameterless verb sub-path (``/search/``, or whatever
+    it is called this week) is the search route.
+    """
+    routes: dict[str, str] = {}
+    verb_paths: list[str] = []
+    for path in sorted(spec.get("paths", {})):
+        if "get" not in {m.lower() for m in spec["paths"][path]}:
+            continue
+        if "dataset" not in path or "collection" in path or "lineage" in path:
+            continue
+        if "{" in path:
+            # only the plain detail route (a single trailing {param} segment),
+            # not sub-resources like /{id}/history.
+            if path.count("{") == 1 and re.fullmatch(r".*/\{[^}]+\}/?", path):
+                routes.setdefault("get", path)
+        elif re.fullmatch(r".*/datasets/?", path):
+            routes.setdefault("list", path)
+        else:
+            verb_paths.append(path)
+    named = [p for p in verb_paths if "search" in p]
+    if named:
+        routes["search"] = named[0]
+    elif len(verb_paths) == 1:
+        # exactly one candidate verb route: take it even under a new name.
+        routes["search"] = verb_paths[0]
+    return routes
 
 
 # ------------------------------------------------------ SDK wrapper (if present)
