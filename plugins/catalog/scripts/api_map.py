@@ -26,16 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from _catalog import DEFAULT_TIMEOUT, EXIT_USAGE, _resolve_config
-
-# Candidate spec locations, most likely first. A deployment may move the spec;
-# probing them all means a relocation degrades to a slower first call, not a
-# broken skill.
-SPEC_PATHS = (
-    "/api/meta/openapi.json",
-    "/api/openapi.json",
-    "/openapi.json",
-)
+from _catalog import DEFAULT_TIMEOUT, EXIT_USAGE, SPEC_PATHS, _resolve_config
 
 
 def fetch_spec() -> tuple[dict, str]:

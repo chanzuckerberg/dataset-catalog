@@ -2,7 +2,7 @@
 
 Use this reference when you need REST Catalog API access, or manual ontology expansion.
 
-For ordinary reads, use Python’s standard-library REST path. It requires no installation. The `catalog` CLI and `catalog_client` SDK provide optional conveniences such as pagination, fan-out, result union, and typed post-processing.
+For ordinary reads, use Python’s standard-library REST path. It requires no installation. The `catalog` CLI and `catalog_client` SDK provide optional conveniences such as pagination, fan-out, result union, and typed post-processing. The bundled scripts' REST fallback self-heals on endpoint moves: on a 404/405 it re-resolves the current dataset routes from the live spec and retries once.
 
 ## Endpoints are discovered, not memorized
 
