@@ -61,6 +61,34 @@ may have been ignored rather than trusting the count.
   dumps, raw OLS payloads, pagination responses, and unrequested metadata. If the
   user explicitly asks for a full record, return that record and nothing else.
 
+## Judgment — answer quality
+
+Output hygiene keeps context clean; these rules keep the *answer* trustworthy.
+
+* **Never invent catalog facts.** Every dataset, `canonical_id`, owner,
+  location, or count you report must have come back from the API in this
+  session. No plausible reconstructions.
+* **Zero results is a real answer.** `q` is full-text over indexed content — a
+  plausible business phrase can legitimately return nothing (some projects
+  name datasets by accession, not description). Before concluding "none
+  exist", retry once within scope: drop `q` and lean on exact filters, or
+  request a facet to see what values the catalog actually holds. Report the
+  terms and filters tried.
+* **Rank, don't dump.** When many datasets match, surface the best few and
+  name the axis you ranked on (relevance, freshness, latest-version). Say
+  plainly when the top hit is weak — a hedged recommendation beats a
+  confident wrong one.
+* **Prefer `is_latest=true`** unless the user asked about a specific version;
+  mention `/api/datasets/{id}/history` when version lineage matters.
+* **Recommendations must be actionable.** For each dataset you recommend,
+  include `canonical_id` + `version`, why it matches, and — when the user
+  needs to request, attribute, or fetch the data — `access_scope`, the
+  owner/steward, and `locations` URIs. The user should not need a second
+  lookup to act on the answer.
+* **Ambiguous ask** ("brain data", "user data"): run one faceted search first
+  and use the value/count clusters to ask a targeted follow-up, rather than
+  asking cold or guessing.
+
 ## Completeness labeling
 
 Label every result — **complete**, **partial**, **truncated**, **unverified**, or
