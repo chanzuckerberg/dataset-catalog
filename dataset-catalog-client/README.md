@@ -5,36 +5,56 @@ Python client library for the Scientific Dataset Catalog API.
 
 ## Installation
 
+Requires Python 3.11 or newer. The examples below use [uv](https://docs.astral.sh/uv/);
+drop the `uv` prefix to use plain `pip` instead.
 
-### From GitHub (development)
+### Create and activate an environment
+
 ```bash
-pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+uv venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
 ```
 
-#### With development dependencies
+### From GitHub (latest on the default branch)
+
 ```bash
-pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client[dev]'
+uv pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
-#### With uv and via ssh (for example, exec'd onto HPC)
+
+Over SSH (for example, exec'd onto HPC where HTTPS is blocked):
+
 ```bash
- uv pip install 'git+ssh://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+uv pip install 'git+ssh://git@github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+```
+
+### With extras
+
+Extras go on the package name, not inside the URL fragment, so a VCS install needs
+the `<name>[<extras>] @ <url>` form:
+
+```bash
+# checksum backends (blake3, crc64, crc64nvme)
+uv pip install 'catalog-client[checksum] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+
+# notebook/dev extras
+uv pip install 'catalog-client[dev] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
 ### Pin to a specific version
 
 The installs above track the latest commit on the default branch. For reproducible
 environments, pin to a released tag by adding `@<tag>` before `#subdirectory`. Release
-tags use the form `catalog-client-v<version>` (e.g. `catalog-client-v0.3.0`):
+tags use the form `catalog-client-v<version>`:
 
 ```bash
-pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@catalog-client-v0.3.0#subdirectory=dataset-catalog-client'
+uv pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@catalog-client-v0.7.0#subdirectory=dataset-catalog-client'
 ```
 
 You can pin to any git ref the same way — a branch name or a full commit SHA:
 
 ```bash
 # Pin to a commit
-pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@ccfec2008d225a919d1c6591f5d3649d112a5022#subdirectory=dataset-catalog-client'
+uv pip install 'git+https://github.com/chanzuckerberg/dataset-catalog.git@ccfec2008d225a919d1c6591f5d3649d112a5022#subdirectory=dataset-catalog-client'
 ```
 
 See the [list of releases](https://github.com/chanzuckerberg/dataset-catalog/releases)
