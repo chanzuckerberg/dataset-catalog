@@ -22,50 +22,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 
-from _catalog import DEFAULT_TIMEOUT, EXIT_USAGE, SPEC_PATHS, _resolve_config
+from _catalog import _resolve_config, _RestClient, probe_spec, usage_error
 
 
 def fetch_spec() -> tuple[dict, str]:
     """Return (spec, path) from the first candidate that yields an OpenAPI doc."""
-    base_url, token = _resolve_config()
-    base = base_url.rstrip("/")
-    headers = {"X-catalog-api-token": token, "Accept": "application/json"}
     errors: list[str] = []
-    for path in SPEC_PATHS:
-        request = urllib.request.Request(f"{base}{path}", headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            errors.append(f"{path}: HTTP {exc.code}")
-            continue
-        except urllib.error.URLError as exc:
-            errors.append(f"{path}: {exc.reason}")
-            continue
-        try:
-            spec = json.loads(body)
-        except json.JSONDecodeError:
-            # An SSO login page comes back as HTML; treat it like a miss.
-            errors.append(f"{path}: non-JSON response (SSO redirect?)")
-            continue
-        if isinstance(spec, dict) and "paths" in spec:
-            return spec, path
-        errors.append(f"{path}: JSON but not an OpenAPI document")
-    print(
-        "error: could not fetch the OpenAPI spec from any known location:",
-        file=sys.stderr,
+    found = probe_spec(_RestClient(*_resolve_config()), errors)
+    if found:
+        return found
+    usage_error(
+        "could not fetch the OpenAPI spec from any known location:\n  "
+        + "\n  ".join(errors)
+        + "\nCheck CATALOG_API_URL / CATALOG_API_TOKEN (run scripts/preflight.py)."
     )
-    for line in errors:
-        print(f"  {line}", file=sys.stderr)
-    print(
-        "Check CATALOG_API_URL / CATALOG_API_TOKEN (run scripts/preflight.py).",
-        file=sys.stderr,
-    )
-    raise SystemExit(EXIT_USAGE)
 
 
 def _deref(spec: dict, node: dict) -> dict:
@@ -95,6 +66,20 @@ def _schema_fields(spec: dict, schema: dict) -> dict[str, str]:
     return fields
 
 
+def _param_entry(spec: dict, param: dict) -> dict:
+    """Distill one operation parameter, resolving its schema a single time."""
+    schema = _deref(spec, param.get("schema", {}))
+    return {
+        "name": param["name"],
+        "in": param.get("in", "query"),
+        "required": bool(param.get("required")),
+        "type": schema.get("type"),
+        "default": schema.get("default"),
+        "enum": schema.get("enum"),
+        "description": (param.get("description") or "")[:300],
+    }
+
+
 def _operation_map(spec: dict, pattern: str | None) -> list[dict]:
     """Distill matching operations into plain dicts."""
     ops = []
@@ -112,16 +97,7 @@ def _operation_map(spec: dict, pattern: str | None) -> list[dict]:
             }
             if pattern:  # detail mode: include params + response fields
                 entry["parameters"] = [
-                    {
-                        "name": p["name"],
-                        "in": p.get("in", "query"),
-                        "required": bool(p.get("required")),
-                        "type": _deref(spec, p.get("schema", {})).get("type"),
-                        "default": _deref(spec, p.get("schema", {})).get("default"),
-                        "enum": _deref(spec, p.get("schema", {})).get("enum"),
-                        "description": (p.get("description") or "")[:300],
-                    }
-                    for p in op.get("parameters", [])
+                    _param_entry(spec, p) for p in op.get("parameters", [])
                 ]
                 content = (
                     op.get("responses", {})
