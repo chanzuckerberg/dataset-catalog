@@ -522,7 +522,7 @@ The client provides utilities to automatically generate checksums for dataset as
 The `checksum` extra adds `blake3`, `crcmod`, and `awscrt`:
 
 ```bash
-pip install "catalog-client[checksum]"
+uv pip install 'catalog-client[checksum] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
 It is optional — without it, `blake2b` and `crc32` still work from the standard library,
