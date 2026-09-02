@@ -42,9 +42,12 @@ Two search-specific prohibitions beyond the shared contract:
 
 ## Source of truth
 
-`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for the search
-endpoint, its parameters, facet behavior, pagination, and the **OLS tool table and
-expansion mechanics** (the "how"). This skill defines **when to expand, which
+`${CLAUDE_PLUGIN_ROOT}/reference/rest.md` is authoritative for search
+*semantics* — facet behavior, pagination styles, and the **OLS tool table and
+expansion mechanics** (the "how"). The literal search path and parameters are
+snapshots of an API in flux: discover the current ones with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" search` when a documented
+path or parameter errors. This skill defines **when to expand, which
 relations to use, how to prune, and what to return** (the "policy").
 
 ## Execution ceilings
