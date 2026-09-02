@@ -52,8 +52,9 @@ output, and visualization** only. Installation of the optional CLI/SDK:
   collection, lineage, and history routes allow 100.
 * On `search` and `list`, advance a page with `--cursor <next_cursor>` from the
   previous response, and stop once `next_cursor` is null. `search` has no
-  `--offset` at all. Keep the sort and filters identical across a walk — a
-  cursor is only valid for the ones it was issued with.
+  `--offset` at all, and `list --offset` is refused above 10000. Keep the sort
+  and filters identical across a walk — a cursor is only valid for the ones it
+  was issued with.
 
 When a ceiling is reached, return what you have, **labeled partial**, with the
 exact limit named. A ceiling is a stopping point, not a trigger to escalate.

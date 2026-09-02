@@ -78,6 +78,8 @@ Useful flags:
 
 - `-o/--output` (all subcommands) — `table` or `json`; defaults to `table` on a terminal, `json` when piped.
 - `--all-versions` (`search`, `list`, `facets`) — include superseded versions; by default only `is_latest` records are returned.
+- `--cursor` (`search`, `list`) — the `next_cursor` from a previous page; constant-cost at any depth. Required past `--offset 10000` on `list`, and the only way to page `search`.
+- `--offset` (`list` only) — skip N records, max 10000; deeper paging exits with code 2 and directs you to `--cursor`.
 - `--sort` (`search`) — `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest`. Defaults to `relevance` when `--q` is given, `last_modified` otherwise. This default is applied by the CLI only; the Python `datasets.search()` omits `sort` unless you pass one, leaving the choice to the server.
 - `--facets` (`search`) — request bucket counts alongside hits, e.g. `--facets organism,tissue`.
 - `--type` (`lineage`) — restrict the walk to one edge type (`version_of`, `transformed_from`, `copy_of`).
@@ -288,7 +290,7 @@ page = client.datasets.list(
     include_lineage=False,
     include_collections=False,
     sort=DatasetListSortOption.last_modified,  # optional; omit to use the server default
-    offset=0,                           # shallow paging; see cursor below
+    offset=0,                           # shallow paging only, max 10000
     limit=100,                           # 1-500
     include_total=True,                 # False skips the count query
 )
@@ -305,8 +307,9 @@ Returns a `CursorPaginatedResponse`. `total` is `None` when
 
 The list route pages either by `offset` or by keyset `cursor` — passing both
 raises `ValueError`. Offset paging is fine for the first few pages, but its
-cost grows with depth; past a few thousand records follow `next_cursor`
-instead:
+cost grows with depth and the server must walk and discard every skipped
+row, so **`offset` above 10,000 raises `ValueError`** and points you at the
+cursor. Past a few thousand records, follow `next_cursor` instead:
 
 ```python
 cursor = None

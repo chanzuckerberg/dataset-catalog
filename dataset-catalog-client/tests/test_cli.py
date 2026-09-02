@@ -91,6 +91,16 @@ def test_missing_env_exits_usage(monkeypatch):
     assert exc.value.code == 2
 
 
+def test_deep_offset_exits_usage_with_cursor_hint(capsys):
+    """A client-side ValueError must surface as a usage error, not a traceback."""
+    with pytest.raises(SystemExit) as exc:
+        main(["list", "--offset", "20000"])
+    assert exc.value.code == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "exceeds the maximum" in err
+    assert "--cursor" in err or "cursor" in err
+
+
 def test_auth_error_exit_code(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
         url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),

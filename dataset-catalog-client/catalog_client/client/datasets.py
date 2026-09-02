@@ -28,6 +28,12 @@ _PREFIX = "datasets"
 # page size lower than the 1000 an unhydrated search allows.
 _HYDRATED_MAX_LIMIT = 100
 
+# Depth past which offset paging is refused in favour of a keyset cursor. The
+# server accepts deeper offsets, but it walks and discards every skipped row,
+# and a concurrent write shifts the window — so rows get skipped or repeated.
+# A cursor is constant-cost at any depth and immune to that shift.
+_MAX_OFFSET = 10_000
+
 # Module-level alias so method signatures can reference list[str] without it
 # resolving to the class's own `list` method inside the class body.
 _FacetList = list[str]
@@ -53,6 +59,14 @@ def _build_list_params(
         raise ValueError(
             "cursor and offset are mutually exclusive; pass only one "
             "(prefer cursor past a few thousand records)"
+        )
+    if offset is not None and offset > _MAX_OFFSET:
+        raise ValueError(
+            f"offset {offset} exceeds the maximum of {_MAX_OFFSET}. Page this "
+            "deep with the keyset cursor instead: pass the previous "
+            "response's next_cursor as cursor= (CLI: --cursor), or walk the "
+            "whole result set with iter_all(). Offset paging at this depth is "
+            "slow and can skip or repeat rows when records change mid-walk."
         )
     params: dict = {"limit": limit}
     if sort is not None:
@@ -186,9 +200,10 @@ class DatasetClient(_SyncBase):
         """List datasets, one page at a time.
 
         Pages either by keyset `cursor` or by `offset`, never both. Offset
-        paging is fine for shallow pages but its cost grows with depth; past
-        a few thousand records follow `next_cursor` instead, or use
-        `iter_all()` to walk the whole result set.
+        paging is fine for shallow pages but its cost grows with depth, and
+        an `offset` above 10,000 raises `ValueError` — past that, follow
+        `next_cursor` instead, or use `iter_all()` to walk the whole result
+        set.
 
         A cursor is only valid for the `sort` and filters it was issued
         with; changing either mid-walk raises `RecordValidationError` (422).
@@ -433,9 +448,10 @@ class AsyncDatasetClient(_AsyncBase):
         """List datasets, one page at a time.
 
         Pages either by keyset `cursor` or by `offset`, never both. Offset
-        paging is fine for shallow pages but its cost grows with depth; past
-        a few thousand records follow `next_cursor` instead, or use
-        `iter_all()` to walk the whole result set.
+        paging is fine for shallow pages but its cost grows with depth, and
+        an `offset` above 10,000 raises `ValueError` — past that, follow
+        `next_cursor` instead, or use `iter_all()` to walk the whole result
+        set.
 
         A cursor is only valid for the `sort` and filters it was issued
         with; changing either mid-walk raises `RecordValidationError` (422).

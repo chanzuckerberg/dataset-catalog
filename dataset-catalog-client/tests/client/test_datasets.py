@@ -325,6 +325,29 @@ def test_list_rejects_cursor_and_offset_together():
         _sync_client().list(cursor="cur-1", offset=10)
 
 
+def test_list_rejects_offset_beyond_max_depth():
+    with pytest.raises(ValueError, match="exceeds the maximum of 10000"):
+        _sync_client().list(offset=10_001)
+
+
+def test_list_offset_error_points_at_the_cursor():
+    """The message has to name the alternative, or it is just a wall."""
+    with pytest.raises(ValueError, match="cursor"):
+        _sync_client().list(offset=50_000)
+
+
+def test_list_allows_offset_at_exactly_max_depth(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=DATASETS_URL, json=PAGINATED_RESPONSE)
+    _sync_client().list(offset=10_000)
+    assert httpx_mock.get_request().url.params["offset"] == "10000"
+
+
+async def test_async_list_rejects_offset_beyond_max_depth():
+    async with _async_client() as client:
+        with pytest.raises(ValueError, match="exceeds the maximum"):
+            await client.list(offset=10_001)
+
+
 def test_list_still_supports_offset_paging(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=DATASETS_URL, json=PAGINATED_RESPONSE)
     _sync_client().list(offset=20, sort=DatasetListSortOption.newest)

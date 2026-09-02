@@ -619,7 +619,7 @@ def _add_cursor_paging(
         parser.add_argument(
             "--offset",
             type=int,
-            help="skip N records; use --cursor past a few thousand",
+            help="skip N records (max 10000); use --cursor past that",
         )
 
 
@@ -790,6 +790,11 @@ def main(argv: list[str] | None = None) -> None:
         _fail(exc, EXIT_SERVER, "catalog unreachable or server error")
     except CatalogError as exc:
         _fail(exc, EXIT_ERROR, "request failed")
+    except ValueError as exc:
+        # The SDK raises ValueError for caller-input problems it can catch
+        # without a round trip (offset too deep, cursor with offset, hydrate
+        # page too large). Those are usage errors, not runtime failures.
+        _usage_error(str(exc))
 
 
 def _fail(exc: CatalogError, code: int, hint: str) -> NoReturn:
