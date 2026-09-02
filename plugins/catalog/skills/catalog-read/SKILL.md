@@ -47,7 +47,13 @@ output, and visualization** only. Installation of the optional CLI/SDK:
   `catalog-reader` subagent.
 * Bring **at most ~50 rows** into the main conversation. A larger result set must
   be reduced (see *Analysis*) or delegated, never dumped.
-* Page size max is 100; `limit > 100` returns HTTP 422.
+* Page size max is route-dependent; `limit` above it returns HTTP 422.
+  `search` allows 1000 (100 with `--hydrate`), `list` allows 500, and the
+  collection, lineage, and history routes allow 100.
+* On `search` and `list`, advance a page with `--cursor <next_cursor>` from the
+  previous response, and stop once `next_cursor` is null. `search` has no
+  `--offset` at all. Keep the sort and filters identical across a walk — a
+  cursor is only valid for the ones it was issued with.
 
 When a ceiling is reached, return what you have, **labeled partial**, with the
 exact limit named. A ceiling is a stopping point, not a trigger to escalate.

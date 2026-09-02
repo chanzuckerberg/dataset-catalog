@@ -52,9 +52,11 @@ relations to use, how to prune, and what to return** (the "policy").
 * Search **at most 8 terms** after pruning. If the base term resolves to more,
   keep the most specific and drop the rest.
 * Use **at most 1** facet-discovery request to confirm controlled values.
-* Fetch a bounded page per term (`--limit`, default 25). If a pass **fills the
-  limit exactly**, it is likely truncated and the union undercounts — raise the
-  limit or narrow, and **label the total unverified** until it no longer fills.
+* Fetch a bounded page per term (`--limit`, default 25, max 1000). If a pass
+  **fills the limit exactly**, it is likely truncated and the union undercounts —
+  raise the limit, page on with `--cursor <next_cursor>`, or narrow, and **label
+  the total unverified** until it no longer fills. A non-null `next_cursor` is
+  the definitive signal that more remains.
 * Multi-pass work belongs in the `catalog-reader` subagent; prefer delegating the
   whole fan-out rather than running many passes inline.
 
