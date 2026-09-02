@@ -7,7 +7,7 @@ import enum
 import warnings
 from typing import TYPE_CHECKING, NamedTuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from catalog_client.models.asset import DataAssetRequest, DataAssetResponse
 from catalog_client.models.governance import GovernanceMetadata
@@ -40,8 +40,24 @@ class AuditLogEventType(str, enum.Enum):
 
 
 class DatasetSortOption(str, enum.Enum):
+    """Sort orders accepted by dataset search."""
+
     relevance = "relevance"
     alphabetical = "alphabetical"
+    last_modified = "last_modified"
+    newest = "newest"
+    oldest = "oldest"
+
+
+class DatasetListSortOption(str, enum.Enum):
+    """Sort orders accepted by the dataset list route.
+
+    Narrower than `DatasetSortOption`: the list route has no relevance score
+    and no alphabetical order. `last_modified` sorts on a mutable key, so a
+    row modified mid-walk can be skipped or repeated; `newest` and `oldest`
+    sort on the immutable `created_at` and are stable across a walk.
+    """
+
     last_modified = "last_modified"
     newest = "newest"
     oldest = "oldest"
@@ -190,7 +206,14 @@ DatasetWithRelationsResponse.model_rebuild(
 
 
 class DatasetSearchHit(BaseModel):
-    """Lightweight search result; fetch the full record via datasets.get(id)."""
+    """Lightweight search result; fetch the full record via datasets.get(id).
+
+    Extra attributes are preserved rather than dropped, so fields requested
+    via `search(fields=[...])` are readable on the hit even though they are
+    not declared here.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     id: str = Field(description="Unique system-generated ID for this dataset")
     canonical_id: str = Field(description="Canonical identifier of the dataset")
@@ -222,12 +245,26 @@ class FacetBucket(BaseModel):
 
 
 class DatasetSearchResponse(BaseModel):
-    """Search results with optional facet bucket counts."""
+    """Search results with optional facet bucket counts.
+
+    Search pages by cursor only: follow `next_cursor` until it comes back
+    None. There is no `offset` — the walk moves forward only, but has no
+    depth ceiling.
+    """
 
     total: int = Field(description="Total number of matching datasets")
     limit: int = Field(description="Maximum number of hits returned in this response")
-    offset: int = Field(description="Number of hits skipped before these results")
-    results: list[DatasetSearchHit] = Field(description="Search hits for this page")
+    results: list[DatasetResponse | DatasetSearchHit] = Field(
+        description=(
+            "Search hits for this page; full dataset records when hydrate=True"
+        )
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Cursor for the next page; None once the last page has been reached"
+        ),
+    )
     facets: dict[str, list[FacetBucket]] | None = Field(
         default=None, description="Bucket counts per requested facet field"
     )
