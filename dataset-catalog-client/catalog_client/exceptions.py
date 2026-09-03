@@ -16,6 +16,17 @@ class CatalogError(Exception):
     """Base exception for all Catalog client errors."""
 
 
+class CatalogUsageError(CatalogError, ValueError):
+    """Caller passed arguments the client can reject without a round trip.
+
+    Deliberately also a `ValueError`, so the guards that historically raised
+    one stay catchable that way. The distinct type is what lets the CLI
+    report these as usage errors without also swallowing an unrelated
+    `ValueError` — notably `pydantic.ValidationError`, which subclasses it
+    and signals a genuine response-parsing failure, not caller error.
+    """
+
+
 class CatalogHTTPError(CatalogError):
     """Base for HTTP-layer errors. Carries status_code and response body."""
 

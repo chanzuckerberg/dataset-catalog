@@ -81,6 +81,7 @@ Useful flags:
 - `--cursor` (`search`, `list`) — the `next_cursor` from a previous page; constant-cost at any depth. Required past `--offset 10000` on `list`, and the only way to page `search`.
 - `--offset` (`list` only) — skip N records, max 10000; deeper paging exits with code 2 and directs you to `--cursor`.
 - `--sort` (`search`) — `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest`. Defaults to `relevance` when `--q` is given, `last_modified` otherwise. This default is applied by the CLI only; the Python `datasets.search()` omits `sort` unless you pass one, leaving the choice to the server.
+- `--sort` (`list`) — `last_modified`, `newest`, `oldest` only; the list route has no relevance score and no alphabetical order. Unset leaves the choice to the server. Prefer `newest`/`oldest` for a `--cursor` walk: they sort on the immutable `created_at`, whereas `last_modified` can shift mid-walk and skip or repeat a record.
 - `--facets` (`search`) — request bucket counts alongside hits, e.g. `--facets organism,tissue`.
 - `--type` (`lineage`) — restrict the walk to one edge type (`version_of`, `transformed_from`, `copy_of`).
 
@@ -291,7 +292,7 @@ page = client.datasets.list(
     include_collections=False,
     sort=DatasetListSortOption.last_modified,  # optional; omit to use the server default
     offset=0,                           # shallow paging only, max 10000
-    limit=100,                           # 1-500
+    limit=100,                          # 1-500, enforced client-side
     include_total=True,                 # False skips the count query
 )
 
@@ -306,10 +307,10 @@ Returns a `CursorPaginatedResponse`. `total` is `None` when
 ### Paginating datasets
 
 The list route pages either by `offset` or by keyset `cursor` — passing both
-raises `ValueError`. Offset paging is fine for the first few pages, but its
-cost grows with depth and the server must walk and discard every skipped
-row, so **`offset` above 10,000 raises `ValueError`** and points you at the
-cursor. Past a few thousand records, follow `next_cursor` instead:
+raises `CatalogUsageError`. Offset paging is fine for the first few pages, but
+its cost grows with depth and the server must walk and discard every skipped
+row, so **`offset` above 10,000 raises `CatalogUsageError`** and points you at
+the cursor. Past a few thousand records, follow `next_cursor` instead:
 
 ```python
 cursor = None
@@ -343,6 +344,11 @@ for ds in client.datasets.iter_all(sort=DatasetListSortOption.newest, limit=500)
 A cursor is only valid for the `sort` and filters it was issued with —
 changing either mid-walk raises `RecordValidationError` (422).
 
+`iter_all()` and `iter_search()` stop rather than loop if the server hands
+back a cursor it already issued, or promises another page while returning an
+empty one. Either would otherwise be an unbounded request loop; both raise
+`CatalogError`, since they are server faults rather than caller mistakes.
+
 ### Search datasets
 
 Full-text and faceted search over the active index. Returns lightweight hits;
@@ -359,7 +365,7 @@ results = client.datasets.search(
     facets=["modality", "project"],            # repeatable; returns bucket counts
     fields=["license", "cell_count"],          # extra fields on each hit
     sort=DatasetSortOption.relevance,          # optional; omit to use the server default
-    limit=10,                                  # 1-1000 (1-100 with hydrate=True)
+    limit=10,                                  # 1-1000 (1-100 with hydrate=True), enforced client-side
 )
 for hit in results.results:
     print(hit.id, hit.name, hit.score)
@@ -813,6 +819,7 @@ from catalog_client import (
     CatalogServerError,
     CatalogConnectionError,
     CatalogError,
+    CatalogUsageError,
     DuplicateDatasetError,
     LineageResolutionError,
     NotFoundError,
@@ -833,6 +840,11 @@ except CatalogHTTPError as e:
     print(f"Unexpected HTTP error {e.status_code}: {e.detail}")
 except CatalogConnectionError as e:
     print(f"Network error: {e}")
+except CatalogUsageError as e:
+    # Bad arguments the client rejects without a round trip: offset past
+    # 10,000, cursor together with offset, a page size over the route's
+    # ceiling. Also a ValueError, so existing `except ValueError` still works.
+    print(f"Bad arguments: {e}")
 except CatalogError as e:
     print(f"Unexpected catalog error: {e}")
 
@@ -873,7 +885,8 @@ except LineageResolutionError as e:
 | `RegistrationRequest`          | Full registration payload (built via `new_registration()` builder)     |
 | `PaginatedResponse[T]`         | Wrapper for collection/lineage/history lists (`total`, `limit`, `offset`, `results`) |
 | `CursorPaginatedResponse[T]`   | Wrapper for `datasets.list()` — adds `next_cursor`; `total` and `offset` are nullable |
-| `DatasetSearchResponse`        | `datasets.search()` result — `total`, `limit`, `next_cursor`, `results`, `facets` (no `offset`) |
+| `DatasetSearchResponse[T]`     | `datasets.search()` result — `total` (nullable), `limit`, `next_cursor`, `results`, `facets` (no `offset`). Generic over the hit type, so `hydrate` is validated rather than guessed |
+| `DatasetSearchPage`            | What `search()` returns: `DatasetSearchResponse[DatasetResponse]` when `hydrate=True`, `DatasetSearchResponse[DatasetSearchHit]` otherwise |
 | `DatasetSearchHit`             | Lightweight search hit; extra `fields=` land in `model_extra`          |
 
 ### Enums

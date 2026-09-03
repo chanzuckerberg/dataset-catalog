@@ -6,7 +6,7 @@ import datetime
 from collections.abc import AsyncIterator, Iterator
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
-from catalog_client.exceptions import NotFoundError
+from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
 from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
@@ -16,6 +16,7 @@ from catalog_client.models.dataset import (
     DatasetRequest,
     DatasetResponse,
     DatasetSearchHit,
+    DatasetSearchPage,
     DatasetSearchResponse,
     DatasetSortOption,
     DatasetWithRelationsResponse,
@@ -23,6 +24,11 @@ from catalog_client.models.dataset import (
 from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedResponse
 
 _PREFIX = "datasets"
+
+# Server-side page-size ceilings, mirrored here so an oversized page fails
+# before the round trip that would only return a 422.
+_SEARCH_MAX_LIMIT = 1000
+_LIST_MAX_LIMIT = 500
 
 # `hydrate=True` re-reads every hit from the database, so the server caps the
 # page size lower than the 1000 an unhydrated search allows.
@@ -33,6 +39,54 @@ _HYDRATED_MAX_LIMIT = 100
 # and a concurrent write shifts the window — so rows get skipped or repeated.
 # A cursor is constant-cost at any depth and immune to that shift.
 _MAX_OFFSET = 10_000
+
+
+def _check_limit(limit: int, maximum: int, route: str) -> None:
+    """Reject a page size the server would 422 on, without the round trip."""
+    if limit < 1:
+        raise CatalogUsageError(f"limit must be >= 1, got {limit}")
+    if limit > maximum:
+        raise CatalogUsageError(f"limit must be <= {maximum} on {route}, got {limit}")
+
+
+def _validate_search_page(payload: object, hydrate: bool) -> DatasetSearchPage:
+    """Parse a search page against the shape `hydrate` actually asked for.
+
+    Validating the branch explicitly rather than against a union is what
+    makes a malformed hydrated record raise. `DatasetSearchHit` allows
+    extras and requires few fields, so a union would quietly accept a
+    half-built `DatasetResponse` as a hit and hand the caller lightweight
+    results they never asked for.
+    """
+    if hydrate:
+        return DatasetSearchResponse[DatasetResponse].model_validate(payload)
+    return DatasetSearchResponse[DatasetSearchHit].model_validate(payload)
+
+
+def _next_cursor(
+    following: str | None, current: str | None, page_size: int
+) -> str | None:
+    """Return the cursor for the next page, or None once the walk is done.
+
+    Guards the two ways a server can turn a cursor walk into an unbounded
+    request loop: handing back the cursor it was just given, or promising
+    more pages while returning none of them. Both are server faults, not
+    caller mistakes, so they surface as `CatalogError`.
+    """
+    if following is None:
+        return None
+    if following == current:
+        raise CatalogError(
+            f"server returned the same cursor ({following!r}) twice; "
+            "aborting the walk rather than paging forever"
+        )
+    if page_size == 0:
+        raise CatalogError(
+            "server returned an empty page with a non-null next_cursor; "
+            "aborting the walk rather than paging forever"
+        )
+    return following
+
 
 # Module-level alias so method signatures can reference list[str] without it
 # resolving to the class's own `list` method inside the class body.
@@ -55,13 +109,16 @@ def _build_list_params(
     limit: int,
     include_total: bool,
 ) -> dict:
+    _check_limit(limit, _LIST_MAX_LIMIT, "datasets.list()")
     if cursor is not None and offset is not None:
-        raise ValueError(
+        raise CatalogUsageError(
             "cursor and offset are mutually exclusive; pass only one "
             "(prefer cursor past a few thousand records)"
         )
+    if offset is not None and offset < 0:
+        raise CatalogUsageError(f"offset must be >= 0, got {offset}")
     if offset is not None and offset > _MAX_OFFSET:
-        raise ValueError(
+        raise CatalogUsageError(
             f"offset {offset} exceeds the maximum of {_MAX_OFFSET}. Page this "
             "deep with the keyset cursor instead: pass the previous "
             "response's next_cursor as cursor= (CLI: --cursor), or walk the "
@@ -121,9 +178,10 @@ def _build_search_params(
     hydrate: bool,
 ) -> dict:
     if hydrate and limit > _HYDRATED_MAX_LIMIT:
-        raise ValueError(
+        raise CatalogUsageError(
             f"limit must be <= {_HYDRATED_MAX_LIMIT} when hydrate=True, got {limit}"
         )
+    _check_limit(limit, _SEARCH_MAX_LIMIT, "datasets.search()")
     params: dict = {"limit": limit}
     if sort is not None:
         params["sort"] = sort.value
@@ -272,9 +330,10 @@ class DatasetClient(_SyncBase):
                 include_total=False,
             )
             yield from page.results
-            if page.next_cursor is None:
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
                 return
-            cursor = page.next_cursor
+            cursor = following
 
     def search(
         self,
@@ -299,7 +358,7 @@ class DatasetClient(_SyncBase):
         cursor: str | None = None,
         limit: int = 10,
         hydrate: bool = False,
-    ) -> DatasetSearchResponse:
+    ) -> DatasetSearchPage:
         """Full-text and faceted search over the dataset index.
 
         Paging is by cursor only — there is no offset. Pass the previous
@@ -336,7 +395,7 @@ class DatasetClient(_SyncBase):
             hydrate,
         )
         response = self._get(f"{_PREFIX}/search/", params=params)
-        return DatasetSearchResponse.model_validate(response.json())
+        return _validate_search_page(response.json(), hydrate)
 
     def iter_search(
         self,
@@ -348,14 +407,15 @@ class DatasetClient(_SyncBase):
         which this method manages.
         """
         if "cursor" in kwargs:
-            raise ValueError("iter_search() manages the cursor; do not pass one")
+            raise CatalogUsageError("iter_search() manages the cursor; do not pass one")
         cursor: str | None = None
         while True:
             page = self.search(cursor=cursor, **kwargs)  # type: ignore[arg-type]
             yield from page.results
-            if page.next_cursor is None:
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
                 return
-            cursor = page.next_cursor
+            cursor = following
 
     def history(
         self,
@@ -521,9 +581,10 @@ class AsyncDatasetClient(_AsyncBase):
             )
             for result in page.results:
                 yield result
-            if page.next_cursor is None:
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
                 return
-            cursor = page.next_cursor
+            cursor = following
 
     async def search(
         self,
@@ -548,7 +609,7 @@ class AsyncDatasetClient(_AsyncBase):
         cursor: str | None = None,
         limit: int = 10,
         hydrate: bool = False,
-    ) -> DatasetSearchResponse:
+    ) -> DatasetSearchPage:
         """Full-text and faceted search over the dataset index.
 
         Paging is by cursor only — there is no offset. Pass the previous
@@ -585,7 +646,7 @@ class AsyncDatasetClient(_AsyncBase):
             hydrate,
         )
         response = await self._get(f"{_PREFIX}/search/", params=params)
-        return DatasetSearchResponse.model_validate(response.json())
+        return _validate_search_page(response.json(), hydrate)
 
     async def iter_search(
         self,
@@ -597,15 +658,16 @@ class AsyncDatasetClient(_AsyncBase):
         which this method manages.
         """
         if "cursor" in kwargs:
-            raise ValueError("iter_search() manages the cursor; do not pass one")
+            raise CatalogUsageError("iter_search() manages the cursor; do not pass one")
         cursor: str | None = None
         while True:
             page = await self.search(cursor=cursor, **kwargs)  # type: ignore[arg-type]
             for result in page.results:
                 yield result
-            if page.next_cursor is None:
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
                 return
-            cursor = page.next_cursor
+            cursor = following
 
     async def history(
         self,

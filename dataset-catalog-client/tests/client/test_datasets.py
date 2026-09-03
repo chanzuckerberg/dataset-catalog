@@ -2,10 +2,11 @@ import re
 
 import httpx
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 from pytest_httpx import HTTPXMock
 
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
-from catalog_client.exceptions import NotFoundError
+from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
 from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
@@ -395,6 +396,82 @@ async def test_async_iter_search_walks_pages(httpx_mock: HTTPXMock):
     async with _async_client() as client:
         hits = [hit async for hit in client.iter_search(q="test", limit=1)]
     assert len(hits) == 2
+
+
+# --- Pagination guardrails ---
+
+
+def test_hydrate_refuses_to_degrade_incomplete_records(httpx_mock: HTTPXMock):
+    """A hydrated page must parse as full records or raise, never as hits.
+
+    DatasetSearchHit allows extras and requires few fields, so validating
+    against a union would silently accept a half-built DatasetResponse and
+    hand back lightweight hits the caller never asked for.
+    """
+    partial = {k: v for k, v in DATASET_RESPONSE.items() if k != "governance"}
+    httpx_mock.add_response(url=SEARCH_URL, json=_search_page(hit=partial))
+    with pytest.raises(PydanticValidationError, match="governance"):
+        _sync_client().search(q="test", hydrate=True)
+
+
+def test_search_rejects_limit_above_route_ceiling():
+    with pytest.raises(CatalogUsageError, match="limit must be <= 1000"):
+        _sync_client().search(q="test", limit=1001)
+
+
+def test_list_rejects_limit_above_route_ceiling():
+    with pytest.raises(CatalogUsageError, match="limit must be <= 500"):
+        _sync_client().list(limit=501)
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_limit_below_one_is_rejected(limit):
+    with pytest.raises(CatalogUsageError, match="limit must be >= 1"):
+        _sync_client().list(limit=limit)
+
+
+def test_list_rejects_negative_offset():
+    with pytest.raises(CatalogUsageError, match="offset must be >= 0"):
+        _sync_client().list(offset=-1)
+
+
+def test_guardrails_stay_catchable_as_value_error():
+    """CatalogUsageError is a ValueError too, so pre-existing except arms hold."""
+    with pytest.raises(ValueError):
+        _sync_client().list(offset=10_001)
+
+
+def test_iter_all_aborts_on_repeating_cursor(httpx_mock: HTTPXMock):
+    """A server echoing its own cursor would otherwise loop forever."""
+    page = {
+        "limit": 1,
+        "results": [DATASET_RESPONSE],
+        "total": None,
+        "next_cursor": "cur-stuck",
+    }
+    httpx_mock.add_response(url=DATASETS_URL, json=page, is_reusable=True)
+    with pytest.raises(CatalogError, match="same cursor"):
+        list(_sync_client().iter_all(limit=1))
+
+
+def test_iter_search_aborts_on_empty_page_with_cursor(httpx_mock: HTTPXMock):
+    body = {"total": 0, "limit": 1, "results": [], "next_cursor": "cur-2"}
+    httpx_mock.add_response(url=SEARCH_URL, json=body)
+    with pytest.raises(CatalogError, match="empty page"):
+        list(_sync_client().iter_search(q="test", limit=1))
+
+
+async def test_async_iter_all_aborts_on_repeating_cursor(httpx_mock: HTTPXMock):
+    page = {
+        "limit": 1,
+        "results": [DATASET_RESPONSE],
+        "total": None,
+        "next_cursor": "cur-stuck",
+    }
+    httpx_mock.add_response(url=DATASETS_URL, json=page, is_reusable=True)
+    async with _async_client() as client:
+        with pytest.raises(CatalogError, match="same cursor"):
+            [ds async for ds in client.iter_all(limit=1)]
 
 
 # --- History ---

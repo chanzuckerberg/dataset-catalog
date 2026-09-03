@@ -4,6 +4,7 @@ import re
 import boto3
 import pytest
 from moto import mock_aws
+from pydantic import ValidationError as PydanticValidationError
 from pytest_httpx import HTTPXMock
 
 from catalog_client.cli import EXIT_USAGE, main
@@ -99,6 +100,38 @@ def test_deep_offset_exits_usage_with_cursor_hint(capsys):
     err = capsys.readouterr().err
     assert "exceeds the maximum" in err
     assert "--cursor" in err or "cursor" in err
+
+
+def test_list_accepts_sort_and_forwards_it(httpx_mock: HTTPXMock):
+    """A cursor walk needs an immutable sort key; the CLI must expose one."""
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}/api/datasets/\?.*"),
+        json={"limit": 100, "results": [], "total": 0},
+    )
+    main(["list", "--sort", "newest", "-o", "json"])
+    assert httpx_mock.get_request().url.params["sort"] == "newest"
+
+
+def test_list_rejects_sort_values_the_route_does_not_accept(capsys):
+    """`relevance` and `alphabetical` are search-only; argparse must refuse them."""
+    with pytest.raises(SystemExit) as exc:
+        main(["list", "--sort", "relevance"])
+    assert exc.value.code == EXIT_USAGE
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_malformed_response_is_not_reported_as_usage_error(httpx_mock: HTTPXMock):
+    """pydantic.ValidationError subclasses ValueError but is a real fault.
+
+    Catching bare ValueError in main() would mislabel a broken server
+    response as the user's mistake and exit 2.
+    """
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        json={"limit": 10, "results": [{"id": "uuid-1"}]},
+    )
+    with pytest.raises(PydanticValidationError):
+        main(["search", "--q", "x", "-o", "json"])
 
 
 def test_auth_error_exit_code(httpx_mock: HTTPXMock, capsys):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import enum
 import warnings
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Generic, NamedTuple, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -244,17 +244,32 @@ class FacetBucket(BaseModel):
     count: int = Field(description="Number of matching datasets with this value")
 
 
-class DatasetSearchResponse(BaseModel):
+_SearchResultT = TypeVar("_SearchResultT", bound=BaseModel)
+
+
+class DatasetSearchResponse(BaseModel, Generic[_SearchResultT]):
     """Search results with optional facet bucket counts.
 
     Search pages by cursor only: follow `next_cursor` until it comes back
     None. There is no `offset` — the walk moves forward only, but has no
     depth ceiling.
+
+    Generic over the result type so the caller's `hydrate` choice is
+    validated rather than guessed: `search()` parameterises this with
+    `DatasetResponse` when `hydrate=True` and `DatasetSearchHit` otherwise.
+    A union field would instead let a malformed hydrated record fall
+    through to `DatasetSearchHit` — which accepts extras — and be returned
+    as a hit with no error raised.
     """
 
-    total: int = Field(description="Total number of matching datasets")
+    total: int | None = Field(
+        default=None,
+        description=(
+            "Total number of matching datasets, or None when the count was skipped"
+        ),
+    )
     limit: int = Field(description="Maximum number of hits returned in this response")
-    results: list[DatasetResponse | DatasetSearchHit] = Field(
+    results: list[_SearchResultT] = Field(
         description=(
             "Search hits for this page; full dataset records when hydrate=True"
         )
@@ -268,6 +283,14 @@ class DatasetSearchResponse(BaseModel):
     facets: dict[str, list[FacetBucket]] | None = Field(
         default=None, description="Bucket counts per requested facet field"
     )
+
+
+# What `search()` returns: the hydrated variant or the lightweight one. Which
+# arm you get is decided by the `hydrate` argument, so a caller that passes a
+# literal can narrow on it without an isinstance check.
+DatasetSearchPage = (
+    DatasetSearchResponse[DatasetResponse] | DatasetSearchResponse[DatasetSearchHit]
+)
 
 
 class DatasetAuditLogResponse(BaseModel):
