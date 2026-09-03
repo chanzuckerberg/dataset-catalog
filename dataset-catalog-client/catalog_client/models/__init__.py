@@ -16,11 +16,13 @@ from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
     DatasetCreate,
+    DatasetListSortOption,
     DatasetModality,
     DatasetRef,
     DatasetRequest,
     DatasetResponse,
     DatasetSearchHit,
+    DatasetSearchPage,
     DatasetSearchResponse,
     DatasetSortOption,
     DatasetType,
@@ -46,7 +48,10 @@ from catalog_client.models.metadata import (
     SampleMetadata,
     TissueEntry,
 )
-from catalog_client.models.pagination import PaginatedResponse
+from catalog_client.models.pagination import (
+    CursorPaginatedResponse,
+    PaginatedResponse,
+)
 from catalog_client.models.quality import DataQualityChecks
 
 __all__ = [
@@ -60,8 +65,10 @@ __all__ = [
     "CollectionRequest",
     "CollectionResponse",
     "CollectionType",
+    "CursorPaginatedResponse",
     "DatasetAuditLogResponse",
     "DatasetEntryResponse",
+    "DatasetListSortOption",
     "DataAssetRequest",
     "DataAssetResponse",
     "DataQualityChecks",
@@ -73,6 +80,7 @@ __all__ = [
     "DatasetRequest",
     "DatasetResponse",
     "DatasetSearchHit",
+    "DatasetSearchPage",
     "DatasetSearchResponse",
     "DatasetSortOption",
     "DatasetType",
