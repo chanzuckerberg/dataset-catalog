@@ -15,6 +15,13 @@ from catalog_client.utils.checksum import (
     ChecksumWarning,
     LocationChecksum,
 )
+from catalog_client.utils.dataframe import (
+    DEFAULT_COLUMNS,
+    ColumnSpec,
+    RecordMapper,
+    iter_records,
+    to_dataframe,
+)
 from catalog_client.utils.manifest import (
     FieldFilter,
     FilterCondition,
@@ -33,6 +40,12 @@ __all__ = [
     "ChecksumResult",
     "ChecksumWarning",
     "LocationChecksum",
+    # DataFrames
+    "ColumnSpec",
+    "DEFAULT_COLUMNS",
+    "RecordMapper",
+    "iter_records",
+    "to_dataframe",
     # Manifest
     "FieldFilter",
     "FilterCondition",
