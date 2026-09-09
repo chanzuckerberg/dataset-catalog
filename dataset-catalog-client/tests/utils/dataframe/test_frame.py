@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import builtins
+import inspect
+import warnings
 
 import pytest
 from pytest_httpx import HTTPXMock
 
 from catalog_client.exceptions import CatalogUsageError
-from catalog_client.utils.dataframe import ColumnSpec, to_dataframe
+from catalog_client.utils.dataframe import ColumnSpec, iter_records, to_dataframe
 
 from .conftest import dataset_dict, list_page
 
@@ -104,3 +106,39 @@ def test_a_clear_error_when_pandas_is_missing(client, monkeypatch):
 
     with pytest.raises(CatalogUsageError, match=r"catalog-client\[dataframe\]"):
         to_dataframe(client, project="atlas")
+
+
+def test_the_empty_column_warning_names_the_callers_line(client, httpx_mock: HTTPXMock):
+    """to_dataframe sits a frame below iter_records and consumes the generator
+    itself, so this is the path a fixed stacklevel gets wrong."""
+    httpx_mock.add_response(json=list_page([dataset_dict()]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        to_dataframe(client, project="atlas", columns=["metadata.typo.here"])
+
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+
+
+def test_the_page_size_warning_names_the_callers_line(client, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(json=list_page([dataset_dict()]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        to_dataframe(client, project="atlas", page_size=9999, columns=["id"])
+
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+    assert httpx_mock.get_request().url.params["limit"] == "100"
+
+
+def test_no_private_stacklevel_parameter_leaks_into_the_public_signature():
+    """Attribution is resolved by walking the stack, not by threading an
+    offset through the public API."""
+    for entry_point in (to_dataframe, iter_records):
+        assert not [
+            name
+            for name in inspect.signature(entry_point).parameters
+            if name.startswith("_")
+        ]

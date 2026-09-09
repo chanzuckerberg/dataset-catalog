@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import collections.abc
+from typing import Any, Callable, Sequence
 
+from catalog_client.exceptions import CatalogUsageError
 from catalog_client.utils.dataframe._types import ColumnSpec
 
 DEFAULT_COLUMNS: tuple[ColumnSpec, ...] = (
@@ -63,16 +65,49 @@ multiply rows.  For one row per asset, use
 
 
 def resolve_columns(
-    columns: object,
+    columns: Sequence[str | ColumnSpec] | None,
 ) -> list[ColumnSpec]:
     """Normalize the *columns* argument into a list of ColumnSpec.
 
     ``None`` selects :data:`DEFAULT_COLUMNS`; an empty sequence selects no
     declarative columns at all, which is how a mapper-only frame is requested.
+
+    Raises:
+        CatalogUsageError: If *columns* is a bare string, is not a sequence at
+            all, or contains an entry that is neither a ``str`` nor a
+            :class:`ColumnSpec`.  A ``str`` satisfies ``Sequence[str]``, so the
+            annotation alone does not rule the first case out and it would
+            otherwise iterate per character into one column per letter.
     """
     if columns is None:
         return list(DEFAULT_COLUMNS)
-    return [
-        column if isinstance(column, ColumnSpec) else ColumnSpec(str(column))
-        for column in columns  # type: ignore[attr-defined]
-    ]
+    if isinstance(columns, str):
+        raise CatalogUsageError(
+            f"columns must be a sequence of paths, not the bare string "
+            f"{columns!r}. Pass [{columns!r}] for a single column."
+        )
+    if not isinstance(columns, collections.abc.Sequence):
+        # Catches a dict (which would resolve to its keys) and a one-shot
+        # iterator, which to_dataframe would exhaust here and then find empty
+        # when it re-resolves the names for a zero-row frame.
+        raise CatalogUsageError(
+            f"columns must be a list or tuple, got {type(columns).__name__}. "
+            "A generator cannot be used because the names are read more than "
+            "once; materialize it first."
+        )
+
+    resolved = []
+    for position, column in enumerate(columns):
+        if isinstance(column, ColumnSpec):
+            resolved.append(column)
+        elif isinstance(column, str):
+            resolved.append(ColumnSpec(column))
+        else:
+            # Coercing with str() here would turn 1 into a column named "1"
+            # and None into one named "None" — a silently wrong frame rather
+            # than a rejected argument.
+            raise CatalogUsageError(
+                f"columns[{position}] must be a dot-path string or a "
+                f"ColumnSpec, got {type(column).__name__} {column!r}."
+            )
+    return resolved

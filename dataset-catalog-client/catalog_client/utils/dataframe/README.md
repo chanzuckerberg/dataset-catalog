@@ -23,11 +23,11 @@ The route is picked from the filters you pass; you never choose it directly.
 | Filters used | Route | Notes |
 |---|---|---|
 | `project`, `modality`, `version`, `access_scope`, `is_latest`, or none | `datasets.list()` | Cursor-walked via `iter_all()`. Records are complete. |
-| any of `q`, `organism`, `tissue`, `sub_modality`, `assay`, `disease`, `development_stage`, `cohort`, `file_format`, `storage_platform` | `datasets.search(hydrate=True)` | Hydration costs one extra query per page and caps `page_size` at 100. |
+| any of `q`, `organism`, `tissue`, `sub_modality`, `assay`, `disease`, `development_stage`, `cohort`, `file_format`, `storage_platform` | `datasets.search(hydrate=True)` | Hydration costs one extra query per page. |
 
 Both routes return full dataset records, so the same columns are available either way.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
 - **`version` on the search route is filtered client-side.** The search index does
   not support it, so matching rows are fetched and then dropped. Correct, but it
@@ -35,6 +35,42 @@ Two consequences worth knowing:
 - **`sort=relevance` and `sort=alphabetical` only exist on the search route.**
   Asking for one when your filters resolve to the list route raises
   `CatalogUsageError` rather than silently ignoring it.
+- **`page_size` caps at 100 on both routes.** The list route would accept 500, but
+  since the route comes from your filters rather than from you, one cap keeps
+  `page_size` meaning the same thing either way — adding `organism=` to a query
+  cannot quietly change how it pages. A larger value warns and is capped.
+
+### Sort order and walk stability
+
+`sort` defaults to `None`, which leaves the order to the server — the same default
+as `datasets.iter_all()` and `datasets.search()`. The server owns that choice and
+may change it.
+
+The catch: **the server's list default sorts on a mutable key.** A dataset modified
+partway through a multi-page walk can shift between pages and be skipped or
+returned twice. There is no error — you get a frame with a missing or duplicated
+row, which is exactly the kind of thing a `groupby` or a row count will not tell
+you about.
+
+Sort on the immutable `created_at` when that matters:
+
+```python
+from catalog_client import DatasetListSortOption
+
+df = to_dataframe(
+    client,
+    project="my-project",
+    sort=DatasetListSortOption.newest,  # or .oldest — stable across a walk
+)
+```
+
+`last_modified` has the same instability as the server default, since it sorts on
+the same mutable key. A single-page result (`limit` under `page_size`) is
+unaffected either way.
+
+This is a property of the server's default ordering, not of the client, and is
+expected to be resolved API-side — at which point this section can go. The client
+deliberately does not warn about it or override the default.
 
 `canonical_id` is deliberately not a filter here. To pull the versions of one
 dataset, use `client.datasets.list(canonical_id=...)`, or filter the frame on the
@@ -160,6 +196,10 @@ for row in iter_records(client, project="my-project", limit=1000):
 
 - `limit` caps the rows returned; `None` (the default) walks every match.
   `itertools.islice` stops the walk, so a small `limit` costs one page.
-- `page_size` is records per request. Capped at 100 on the search route and 500
-  on the list route, with a warning if you exceed it.
-- Both routes page by cursor, so deep result sets are fine.
+- `page_size` is records per request, and defaults to the maximum of 100. Larger
+  values warn and are capped. The cap is the same on both routes on purpose — see
+  [Route selection](#route-selection).
+- Both routes page by cursor, so deep result sets are fine. A walk that spans more
+  than one page is subject to the sort-stability caveat above.
+- Arguments are checked when you call `iter_records()`, not when you first iterate
+  it, so a bad `page_size` or `columns` is reported at your call site.

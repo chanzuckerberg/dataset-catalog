@@ -484,7 +484,7 @@ You never choose the route — it follows from the filters:
 | `project`, `modality`, `version`, `access_scope`, `is_latest`, or none | `datasets.list()`, cursor-walked |
 | any of `q`, `organism`, `tissue`, `sub_modality`, `assay`, `disease`, `development_stage`, `cohort`, `file_format`, `storage_platform` | `datasets.search(hydrate=True)` |
 
-Both return full dataset records, so the same columns are available either way. Hydrated search costs an extra query per page and caps `page_size` at 100.
+Both return full dataset records, so the same columns are available either way. Hydrated search costs an extra query per page. `page_size` caps at 100 on both routes and defaults to it — the list route would accept 500, but a single cap means adding a search filter cannot silently change how your query pages.
 
 ```python
 from catalog_client import CatalogClient, ColumnSpec, to_dataframe
@@ -499,6 +499,8 @@ df = to_dataframe(client, organism="Homo sapiens", limit=100)
 ```
 
 Two things to know: `version` is not supported by the search index, so combining it with a search filter fetches the extra rows and drops them client-side; and `sort=relevance` / `sort=alphabetical` exist only on the search route, so asking for one on the list route raises `CatalogUsageError`.
+
+`sort` defaults to `None`, leaving the choice to the server, exactly as `datasets.iter_all()` does. For a walk spanning more than one page that has consequences — see [Sort order and walk stability](catalog_client/utils/dataframe/README.md#sort-order-and-walk-stability), which is the same caveat as under [Paginating datasets](#paginating-datasets) above.
 
 `canonical_id` is not a filter here — use `client.datasets.list(canonical_id=...)` for that lookup, or filter the frame on the `canonical_id` column.
 

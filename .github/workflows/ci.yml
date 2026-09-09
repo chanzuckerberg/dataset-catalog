@@ -41,3 +41,16 @@ jobs:
           enable-cache: true
       - name: Run pytest
         run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum pytest
+
+  pandas-floor:
+    name: Test dataframe utils at the declared pandas floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # The test job resolves the newest pandas, so the floor declared in
+      # pyproject.toml's `dataframe` extra is otherwise never exercised.
+      - name: Run pytest against pandas 2.2.0
+        run: uv run --python 3.11 --group dev --extra checksum --with 'pandas==2.2.0' pytest tests/utils/dataframe

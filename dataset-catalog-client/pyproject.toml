@@ -31,7 +31,10 @@ checksum = [
   "crcmod>=1.7",
 ]
 dataframe = [
-  "pandas>=2.0.0",
+  # 2.2.0 is the oldest release the test suite is run against (see the
+  # pandas-floor job in .github/workflows/ci.yml). Anything below 2.1.4 fails
+  # to import at all under numpy 2.x, whose ABI it predates.
+  "pandas>=2.2.0",
 ]
 
 [tool.ruff]
@@ -52,7 +55,7 @@ dev = [
     "ruff>=0.9.0",
     "moto>=4.0.0",
     "mypy>=2.0.0",
-    "pandas>=2.0.0",
+    "pandas>=2.2.0",
 ]
 
 [tool.mypy]

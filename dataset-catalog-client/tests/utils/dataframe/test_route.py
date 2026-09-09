@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -182,13 +184,20 @@ def test_page_size_is_capped_at_100_on_the_search_route(client, httpx_mock: HTTP
     assert httpx_mock.get_request().url.params["limit"] == "100"
 
 
-def test_page_size_is_capped_at_500_on_the_list_route(client, httpx_mock: HTTPXMock):
+def test_page_size_is_capped_at_100_on_the_list_route_too(
+    client, httpx_mock: HTTPXMock
+):
+    """The list route accepts 500, but one cap keeps page_size route-agnostic.
+
+    Otherwise adding a search-only filter would silently change what a given
+    page_size does.
+    """
     httpx_mock.add_response(json=list_page([dataset_dict()]))
 
-    with pytest.warns(UserWarning, match="capping at 500"):
+    with pytest.warns(UserWarning, match="capping at 100"):
         list(iter_records(client, project="atlas", page_size=1000))
 
-    assert httpx_mock.get_request().url.params["limit"] == "500"
+    assert httpx_mock.get_request().url.params["limit"] == "100"
 
 
 def test_page_size_below_one_is_rejected(client):
@@ -247,3 +256,23 @@ def test_url_is_the_expected_api_base(client, httpx_mock: HTTPXMock):
     list(iter_records(client, project="atlas"))
 
     assert str(httpx_mock.get_request().url).startswith(API)
+
+
+def test_arguments_are_checked_before_any_iteration(client):
+    """iter_records() is not a generator function, so a bad argument raises on
+    the call rather than on the first next() somewhere else entirely."""
+    with pytest.raises(CatalogUsageError, match="limit must be >= 0"):
+        iter_records(client, project="atlas", limit=-1)
+
+    with pytest.raises(CatalogUsageError, match="page_size must be >= 1"):
+        iter_records(client, project="atlas", page_size=0)
+
+
+def test_the_page_size_warning_names_the_callers_line(client):
+    """Warned on the call, before any request — so no response is registered."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        iter_records(client, project="atlas", page_size=1000)
+
+    assert len(caught) == 1
+    assert caught[0].filename == __file__

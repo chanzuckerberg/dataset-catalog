@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, Iterator
 
 from catalog_client.exceptions import CatalogUsageError
@@ -38,22 +37,17 @@ LIST_ONLY_FILTERS = ("version",)
 SHARED_FILTERS = ("modality", "project", "is_latest", "access_scope")
 """Filters both routes accept, passed straight through either way."""
 
-_HYDRATED_MAX_PAGE_SIZE = 100
-_LIST_MAX_PAGE_SIZE = 500
+MAX_PAGE_SIZE = 100
+"""Largest ``page_size`` either route will be asked for.
 
+The list route accepts up to 500, but the hydrated search route caps at 100,
+and the route is chosen from the filters rather than by the caller.  One limit
+for both keeps ``page_size`` meaning the same thing whichever route runs, so
+adding a filter cannot change what a given value does.
 
-def _clamp_page_size(page_size: int, maximum: int, route: str) -> int:
-    if page_size > maximum:
-        warnings.warn(
-            f"page_size={page_size} exceeds the maximum of {maximum} for the "
-            f"{route} route; capping at {maximum}.",
-            UserWarning,
-            stacklevel=4,
-        )
-        return maximum
-    if page_size < 1:
-        raise CatalogUsageError(f"page_size must be >= 1, got {page_size}")
-    return page_size
+Enforced eagerly in ``records._validate``, not here, so the warning lands on
+the caller's line rather than inside a part-consumed generator.
+"""
 
 
 def _search_sort(
@@ -100,13 +94,14 @@ def iter_datasets(
     Filters that only the list route understands are applied client-side when
     the search route is chosen, so a mixed query still returns correct rows —
     at the cost of fetching the ones that get dropped.
+
+    *page_size* is assumed already validated against :data:`MAX_PAGE_SIZE`.
     """
     search_filters = {
         name: value for name in SEARCH_ONLY_FILTERS if (value := filters.get(name))
     }
 
     if not search_filters:
-        page_size = _clamp_page_size(page_size, _LIST_MAX_PAGE_SIZE, "list")
         yield from client.datasets.iter_all(
             version=filters.get("version"),
             modality=filters.get("modality"),
@@ -119,7 +114,6 @@ def iter_datasets(
         )
         return
 
-    page_size = _clamp_page_size(page_size, _HYDRATED_MAX_PAGE_SIZE, "search")
     residual = {
         name: value for name in LIST_ONLY_FILTERS if (value := filters.get(name))
     }

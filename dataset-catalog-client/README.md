@@ -123,7 +123,7 @@ df = to_dataframe(
 )
 ```
 
-Requires the `dataframe` extra. Use `iter_records` for the same data as plain dicts without pandas. See [catalog_client/utils/dataframe/README.md](catalog_client/utils/dataframe/README.md) for columns, path syntax, and custom mappers.
+Requires the `dataframe` extra. Use `iter_records` for the same data as plain dicts without pandas. See [catalog_client/utils/dataframe/README.md](catalog_client/utils/dataframe/README.md) for columns, path syntax, sort stability, and custom mappers.
 
 ## Command-line interface
 

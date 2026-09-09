@@ -11,6 +11,7 @@ from catalog_client.models.dataset import (
     DatasetSortOption,
 )
 from catalog_client.utils.dataframe._columns import resolve_columns
+from catalog_client.utils.dataframe._route import MAX_PAGE_SIZE
 from catalog_client.utils.dataframe._types import ColumnSpec, RecordMapper
 from catalog_client.utils.dataframe.records import iter_records
 
@@ -61,7 +62,7 @@ def to_dataframe(
     exclude_tombstoned: bool = True,
     sort: DatasetSortOption | DatasetListSortOption | None = None,
     limit: int | None = None,
-    page_size: int = 100,
+    page_size: int = MAX_PAGE_SIZE,
 ) -> pandas.DataFrame:
     """Pull matching datasets into a DataFrame, one row per dataset.
 
@@ -72,7 +73,9 @@ def to_dataframe(
 
     Takes the same arguments as
     :func:`~catalog_client.utils.dataframe.iter_records`, which see for the
-    full reference.
+    full reference.  Note in particular that ``sort`` defaults to ``None``,
+    leaving the order to the server; see the package README on walk stability
+    before paging through a large result.
 
     Requires the ``dataframe`` extra::
 
