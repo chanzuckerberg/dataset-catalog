@@ -349,6 +349,26 @@ back a cursor it already issued, or promises another page while returning an
 empty one. Either would otherwise be an unbounded request loop; both raise
 `CatalogError`, since they are server faults rather than caller mistakes.
 
+#### Page-size ceilings
+
+The ceilings the client enforces are named in `catalog_client.limits`, so your
+own paging code can reference them instead of hardcoding a number:
+
+```python
+from catalog_client import limits
+
+limits.DATASET_LIST_MAX_LIMIT              # 500  — GET /api/datasets/
+limits.DATASET_SEARCH_MAX_LIMIT            # 1000 — GET /api/datasets/search/
+limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT   # 100  — search(hydrate=True)
+limits.COLLECTION_MAX_LIMIT                # 100  — the collection routes
+limits.DATASET_MAX_OFFSET                  # 10000 — client policy, not a server cap
+```
+
+Exceeding one raises `CatalogUsageError` before the request is sent. The
+`to_dataframe` and `generate_manifest` utilities derive their `page_size`
+defaults from these rather than restating them, so a ceiling that moves
+server-side is changed in one place.
+
 ### Search datasets
 
 Full-text and faceted search over the active index. Returns lightweight hits;

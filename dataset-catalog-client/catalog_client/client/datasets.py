@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import AsyncIterator, Iterator
 
+from catalog_client import limits
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
 from catalog_client.models.dataset import (
@@ -25,20 +26,14 @@ from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedR
 
 _PREFIX = "datasets"
 
-# Server-side page-size ceilings, mirrored here so an oversized page fails
+# The ceilings live in catalog_client.limits so the dataframe and manifest
+# utilities derive their page sizes from the same numbers instead of
+# redeclaring them. Mirrored client-side at all so an oversized page fails
 # before the round trip that would only return a 422.
-_SEARCH_MAX_LIMIT = 1000
-_LIST_MAX_LIMIT = 500
-
-# `hydrate=True` re-reads every hit from the database, so the server caps the
-# page size lower than the 1000 an unhydrated search allows.
-_HYDRATED_MAX_LIMIT = 100
-
-# Depth past which offset paging is refused in favour of a keyset cursor. The
-# server accepts deeper offsets, but it walks and discards every skipped row,
-# and a concurrent write shifts the window — so rows get skipped or repeated.
-# A cursor is constant-cost at any depth and immune to that shift.
-_MAX_OFFSET = 10_000
+_SEARCH_MAX_LIMIT = limits.DATASET_SEARCH_MAX_LIMIT
+_LIST_MAX_LIMIT = limits.DATASET_LIST_MAX_LIMIT
+_HYDRATED_MAX_LIMIT = limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT
+_MAX_OFFSET = limits.DATASET_MAX_OFFSET
 
 
 def _check_limit(limit: int, maximum: int, route: str) -> None:

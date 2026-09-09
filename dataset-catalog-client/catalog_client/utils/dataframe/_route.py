@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterator
 
+from catalog_client import limits
 from catalog_client.exceptions import CatalogUsageError
 from catalog_client.models.dataset import (
     DatasetListSortOption,
@@ -37,13 +38,14 @@ LIST_ONLY_FILTERS = ("version",)
 SHARED_FILTERS = ("modality", "project", "is_latest", "access_scope")
 """Filters both routes accept, passed straight through either way."""
 
-MAX_PAGE_SIZE = 100
+MAX_PAGE_SIZE = limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT
 """Largest ``page_size`` either route will be asked for.
 
-The list route accepts up to 500, but the hydrated search route caps at 100,
-and the route is chosen from the filters rather than by the caller.  One limit
-for both keeps ``page_size`` meaning the same thing whichever route runs, so
-adding a filter cannot change what a given value does.
+The list route accepts more, but the hydrated search route is the lower of the
+two and the route is chosen from the filters rather than by the caller.  One
+limit for both keeps ``page_size`` meaning the same thing whichever route
+runs, so adding a filter cannot change what a given value does — which is why
+this tracks the hydrated ceiling rather than restating a number.
 
 Enforced eagerly in ``records._validate``, not here, so the warning lands on
 the caller's line rather than inside a part-consumed generator.
