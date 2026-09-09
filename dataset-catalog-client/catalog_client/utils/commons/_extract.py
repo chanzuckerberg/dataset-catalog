@@ -6,7 +6,7 @@ value out of a nested response dict given a path written by the caller.
 A path is parsed once into segments by :func:`parse_path` and applied many
 times by :func:`extract_path`.  Callers that extract the same path from every
 record in a walk should parse it once and keep the segments;
-:func:`_extract_metadata_field` is the convenience form that does both.
+:func:`extract_field` is the convenience form that does both.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def parse_path(path: str) -> PathSegments:
 def extract_path(value: Any, segments: PathSegments) -> Any:
     """Walk *segments* into *value*, returning ``None`` on any mismatch.
 
-    See :func:`_extract_metadata_field` for the path syntax.
+    See :func:`extract_field` for the path syntax.
     """
     current: Any = value
 
@@ -79,7 +79,7 @@ def extract_path(value: Any, segments: PathSegments) -> Any:
     return current
 
 
-def _extract_metadata_field(metadata: dict[str, Any], path: str) -> Any:
+def extract_field(data: dict[str, Any], path: str) -> Any:
     """Extract a value from a nested dict using dot-notation with list expansion.
 
     A segment ending with ``[]`` signals that the value at that key is a list;
@@ -91,17 +91,21 @@ def _extract_metadata_field(metadata: dict[str, Any], path: str) -> Any:
     Parses *path* on every call.  In a loop over records, call
     :func:`parse_path` once and :func:`extract_path` per record instead.
 
+    Named for a *field* rather than metadata: the manifest walks a metadata
+    dict, but the dataframe walks a whole dumped record, and the traversal
+    never cared which.
+
     Examples::
 
-        # metadata = {"sample": {"organism": [{"label": "Homo sapiens"}]}}
-        _extract_metadata_field(metadata, "sample.organism[].label")
+        # data = {"sample": {"organism": [{"label": "Homo sapiens"}]}}
+        extract_field(data, "sample.organism[].label")
         # → ["Homo sapiens"]
 
-        _extract_metadata_field(metadata, "experiment.sub_modality")
+        extract_field(data, "experiment.sub_modality")
         # → "confocal"  (or None if absent)
 
-        # metadata = {"data_summary": {"dimension": [512, 512, 40]}}
-        _extract_metadata_field(metadata, "data_summary.dimension.0")
+        # data = {"data_summary": {"dimension": [512, 512, 40]}}
+        extract_field(data, "data_summary.dimension.0")
         # → 512
     """
-    return extract_path(metadata, parse_path(path))
+    return extract_path(data, parse_path(path))

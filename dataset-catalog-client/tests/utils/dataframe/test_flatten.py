@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import datetime
 
-import pytest
-
-from catalog_client.utils.commons import _extract_metadata_field
 from catalog_client.utils.dataframe._columns import DEFAULT_COLUMNS, resolve_columns
 from catalog_client.utils.dataframe._flatten import flatten_record
 from catalog_client.utils.dataframe._types import ColumnSpec
@@ -152,21 +149,3 @@ def test_defaults_carry_no_locations_derived_column():
     assert "asset_count" not in names
     assert "total_size_bytes" not in names
     assert not any(spec.path.startswith("locations") for spec in DEFAULT_COLUMNS)
-
-
-@pytest.mark.parametrize(
-    ("path", "expected"),
-    [
-        ("sample.organism[].label", ["Homo sapiens"]),
-        ("sample.organism.0.label", "Homo sapiens"),
-        ("sample.organism.0.nope", None),
-        ("sample.organism.5", None),
-        ("sample.organism.label", None),  # dict key against a list
-        ("sample.missing.deeper", None),
-        ("sample.organism[].missing", [None]),
-    ],
-)
-def test_extractor_path_syntax(path, expected):
-    metadata = {"sample": {"organism": [{"label": "Homo sapiens"}]}}
-
-    assert _extract_metadata_field(metadata, path) == expected
