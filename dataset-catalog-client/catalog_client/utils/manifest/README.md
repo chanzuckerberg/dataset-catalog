@@ -234,15 +234,16 @@ _types.py
    ↑
 _filter.py (_types)
    ↑
-_iterator.py (_types, _filter, ../_extract)
+_iterator.py (_types, _filter, ../commons)
    ↑
 generate.py (_types, _iterator)
    ↑
 __init__.py (re-exports _types + generate)
 ```
 
-The dot-path traversal itself lives in `catalog_client/utils/_extract.py`,
-shared with the dataframe utility.
+The dot-path traversal itself lives in `catalog_client/utils/commons/`, the
+home for helpers more than one utility package needs — shared here with the
+dataframe utility.
 
 No module imports from `__init__.py` or upward — the flow is strictly
 bottom-up with no cycles.

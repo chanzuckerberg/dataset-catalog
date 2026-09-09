@@ -6,7 +6,7 @@ import datetime
 
 import pytest
 
-from catalog_client.utils._extract import _extract_metadata_field
+from catalog_client.utils.commons import _extract_metadata_field
 from catalog_client.utils.dataframe._columns import DEFAULT_COLUMNS, resolve_columns
 from catalog_client.utils.dataframe._flatten import flatten_record
 from catalog_client.utils.dataframe._types import ColumnSpec

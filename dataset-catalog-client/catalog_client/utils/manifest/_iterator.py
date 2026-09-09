@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator
 if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
-from catalog_client.utils._extract import _extract_metadata_field
+from catalog_client.utils.commons import _extract_metadata_field
 from catalog_client.utils.manifest._filter import FilterCondition, _asset_matches
 from catalog_client.utils.manifest._types import ManifestStats
 

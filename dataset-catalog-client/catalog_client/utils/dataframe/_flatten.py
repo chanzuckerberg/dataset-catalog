@@ -6,7 +6,7 @@ import enum
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from catalog_client.exceptions import CatalogUsageError
-from catalog_client.utils._extract import PathSegments, extract_path, parse_path
+from catalog_client.utils.commons import PathSegments, extract_path, parse_path
 from catalog_client.utils.dataframe._columns import COMPUTED_COLUMNS, ComputedColumn
 from catalog_client.utils.dataframe._types import ColumnSpec, RecordMapper
 
