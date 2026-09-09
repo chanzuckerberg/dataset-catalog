@@ -40,7 +40,7 @@ jobs:
         with:
           enable-cache: true
       - name: Run pytest
-        run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum pytest
+        run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum --extra dataframe pytest
 
   pandas-floor:
     name: Test dataframe utils at the declared pandas floor
@@ -51,6 +51,8 @@ jobs:
         with:
           enable-cache: true
       # The test job resolves the newest pandas, so the floor declared in
-      # pyproject.toml's `dataframe` extra is otherwise never exercised.
+      # pyproject.toml's `dataframe` extra is otherwise never exercised. The
+      # version is repeated here because `--with` is what pins it — keep it in
+      # step with the extra's lower bound.
       - name: Run pytest against pandas 2.2.0
-        run: uv run --python 3.11 --group dev --extra checksum --with 'pandas==2.2.0' pytest tests/utils/dataframe
+        run: uv run --python 3.11 --group dev --extra checksum --extra dataframe --with 'pandas==2.2.0' pytest tests/utils/dataframe
