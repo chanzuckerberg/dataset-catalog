@@ -14,8 +14,8 @@ from catalog_client.models.dataset import (
     DatasetModality,
     DatasetSortOption,
 )
-from catalog_client.utils.dataframe._columns import resolve_columns
-from catalog_client.utils.dataframe._flatten import flatten_record
+from catalog_client.utils.dataframe._columns import output_names, resolve_columns
+from catalog_client.utils.dataframe._flatten import RowBuilder
 from catalog_client.utils.dataframe._route import MAX_PAGE_SIZE, iter_datasets
 from catalog_client.utils.dataframe._types import ColumnSpec, RecordMapper
 
@@ -221,48 +221,42 @@ def _iter_rows(
         sort=sort,
         page_size=page_size,
     )
+    builder = RowBuilder(specs, mapper=mapper, list_sep=list_sep, rename=rename)
 
-    emitted = 0
-    seen_non_null: set[str] = set()
+    emitted = False
+    # Tracked as the columns still waiting for a value rather than the ones
+    # already seen, so the per-row scan stops costing anything once every
+    # column has produced one — which is usually within the first row or two.
+    pending = dict(zip(output_names(specs, rename), specs))
     for record in itertools.islice(records, limit):
-        row = flatten_record(
-            record,
-            specs,
-            mapper=mapper,
-            list_sep=list_sep,
-            rename=rename,
-        )
+        row = builder.build(record)
         if row is None:
             continue
-        emitted += 1
-        seen_non_null.update(key for key, value in row.items() if value is not None)
+        emitted = True
+        if pending:
+            for name, value in row.items():
+                if value is not None:
+                    pending.pop(name, None)
         yield row
 
-    if emitted:
-        _warn_empty_columns(specs, rename, seen_non_null)
+    if emitted and pending:
+        _warn_empty_columns(pending)
 
 
-def _warn_empty_columns(
-    specs: list[ColumnSpec],
-    rename: Mapping[str, str] | None,
-    seen_non_null: set[str],
-) -> None:
+def _warn_empty_columns(pending: Mapping[str, ColumnSpec]) -> None:
     """Flag declarative columns that were None in every row — usually a typo.
 
-    Mapper-produced columns are excluded: an always-None mapper column may
-    well be intentional.
+    *pending* maps final column name to the spec that asked for it.  Mapper-
+    produced columns never appear in it: an always-None mapper column may well
+    be intentional.
     """
     # Resolved once here rather than per column: this frame is the reference
     # point, and every warning below is raised from it.
     stacklevel = _caller_stacklevel()
-    for spec in specs:
-        name = spec.column_name
-        if rename:
-            name = rename.get(name, name)
-        if name not in seen_non_null:
-            warnings.warn(
-                f"Column {spec.path!r} (output {name!r}) resolved to None for "
-                "every row. Verify the path syntax and metadata schema.",
-                UserWarning,
-                stacklevel=stacklevel,
-            )
+    for name, spec in pending.items():
+        warnings.warn(
+            f"Column {spec.path!r} (output {name!r}) resolved to None for "
+            "every row. Verify the path syntax and metadata schema.",
+            UserWarning,
+            stacklevel=stacklevel,
+        )

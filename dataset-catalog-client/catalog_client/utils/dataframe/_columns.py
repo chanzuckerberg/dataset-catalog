@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import collections.abc
-from typing import Any, Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping, Sequence
 
 from catalog_client.exceptions import CatalogUsageError
 from catalog_client.utils.dataframe._types import ColumnSpec
@@ -52,9 +53,31 @@ def _total_size_bytes(record: dict[str, Any]) -> int | None:
     return total
 
 
-COMPUTED_COLUMNS: dict[str, Callable[[dict[str, Any]], Any]] = {
-    "asset_count": lambda record: len(record.get("locations") or []),
-    "total_size_bytes": _total_size_bytes,
+@dataclass(frozen=True)
+class ComputedColumn:
+    """A column produced by a function instead of a dot-path.
+
+    Args:
+        fn: Called with the dumped record, returns the cell value.
+        sources: Top-level record fields *fn* reads.  Declared so the flatten
+            step can scope its ``model_dump`` to the fields some column
+            actually needs — dumping ``locations`` costs one nested model per
+            asset, which is the bulk of the work on an asset-heavy dataset.
+    """
+
+    fn: Callable[[dict[str, Any]], Any]
+    sources: frozenset[str]
+
+
+COMPUTED_COLUMNS: dict[str, ComputedColumn] = {
+    "asset_count": ComputedColumn(
+        lambda record: len(record.get("locations") or []),
+        frozenset({"locations"}),
+    ),
+    "total_size_bytes": ComputedColumn(
+        _total_size_bytes,
+        frozenset({"locations"}),
+    ),
 }
 """Column names resolved by a function rather than a dot-path.
 
@@ -62,6 +85,21 @@ These summarize ``locations`` so that asking for asset information does not
 multiply rows.  For one row per asset, use
 :func:`~catalog_client.utils.manifest.generate_manifest` instead.
 """
+
+
+def output_names(
+    specs: Sequence[ColumnSpec],
+    rename: Mapping[str, str] | None,
+) -> list[str]:
+    """Final column names for *specs*, after *rename* is applied.
+
+    The one place the ``column_name``-then-``rename`` rule is spelled out, so
+    the row builder, the empty-frame schema, and the empty-column warning
+    cannot disagree about what a column ends up called.
+    """
+    if not rename:
+        return [spec.column_name for spec in specs]
+    return [rename.get(spec.column_name, spec.column_name) for spec in specs]
 
 
 def resolve_columns(

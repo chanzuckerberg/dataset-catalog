@@ -10,7 +10,7 @@ from catalog_client.models.dataset import (
     DatasetModality,
     DatasetSortOption,
 )
-from catalog_client.utils.dataframe._columns import resolve_columns
+from catalog_client.utils.dataframe._columns import output_names, resolve_columns
 from catalog_client.utils.dataframe._route import MAX_PAGE_SIZE
 from catalog_client.utils.dataframe._types import ColumnSpec, RecordMapper
 from catalog_client.utils.dataframe.records import iter_records
@@ -140,8 +140,4 @@ def to_dataframe(
 
     # With no rows pandas cannot infer the schema, so state it. Only the
     # declarative columns are knowable here — a mapper never ran.
-    names = []
-    for spec in resolve_columns(columns):
-        name = spec.column_name
-        names.append(rename.get(name, name) if rename else name)
-    return pandas.DataFrame(columns=names)
+    return pandas.DataFrame(columns=output_names(resolve_columns(columns), rename))

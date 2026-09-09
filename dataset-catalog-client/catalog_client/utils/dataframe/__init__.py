@@ -9,10 +9,6 @@ from catalog_client.utils.dataframe._types import ColumnSpec, RecordMapper
 from catalog_client.utils.dataframe.frame import to_dataframe
 from catalog_client.utils.dataframe.records import iter_records
 
-# COMPUTED_COLUMNS is deliberately not re-exported: it is a mutable dict of
-# implementation detail, and the columns it registers are requested by name
-# ("asset_count", "total_size_bytes") like any other. See the package README.
-
 __all__ = [
     "DEFAULT_COLUMNS",
     "ColumnSpec",

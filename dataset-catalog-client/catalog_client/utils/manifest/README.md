@@ -222,9 +222,6 @@ catalog_client/utils/manifest/
 ├── __init__.py     # re-exports the full public surface
 ├── _types.py       # FieldFilter, FilterCondition, MetadataFieldSpec,
 │                   # ManifestStats, ManifestResult
-├── _extractor.py   # re-export only; the traversal itself lives in
-│                   # catalog_client/utils/_extract.py, shared with the
-│                   # dataframe utility
 ├── _filter.py      # _asset_matches           — FieldFilter evaluation
 ├── _iterator.py    # _iter_entries            — pagination + recursion generator
 └── generate.py     # generate_manifest, generate_manifest_iter — public API
@@ -235,14 +232,17 @@ catalog_client/utils/manifest/
 ```
 _types.py
    ↑
-_extractor.py   _filter.py (_types)
-         ↖     ↗
-          _iterator.py (_types, _extractor, _filter)
-               ↑
-           generate.py (_types, _iterator)
-               ↑
-           __init__.py (re-exports _types + generate)
+_filter.py (_types)
+   ↑
+_iterator.py (_types, _filter, ../_extract)
+   ↑
+generate.py (_types, _iterator)
+   ↑
+__init__.py (re-exports _types + generate)
 ```
+
+The dot-path traversal itself lives in `catalog_client/utils/_extract.py`,
+shared with the dataframe utility.
 
 No module imports from `__init__.py` or upward — the flow is strictly
 bottom-up with no cycles.
