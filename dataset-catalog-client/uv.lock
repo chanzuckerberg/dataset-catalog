@@ -401,7 +401,6 @@ notebook = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jupyter" },
     { name = "moto" },
     { name = "mypy" },
     { name = "pandas" },
@@ -427,7 +426,6 @@ provides-extras = ["notebook", "checksum", "dataframe"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jupyter", specifier = ">=1.1.1" },
     { name = "moto", specifier = ">=4.0.0" },
     { name = "mypy", specifier = ">=2.0.0" },
     { name = "pandas", specifier = ">=3.0" },
