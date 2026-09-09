@@ -22,8 +22,12 @@ dependencies = [
 catalog = "catalog_client.cli:main"
 
 [project.optional-dependencies]
-dev = [
-    "jupyter>=1.1.1",
+# Named `notebook`, not `dev`: this ships jupyter to users who want to run the
+# quickstart, and is published. The local toolchain — pytest, ruff, mypy — is
+# the `dev` entry under [dependency-groups], which is not published. Two
+# things called `dev` invited installing one and expecting the other.
+notebook = [
+  "jupyter>=1.1.1",
 ]
 checksum = [
   "blake3>=0.3.0",

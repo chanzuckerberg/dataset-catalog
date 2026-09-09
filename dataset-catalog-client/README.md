@@ -39,8 +39,8 @@ uv pip install 'catalog-client[checksum] @ git+https://github.com/chanzuckerberg
 # pandas support for to_dataframe()
 uv pip install 'catalog-client[dataframe] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 
-# notebook/dev extras
-uv pip install 'catalog-client[dev] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+# jupyter, for running the quickstart notebook
+uv pip install 'catalog-client[notebook] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
 ### Pin to a specific version

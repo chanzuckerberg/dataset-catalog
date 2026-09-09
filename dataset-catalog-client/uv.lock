@@ -395,7 +395,7 @@ checksum = [
 dataframe = [
     { name = "pandas" },
 ]
-dev = [
+notebook = [
     { name = "jupyter" },
 ]
 
@@ -419,11 +419,11 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.42.90" },
     { name = "crcmod", marker = "extra == 'checksum'", specifier = ">=1.7" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
+    { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.1.1" },
     { name = "pandas", marker = "extra == 'dataframe'", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
 ]
-provides-extras = ["dev", "checksum", "dataframe"]
+provides-extras = ["notebook", "checksum", "dataframe"]
 
 [package.metadata.requires-dev]
 dev = [
