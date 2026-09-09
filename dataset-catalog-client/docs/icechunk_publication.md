@@ -1,6 +1,16 @@
 # Explicit Icechunk publication (Phase 0)
 
-Install `catalog-client[imaging]`. This optional module uses native Icechunk 2.x,
+Use Python 3.12 or newer and install `catalog-client[imaging]`. Native Icechunk
+2.2 requires Python 3.12; imaging dependencies are omitted on Python 3.11 so
+the core HTTP client remains installable there. Selecting the extra on Python
+3.11 does not enable native publication.
+
+```sh
+uv venv --python 3.12
+uv pip install 'catalog-client[imaging]'
+```
+
+This optional module uses native Icechunk 2.x,
 Zarr 3.x, and a durable local POSIX SQLite journal. It does not change ordinary
 Icechunk `session.commit()` behavior. Only an explicit publication call creates
 a Catalog release.

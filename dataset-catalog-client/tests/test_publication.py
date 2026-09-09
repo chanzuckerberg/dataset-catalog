@@ -1,13 +1,18 @@
 import json
 import sqlite3
 
-import icechunk
 import pytest
-import zarr
 
 from catalog_client import CatalogClient
-from catalog_client.publication import Publisher
-from catalog_client.publication.integrity import snapshot_inventory
+
+# Core CI intentionally omits native imaging dependencies. The imaging job
+# installs the extra on supported Python versions and must run these tests.
+icechunk = pytest.importorskip("icechunk", reason="requires catalog-client[imaging]")
+zarr = pytest.importorskip("zarr", reason="requires catalog-client[imaging]")
+Publisher = pytest.importorskip("catalog_client.publication").Publisher
+snapshot_inventory = pytest.importorskip(
+    "catalog_client.publication.integrity"
+).snapshot_inventory
 
 
 def candidate(tmp_path):

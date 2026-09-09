@@ -22,7 +22,10 @@ dependencies = [
 catalog = "catalog_client.cli:main"
 
 [project.optional-dependencies]
-imaging = ["icechunk>=2.2,<3", "zarr>=3.3,<4"]
+imaging = [
+    "icechunk>=2.2,<3; python_version >= '3.12'",
+    "zarr>=3.3,<4; python_version >= '3.12'",
+]
 dev = [
     "jupyter>=1.1.1",
 ]
