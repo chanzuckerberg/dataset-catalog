@@ -13,9 +13,13 @@ client's current assertion and confirm against `/api/meta/openapi.json` before
 relying on one for anything load-bearing.
 
 Only ceilings with a consumer are declared. The lineage and audit-log routes
-also cap at 100, but nothing checks them yet — see `collections_.py` and
-`lineages.py`, whose `limit` arguments are unvalidated — so naming them here
-would add constants no code reads.
+also cap at 100, but nothing checks them yet — see `lineages.py`, whose
+`limit` arguments are unvalidated — so naming them here would add constants no
+code reads.
+
+Note that the two dataset-route policies differ: an oversized `limit` on
+`datasets.list()`/`search()` raises, while `collections_.py` silently clamps
+to `COLLECTION_MAX_LIMIT`. That predates this module and is left alone here.
 
 Keep this module free of intra-package imports. The sub-clients import it
 during `catalog_client/__init__.py`'s own execution, so anything it pulled back
