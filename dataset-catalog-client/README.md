@@ -36,8 +36,11 @@ the `<name>[<extras>] @ <url>` form:
 # checksum backends (blake3, crc64, crc64nvme)
 uv pip install 'catalog-client[checksum] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 
-# notebook/dev extras
-uv pip install 'catalog-client[dev] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+# pandas support for to_dataframe()
+uv pip install 'catalog-client[dataframe] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
+
+# jupyter, for running the quickstart notebook
+uv pip install 'catalog-client[notebook] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
 ### Pin to a specific version
@@ -100,6 +103,28 @@ print(f"{result.stats.total_rows} rows from {result.stats.total_datasets} datase
 
 See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) for the full manifest generation guide.
 
+## DataFrames
+
+`to_dataframe` pulls matching datasets into a pandas DataFrame, one row per dataset. It picks the route from the filters you give it — search-index filters like `organism` use the hydrated search route, everything else walks the dataset list:
+
+```python
+from catalog_client import CatalogClient, ColumnSpec, to_dataframe
+
+client = CatalogClient(base_url="https://your-catalog.example.com", api_token="your-token")
+
+# every dataset in a project, default columns
+df = to_dataframe(client, project="my-project")
+
+# search route, custom columns
+df = to_dataframe(
+    client,
+    organism="Homo sapiens",
+    columns=["canonical_id", "name", ColumnSpec("metadata.data_summary.cell_count", alias="cells")],
+)
+```
+
+Requires the `dataframe` extra. Use `iter_records` for the same data as plain dicts without pandas. See [catalog_client/utils/dataframe/README.md](catalog_client/utils/dataframe/README.md) for columns, path syntax, sort stability, and custom mappers.
+
 ## Command-line interface
 
 Installing the package also installs a read-only `catalog` command for querying the catalog from the shell:
@@ -132,6 +157,7 @@ Output is a human-readable table on a terminal and JSON when piped (override wit
 | [schema/v1.4.0/schema.md](../schema/v1.4.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) |
 | [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
+| [catalog_client/utils/dataframe/README.md](catalog_client/utils/dataframe/README.md) | DataFrames — route selection, columns, path syntax, custom mappers |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:
 

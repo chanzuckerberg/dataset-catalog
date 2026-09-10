@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator
 if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
+from catalog_client import limits
 from catalog_client.utils.manifest._filter import FilterCondition
 from catalog_client.utils.manifest._iterator import _iter_entries
 from catalog_client.utils.manifest._types import (
@@ -16,7 +17,9 @@ from catalog_client.utils.manifest._types import (
     MetadataFieldSpec,
 )
 
-_MAX_PAGE_SIZE = 100
+# The walk pages `collections.list_entries()`, so this is the collection
+# ceiling — not the dataset one, which the keyset-paging work raised past it.
+_MAX_PAGE_SIZE = limits.COLLECTION_MAX_LIMIT
 
 
 def _validate_page_size(page_size: int) -> int:

@@ -61,7 +61,17 @@ MetadataFieldSpec("experiment.sub_modality", alias="modality")
 # List expansion — use [] on the segment whose value is a list
 MetadataFieldSpec("sample.organism[].label", alias="organisms")
 # → {"organisms": ["Homo sapiens", "Mus musculus"]}
+
+# Positional index — an all-digit segment picks one element instead of all
+MetadataFieldSpec("data_summary.dimension.0", alias="width")
+# → {"width": 512}
+MetadataFieldSpec("sample.organism.0.label", alias="primary_organism")
+# → {"primary_organism": "Homo sapiens"}
 ```
+
+Use `[]` when you want every element and an index when you want one. An index
+that is out of range, or a key applied to a list without an index, resolves to
+`None` rather than raising.
 
 If a path resolves to `None` for every row a `UserWarning` is issued — this
 usually indicates a typo in the path.
@@ -212,7 +222,6 @@ catalog_client/utils/manifest/
 ├── __init__.py     # re-exports the full public surface
 ├── _types.py       # FieldFilter, FilterCondition, MetadataFieldSpec,
 │                   # ManifestStats, ManifestResult
-├── _extractor.py   # _extract_metadata_field  — dot-notation traversal
 ├── _filter.py      # _asset_matches           — FieldFilter evaluation
 ├── _iterator.py    # _iter_entries            — pagination + recursion generator
 └── generate.py     # generate_manifest, generate_manifest_iter — public API
@@ -223,14 +232,18 @@ catalog_client/utils/manifest/
 ```
 _types.py
    ↑
-_extractor.py   _filter.py (_types)
-         ↖     ↗
-          _iterator.py (_types, _extractor, _filter)
-               ↑
-           generate.py (_types, _iterator)
-               ↑
-           __init__.py (re-exports _types + generate)
+_filter.py (_types)
+   ↑
+_iterator.py (_types, _filter, ../commons)
+   ↑
+generate.py (_types, _iterator)
+   ↑
+__init__.py (re-exports _types + generate)
 ```
+
+The dot-path traversal itself lives in `catalog_client/utils/commons/`, the
+home for helpers more than one utility package needs — shared here with the
+dataframe utility.
 
 No module imports from `__init__.py` or upward — the flow is strictly
 bottom-up with no cycles.

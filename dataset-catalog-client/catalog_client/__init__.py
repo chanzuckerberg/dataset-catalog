@@ -89,6 +89,13 @@ from catalog_client.registration import (
     RegistrationBuilder,
     RegistrationRequest,
 )
+from catalog_client.utils.dataframe import (
+    DEFAULT_COLUMNS,
+    ColumnSpec,
+    RecordMapper,
+    iter_records,
+    to_dataframe,
+)
 from catalog_client.utils.manifest import (
     FieldFilter,
     FilterCondition,
@@ -106,6 +113,11 @@ __all__ = [
     "AsyncCatalogClient",
     "CatalogClient",
     # Utils
+    "ColumnSpec",
+    "DEFAULT_COLUMNS",
+    "RecordMapper",
+    "iter_records",
+    "to_dataframe",
     "FieldFilter",
     "FilterCondition",
     "ManifestFormat",

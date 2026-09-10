@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import AsyncIterator, Iterator
 
+from catalog_client import limits
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
 from catalog_client.models.dataset import (
@@ -25,24 +26,14 @@ from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedR
 
 _PREFIX = "datasets"
 
-# Server-side page-size ceilings, mirrored here so an oversized page fails
-# before the round trip that would only return a 422.
-_SEARCH_MAX_LIMIT = 1000
-_LIST_MAX_LIMIT = 500
-
-# `hydrate=True` re-reads every hit from the database, so the server caps the
-# page size lower than the 1000 an unhydrated search allows.
-_HYDRATED_MAX_LIMIT = 100
-
-# Depth past which offset paging is refused in favour of a keyset cursor. The
-# server accepts deeper offsets, but it walks and discards every skipped row,
-# and a concurrent write shifts the window — so rows get skipped or repeated.
-# A cursor is constant-cost at any depth and immune to that shift.
-_MAX_OFFSET = 10_000
-
 
 def _check_limit(limit: int, maximum: int, route: str) -> None:
-    """Reject a page size the server would 422 on, without the round trip."""
+    """Reject a page size the server would 422 on, without the round trip.
+
+    Ceilings come from `catalog_client.limits`, which the dataframe and
+    manifest utilities read too. Checked client-side at all so an oversized
+    page fails before the round trip that would only return a 422.
+    """
     if limit < 1:
         raise CatalogUsageError(f"limit must be >= 1, got {limit}")
     if limit > maximum:
@@ -109,7 +100,7 @@ def _build_list_params(
     limit: int,
     include_total: bool,
 ) -> dict:
-    _check_limit(limit, _LIST_MAX_LIMIT, "datasets.list()")
+    _check_limit(limit, limits.DATASET_LIST_MAX_LIMIT, "datasets.list()")
     if cursor is not None and offset is not None:
         raise CatalogUsageError(
             "cursor and offset are mutually exclusive; pass only one "
@@ -117,9 +108,10 @@ def _build_list_params(
         )
     if offset is not None and offset < 0:
         raise CatalogUsageError(f"offset must be >= 0, got {offset}")
-    if offset is not None and offset > _MAX_OFFSET:
+    if offset is not None and offset > limits.DATASET_MAX_OFFSET:
         raise CatalogUsageError(
-            f"offset {offset} exceeds the maximum of {_MAX_OFFSET}. Page this "
+            f"offset {offset} exceeds the maximum of "
+            f"{limits.DATASET_MAX_OFFSET}. Page this "
             "deep with the keyset cursor instead: pass the previous "
             "response's next_cursor as cursor= (CLI: --cursor), or walk the "
             "whole result set with iter_all(). Offset paging at this depth is "
@@ -177,11 +169,12 @@ def _build_search_params(
     limit: int,
     hydrate: bool,
 ) -> dict:
-    if hydrate and limit > _HYDRATED_MAX_LIMIT:
+    if hydrate and limit > limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT:
         raise CatalogUsageError(
-            f"limit must be <= {_HYDRATED_MAX_LIMIT} when hydrate=True, got {limit}"
+            f"limit must be <= {limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT} "
+            f"when hydrate=True, got {limit}"
         )
-    _check_limit(limit, _SEARCH_MAX_LIMIT, "datasets.search()")
+    _check_limit(limit, limits.DATASET_SEARCH_MAX_LIMIT, "datasets.search()")
     params: dict = {"limit": limit}
     if sort is not None:
         params["sort"] = sort.value
