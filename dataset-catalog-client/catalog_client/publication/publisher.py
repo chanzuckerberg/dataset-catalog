@@ -6,6 +6,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, ContextManager, Protocol
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -32,6 +33,21 @@ def _open_publication_repository(uri: str) -> icechunk.Repository:
     return icechunk.Repository.open(storage)
 
 
+class JournalBackend(Protocol):
+    """Durable journal connection and exclusive lock for a full publication.
+
+    locked() yields a connection with execute(sql, parameters), commit(), and
+    mapping rows from fetchone(). SQL uses positional question-mark parameters.
+    The lock must remain held across commits, shared by all workers using this
+    journal. Commit must durably persist; database errors must be sqlite3.Error
+    subclasses so uncertain post-commit persistence is reported as pending.
+    The backend closes/rolls back uncommitted work when the context exits.
+    Publisher owns schema initialization and every journal query.
+    """
+
+    def locked(self) -> ContextManager[Any]: ...
+
+
 class Publisher:
     """Explicit publication with a SQLite journal on durable local POSIX storage.
 
@@ -41,8 +57,15 @@ class Publisher:
     persist intent before Icechunk commit. No retries re-commit a session.
     """
 
-    def __init__(self, publications: PublicationClient, state_path: str | Path):
+    def __init__(
+        self,
+        publications: PublicationClient,
+        state_path: str | Path,
+        *,
+        journal_backend: JournalBackend | None = None,
+    ):
         self.publications = publications
+        self.journal_backend = journal_backend
         self.state_path = Path(state_path)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         with self._locked() as db:
@@ -53,6 +76,10 @@ class Publisher:
 
     @contextmanager
     def _locked(self):
+        if self.journal_backend is not None:
+            with self.journal_backend.locked() as db:
+                yield db
+            return
         with open(str(self.state_path) + ".lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             with sqlite3.connect(self.state_path) as db:

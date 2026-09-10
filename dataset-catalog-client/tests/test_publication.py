@@ -193,3 +193,38 @@ def test_incomplete_receipt_never_reports_available(tmp_path, httpx_mock):
         ).commit_and_publish(session, request, message="v1", repository=repo)
     assert result["status"] == "PUBLICATION_PENDING"
     assert result["error"] == "ValueError"
+
+
+def test_explicit_journal_backend_owns_durable_connections(tmp_path):
+    from contextlib import contextmanager
+
+    class Backend:
+        @contextmanager
+        def locked(self):
+            with sqlite3.connect(tmp_path / "external.sqlite") as db:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA synchronous=FULL")
+                yield db
+
+    class Publications:
+        fail = True
+
+        def publish_committed_snapshot(self, value):
+            if self.fail:
+                raise ConnectionError("outage")
+            return receipt(value)
+
+    repo, session, request = candidate(tmp_path)
+    publications = Publications()
+    pending = Publisher(
+        publications, tmp_path / "unused.sqlite", journal_backend=Backend()
+    ).commit_and_publish(session, request, message="v1", repository=repo)
+    assert pending["status"] == "PUBLICATION_PENDING"
+    assert not (tmp_path / "unused.sqlite").exists()
+    publications.fail = False
+    result = Publisher(
+        publications, tmp_path / "unused.sqlite", journal_backend=Backend()
+    ).retry("v1", repo)
+    assert result["status"] == "AVAILABLE"
+    assert result["snapshot_id"] == pending["snapshot_id"]
+    assert repo.lookup_branch("main") == pending["snapshot_id"]
