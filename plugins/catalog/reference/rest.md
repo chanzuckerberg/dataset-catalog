@@ -260,7 +260,7 @@ metadata: {
 Allowed values include:
 
 ```text
-modality: imaging | sequencing | mass spec | unknown
+modality: imaging | sequencing | mass spec | text | unknown
 dataset_type: raw | processed
 ```
 

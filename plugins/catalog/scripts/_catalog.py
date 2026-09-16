@@ -28,7 +28,7 @@ DEFAULT_TIMEOUT = 30.0
 
 # Enum vocabularies, duplicated here so a script can validate CLI choices with
 # no SDK installed. Keep in sync with catalog_client.models.dataset.
-MODALITIES = ("imaging", "sequencing", "mass spec", "unknown")
+MODALITIES = ("imaging", "sequencing", "mass spec", "text", "unknown")
 SORTS = ("relevance", "alphabetical", "last_modified", "newest", "oldest")
 DEFAULT_SORT = "relevance"
 

@@ -80,6 +80,7 @@ SOURCE = {
     # governance
     "license": "CC-BY-4.0",
     "visibility": "public",
+    "steward": "imaging-platform-team",
     "owner_email": "imaging-team@example.org",
     "has_phi": False,
     # experiment
@@ -147,7 +148,7 @@ class Source:
 # chi_hpc / ny_hpc), and an http(s):// URI is not always `external` (internal
 # platforms can sit behind a URL). Confirm the platform with the user when the
 # path alone doesn't make it obvious. Members: s3, sf_hpc, chi_hpc, ny_hpc,
-# reef, kelp, external, other.
+# reef, kelp, atoll, external, other.
 def _storage_platform(uri: str) -> StoragePlatform:
     if uri.startswith("s3://"):
         return StoragePlatform.s3
@@ -194,6 +195,10 @@ def build_request(client: CatalogClient, src: Source):
         .with_governance(
             license=src.get("license"),
             access_scope="internal",  # always "internal" — never map from source
+            # Required since schema v1.5.0. Unlike every other governance field
+            # there is no honest empty value: ask the user rather than guessing
+            # one from an owner or contact field.
+            data_steward=src["steward"],
             data_owner=src.get("owner_email"),
             # Never assume PII/PHI status. Leave None (unknown) when the source
             # is silent — do NOT default to False. Confirm both with the user.
@@ -232,8 +237,10 @@ def build_request(client: CatalogClient, src: Source):
         .with_data_quality(checks_passed=src.get("qc_passed"), checks_failed=[])
     )
 
-    # Fields intentionally NOT carried into the catalog (operational only).
-    src.drop("internal_row_id")
+    # Fields intentionally NOT carried into the catalog: "internal_row_id" is
+    # operational, and "visibility" is deliberately not mapped because
+    # access_scope is always hard-coded to "internal".
+    src.drop("internal_row_id", "visibility")
     return builder
 
 
