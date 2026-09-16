@@ -159,6 +159,13 @@ class DatasetResponse(_DatasetBase):
     governance: GovernanceMetadataResponse = Field(  # type: ignore[assignment]
         description="Access control and compliance metadata"
     )
+    # Lenient on parse, like `governance` above and DataAssetResponse.storage_platform:
+    # `project` became required in schema v1.5.0, but rows written before that carry
+    # NULL and are still returned. The API types it the same way on its response model.
+    project: str | None = Field(  # type: ignore[assignment]
+        default=None,
+        description="Initiative that this dataset belongs to",
+    )
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     created_at: datetime.datetime = Field(

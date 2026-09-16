@@ -54,5 +54,5 @@ class GovernanceMetadataResponse(GovernanceMetadata):
     # submitted back as create requests.
     data_steward: str | None = Field(  # type: ignore[assignment]
         default=None,
-        description="Person or org responsible for the data's accuracy, quality and completeness. Absent on records written before schema v1.5.0",
+        description="Person or org responsible for the data's accuracy, quality and completeness",
     )
