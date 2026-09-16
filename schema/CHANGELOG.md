@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.4.0](#v140--current) | **Current** — active, default for new registrations |
+| [v1.5.0](#v150--current) | **Current** — active, default for new registrations |
+| [v1.4.0](#v140) | Supported for read |
 | [v1.3.0](#v130) | Supported for read |
 | [v1.2.0](#v120) | Supported for read |
 | [v1.1.0](#v110) | Supported for read |
@@ -17,9 +18,62 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.4.0 — Current
+## v1.5.0 — Current
 
 **Status:** Active. All new registrations default to this version. See
+[`v1.5.0/schema.md`](v1.5.0/schema.md).
+
+### Added
+
+- **Data Asset:** `storage_platform` now accepts `atoll`.
+- **Dataset:** `modality` now accepts `text`.
+- **Governance:** `data_sensitivity` is available again as an optional field, with the
+  controlled values `Low` / `Medium` / `High`. It is descriptive only — access
+  filtering is still driven by `access_scope`.
+- **Data quality:** new `report_assets` and `metrics_assets` (each a list of
+  `{ name, uri }` pointers to QC reports and metric files) and `metrics` (a list of
+  inline `{ name, value }` entries for the handful worth reading without opening a file).
+- **Collection:** membership entries now carry their own optional `metadata`, describing
+  the relationship rather than the member. Entries are discriminated by `entry_type`
+  (`dataset` / `collection`), and listing a collection's contents returns both kinds in
+  one paginated list.
+
+### Changed
+
+- **Governance:** `data_steward` is now **required** on every dataset write.
+- **Dataset:** `version` is no longer required on write — it defaults to `1.0.0`. It
+  remains a signature field, so setting it later still tombstones and re-creates.
+- **Sample:** `perturbation` is now a **codebook** — one entry per distinct perturbation
+  with `id`, `type` (`chemical` / `protein` / `genetic` / `environmental` /
+  `combination` / `none` / `other` / `unknown`) and `role` (`treatment` /
+  `negative_control` / `positive_control` / `untreated`). Per-cell and per-well
+  assignment stays in the data, keyed back by `id`. This replaces the CELLxGENE
+  `genetic_perturbations` structure recommended in v1.4.0. Entries are stored
+  unvalidated.
+- **Sample:** for cell lines, `development_stage` now takes the `not_applicable`
+  sentinel as its `label` with no `ontology_id` (v1.4.0 recommended `na`).
+- **Channels:** `channel_type` and `marker_type` are free-text strings rather than
+  enforced enums. The DCA v0.2 values remain the recommendation; unknown values are
+  accepted as written.
+- **Data summary:** `plate` accepts a plain string as well as an object.
+- **Collection:** the 4-level depth limit is documented as a modelling convention
+  rather than a constraint — the API does not reject deeper nesting. Cycles are still
+  rejected at write time with a `400`.
+- **Governance:** `embargoed_until` accepts `YYYY-MM-DD` only; other date forms are
+  rejected rather than silently coerced to a different day.
+
+### Removed
+
+- **Data summary:** `dca_schema_version`. Record the applicable schema in the dataset's
+  `metadata_schema` list instead.
+- **Channels:** `BiologicalAnnotation.cpg_labeled_structure` and
+  `cpg_labeled_molecule`. Use `biological_target` and `marker`.
+
+---
+
+## v1.4.0
+
+**Status:** Supported for read. New registrations should use v1.5.0. See
 [`v1.4.0/schema.md`](v1.4.0/schema.md).
 
 ### Added
@@ -53,7 +107,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.3.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -79,7 +133,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.2.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -103,7 +157,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.1.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -184,3 +238,26 @@ version remains valid under newer ones, with the exception of newly required fie
   equivalent exists.
 - The `data_sensitivity` governance field is dropped; express public visibility via
   `access_scope`.
+
+### v1.4.0 → v1.5.0
+
+- **`governance.data_steward` is now required.** This is the one breaking change: a
+  payload that omitted it is rejected with a `422`. Backfill it before upgrading.
+- `version` no longer needs to be sent — omitting it yields `1.0.0`. Records that
+  already set it are unaffected. Do not drop it from existing payloads expecting a
+  no-op: it is a signature field, so changing the value still forks the record.
+- **Rewrite `perturbation` entries.** The CELLxGENE `genetic_perturbations` shape
+  recommended in v1.4.0 (gene identifier + CRISPR strategy + `control` role) is replaced
+  by a codebook of `{ id, type, role }`. Nothing rejects the old shape — the field is
+  stored unvalidated — so old entries persist silently and will not match consumers
+  reading the new keys.
+- Move any `data_summary.dca_schema_version` value into the dataset's
+  `metadata_schema` list.
+- Fold `cpg_labeled_structure` / `cpg_labeled_molecule` into `biological_target` and
+  `marker` on each channel's `biological_annotation`.
+- For cell lines, change `development_stage` labels from `na` to `not_applicable`.
+- Optionally populate `data_quality.report_assets`, `metrics_assets`, and `metrics`
+  where QC output exists, and `data_sensitivity` where a `Low` / `Medium` / `High`
+  classification is on record.
+- Check `embargoed_until` values are `YYYY-MM-DD`. Other forms are now rejected instead
+  of coerced.
