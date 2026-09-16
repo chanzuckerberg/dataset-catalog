@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import textwrap
 import typing
 
 import httpx
@@ -298,6 +299,13 @@ def print_schema_fields(
     for name, field in model.model_fields.items():
         req = "*" if field.is_required() else " "
         print(f"{'  ' * (indent + 1)}{req} {name}: {_type_name(field.annotation)}")
+        # The type alone is not enough to map onto: `dict[str, str]` accepts a
+        # wrongly-shaped entry as readily as the right one. Print the model's
+        # own description so the expected shape travels with the field.
+        if field.description:
+            pad = "  " * (indent + 2) + "  "
+            for line in textwrap.wrap(field.description, width=100):
+                print(f"{pad}{line}")
         for nested in _nested_models(field.annotation):
             if nested not in seen:
                 seen.add(nested)
