@@ -1,4 +1,10 @@
-from catalog_client.models.governance import GovernanceMetadata
+import pytest
+from pydantic import ValidationError
+
+from catalog_client.models.governance import (
+    GovernanceMetadata,
+    GovernanceMetadataResponse,
+)
 from catalog_client.models.metadata import (
     DatasetMetadata,
     ExperimentMetadata,
@@ -43,13 +49,37 @@ def test_dataset_metadata_nests_sub_models():
 
 
 def test_governance_metadata_extra_fields_allowed():
-    g = GovernanceMetadata(data_owner="team-x", custom_field="value")
+    g = GovernanceMetadata(
+        data_steward="team-data", data_owner="team-x", custom_field="value"
+    )
     assert g.data_owner == "team-x"
     assert g.model_extra["custom_field"] == "value"
+
+
+def test_governance_requires_data_steward_on_write():
+    with pytest.raises(ValidationError, match="data_steward"):
+        GovernanceMetadata(data_owner="team-x")
+
+
+def test_governance_response_tolerates_missing_data_steward():
+    """Records written before schema v1.5.0 have no steward and must still parse."""
+    g = GovernanceMetadataResponse.model_validate({"data_owner": "team-x"})
+    assert g.data_steward is None
 
 
 def test_data_quality_checks():
     q = DataQualityChecks(checks_passed=["format_check"], checks_failed=[])
     assert q.checks_passed == ["format_check"]
     assert q.checks_failed == []
+
+
+def test_data_quality_carries_report_and_metric_assets():
+    q = DataQualityChecks(
+        report_assets=[{"name": "fastqc", "uri": "s3://bucket/qc/fastqc.html"}],
+        metrics_assets=[{"name": "multiqc", "uri": "s3://bucket/qc/multiqc.json"}],
+        metrics=[{"name": "duplication_rate", "value": 0.12}],
+    )
+    assert q.report_assets[0]["uri"] == "s3://bucket/qc/fastqc.html"
+    assert q.metrics_assets[0]["name"] == "multiqc"
+    assert q.metrics[0]["value"] == 0.12
     assert q.checks_skipped is None

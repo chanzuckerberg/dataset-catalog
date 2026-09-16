@@ -22,7 +22,7 @@ def _minimal_request(**kwargs) -> RegistrationRequest:
                 storage_platform=StoragePlatform.s3,
             )
         ],
-        governance=GovernanceMetadata(),
+        governance=GovernanceMetadata(data_steward="team-data"),
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
@@ -52,7 +52,7 @@ def test_registration_request_missing_canonical_id_raises():
                     storage_platform=StoragePlatform.s3,
                 )
             ],
-            governance=GovernanceMetadata(),
+            governance=GovernanceMetadata(data_steward="team-data"),
             metadata=DatasetMetadata(),
         )
 

@@ -35,7 +35,7 @@ def _minimal_create(**kwargs: Any) -> DatasetRequest:
                 storage_platform=StoragePlatform.s3,
             )
         ],
-        governance=GovernanceMetadata(),
+        governance=GovernanceMetadata(data_steward="team-data"),
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
@@ -72,7 +72,7 @@ def test_dataset_create_requires_canonical_id():
                     storage_platform=StoragePlatform.s3,
                 )
             ],
-            governance=GovernanceMetadata(),
+            governance=GovernanceMetadata(data_steward="team-data"),
             metadata=DatasetMetadata(),
         )
 
@@ -118,7 +118,7 @@ def test_dataset_create_project_required():
                     storage_platform=StoragePlatform.s3,
                 )
             ],
-            governance=GovernanceMetadata(),
+            governance=GovernanceMetadata(data_steward="team-data"),
             metadata=DatasetMetadata(),
         )
 

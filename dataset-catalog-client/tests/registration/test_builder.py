@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock
 
+import pytest
+from pydantic import ValidationError
+
 from catalog_client.models.asset import AssetType, StoragePlatform
 from catalog_client.models.dataset import DatasetModality, DatasetRef
 from catalog_client.models.lineage import LineageType
@@ -28,7 +31,7 @@ def test_builder_build_returns_registration_request():
             asset_type=AssetType.file,
             storage_platform=StoragePlatform.s3,
         )
-        .with_governance(data_owner="team-x", is_phi=False)
+        .with_governance(data_steward="team-data", data_owner="team-x", is_phi=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
@@ -243,3 +246,20 @@ def test_builder_with_custom_metadata_only():
     assert metadata_dict["additional_field"] == "new_value"
     assert metadata_dict["metadata_object"]["nested"] == "data"  # Should be preserved
     assert metadata_dict["flag"] is True
+
+
+def test_builder_without_governance_fails_at_request_conversion():
+    """The builder seeds an unvalidated governance placeholder so that
+    with_governance() can supply the required data_steward later. If it never
+    does, the omission must surface locally rather than as a 422 from the API."""
+    req = (
+        _builder()
+        .with_location(
+            "s3://bucket/key",
+            asset_type=AssetType.file,
+            storage_platform=StoragePlatform.s3,
+        )
+        .build()
+    )
+    with pytest.raises(ValidationError, match="data_steward"):
+        req.to_dataset_request()

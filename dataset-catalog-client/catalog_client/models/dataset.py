@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Generic, NamedTuple, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from catalog_client.models.asset import DataAssetRequest, DataAssetResponse
-from catalog_client.models.governance import GovernanceMetadata
+from catalog_client.models.governance import (
+    GovernanceMetadata,
+    GovernanceMetadataResponse,
+)
 from catalog_client.models.metadata import DatasetMetadata
 from catalog_client.models.quality import DataQualityChecks
 
@@ -23,6 +26,7 @@ class DatasetModality(str, enum.Enum):
     imaging = "imaging"
     sequencing = "sequencing"
     mass_spec = "mass spec"
+    text = "text"
     unknown = "unknown"
 
 
@@ -89,7 +93,7 @@ class _DatasetBase(BaseModel):
         description="Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
     )
     modality: DatasetModality = Field(
-        description="Data modality (imaging, sequencing, mass spec, or unknown)"
+        description="Data modality (imaging, sequencing, mass spec, text, or unknown)"
     )
     governance: GovernanceMetadata = Field(
         description="Access control and compliance metadata"
@@ -113,7 +117,7 @@ class _DatasetBase(BaseModel):
         default=True, description="Whether this is the latest version of the dataset"
     )
     record_schema_version: str | None = Field(
-        default="v1.4.0",
+        default="v1.5.0",
         description="Version of the record schema used for this dataset",
     )
     metadata_schema: list[str] | None = Field(
@@ -152,6 +156,9 @@ class DatasetCreate(DatasetRequest):
 
 
 class DatasetResponse(_DatasetBase):
+    governance: GovernanceMetadataResponse = Field(  # type: ignore[assignment]
+        description="Access control and compliance metadata"
+    )
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     created_at: datetime.datetime = Field(

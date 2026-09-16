@@ -83,7 +83,7 @@ def _minimal_request(lineage=None) -> RegistrationRequest:
                 storage_platform=StoragePlatform.s3,
             )
         ],
-        governance=GovernanceMetadata(),
+        governance=GovernanceMetadata(data_steward="team-data"),
         metadata=DatasetMetadata(),
         lineage=lineage or [],
     )

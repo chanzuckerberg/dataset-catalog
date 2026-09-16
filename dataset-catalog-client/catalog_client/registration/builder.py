@@ -47,7 +47,10 @@ class RegistrationBuilder:
             project=project,
             modality=modality,
             locations=[],
-            governance=GovernanceMetadata(),
+            # Unvalidated placeholder: `data_steward` is required, but the builder
+            # exists so it can be supplied later via with_governance(). Validation
+            # happens in to_dataset_request().
+            governance=GovernanceMetadata.model_construct(),
             metadata=DatasetMetadata(),
         )
 
