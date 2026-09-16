@@ -25,49 +25,61 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ### Added
 
-- **Data Asset:** `storage_platform` now accepts `atoll`.
+- **Data Asset:** `storage_platform` now accepts `atoll` (CoreWeave cluster storage,
+  alongside `reef` and `kelp`).
 - **Dataset:** `modality` now accepts `text`.
-- **Governance:** `data_sensitivity` is available again as an optional field, with the
-  controlled values `Low` / `Medium` / `High`. It is descriptive only — access
-  filtering is still driven by `access_scope`.
 - **Data quality:** new `report_assets` and `metrics_assets` (each a list of
   `{ name, uri }` pointers to QC reports and metric files) and `metrics` (a list of
   inline `{ name, value }` entries for the handful worth reading without opening a file).
-- **Collection:** membership entries now carry their own optional `metadata`, describing
-  the relationship rather than the member. Entries are discriminated by `entry_type`
-  (`dataset` / `collection`), and listing a collection's contents returns both kinds in
-  one paginated list.
 
 ### Changed
 
-- **Governance:** `data_steward` is now **required** on every dataset write.
-- **Dataset:** `version` is no longer required on write — it defaults to `1.0.0`. It
-  remains a signature field, so setting it later still tombstones and re-creates.
-- **Sample:** `perturbation` is now a **codebook** — one entry per distinct perturbation
-  with `id`, `type` (`chemical` / `protein` / `genetic` / `environmental` /
-  `combination` / `none` / `other` / `unknown`) and `role` (`treatment` /
-  `negative_control` / `positive_control` / `untreated`). Per-cell and per-well
-  assignment stays in the data, keyed back by `id`. This replaces the CELLxGENE
-  `genetic_perturbations` structure recommended in v1.4.0. Entries are stored
-  unvalidated.
-- **Sample:** for cell lines, `development_stage` now takes the `not_applicable`
-  sentinel as its `label` with no `ontology_id` (v1.4.0 recommended `na`).
-- **Channels:** `channel_type` and `marker_type` are free-text strings rather than
-  enforced enums. The DCA v0.2 values remain the recommendation; unknown values are
-  accepted as written.
-- **Data summary:** `plate` accepts a plain string as well as an object.
-- **Collection:** the 4-level depth limit is documented as a modelling convention
-  rather than a constraint — the API does not reject deeper nesting. Cycles are still
-  rejected at write time with a `400`.
-- **Governance:** `embargoed_until` accepts `YYYY-MM-DD` only; other date forms are
-  rejected rather than silently coerced to a different day.
+Three previously-optional fields are now **required on create and update**. A request
+missing any of them is rejected with a `422`.
+
+- **Dataset:** `project` is now required. It is part of the signature
+  (`canonical_id`, `version`, `project`), and a NULL in it defeated the
+  `canonical_id` + `version` uniqueness constraint — Postgres treats NULLs as
+  distinct, so the same pair could be registered repeatedly as long as no project
+  was named.
+- **Governance:** `data_steward` is now required.
+- **Data Asset:** `storage_platform` is now required on **every** entry in
+  `locations`, and is no longer derived from the `location_uri` scheme. The
+  `s3://` / `gs://` inference that v1.4.0 applied is gone, so an `s3://` location
+  that omits it is rejected like any other.
+
+Stored records are unaffected and still read back: both columns stay nullable, and the
+response models keep `project` and `storage_platform` nullable, so a legacy row does not
+fail response validation.
+
+- **Dataset:** `record_schema_version` now defaults to `v1.5.0`.
 
 ### Removed
+
+Dropped from the *declared* schema. All three models set `extra="allow"`, so existing
+records keep these keys and callers may still submit them — they are simply no longer
+part of the documented schema.
 
 - **Data summary:** `dca_schema_version`. Record the applicable schema in the dataset's
   `metadata_schema` list instead.
 - **Channels:** `BiologicalAnnotation.cpg_labeled_structure` and
   `cpg_labeled_molecule`. Use `biological_target` and `marker`.
+
+### Clarified (no behaviour change)
+
+These were already true in v1.4.0; the v1.4.0 document described them imprecisely.
+
+- **Dataset:** `version` is optional on write and defaults to `1.0.0` — it has carried
+  that default since v1.4.0, despite being a signature field. The v1.4.0 table's
+  *Required* column omitted the default.
+- **Governance:** `data_sensitivity` (`Low` / `Medium` / `High`) was never removed. It is
+  descriptive only — access filtering is driven by `access_scope`.
+- **Channels:** `channel_type` and `marker_type` became free-text strings in **v1.4.0**,
+  not here. The DCA v0.2 values remain the recommendation.
+- **Data summary:** `plate` has accepted `string | object` since **v1.4.0**.
+- **Collection:** membership entries carry their own `metadata` and are discriminated by
+  `entry_type` (`dataset` / `collection`); the 4-level depth limit is a modelling
+  convention, not an enforced constraint. Cycles are rejected at write time with a `400`.
 
 ---
 
@@ -241,23 +253,28 @@ version remains valid under newer ones, with the exception of newly required fie
 
 ### v1.4.0 → v1.5.0
 
-- **`governance.data_steward` is now required.** This is the one breaking change: a
-  payload that omitted it is rejected with a `422`. Backfill it before upgrading.
-- `version` no longer needs to be sent — omitting it yields `1.0.0`. Records that
-  already set it are unaffected. Do not drop it from existing payloads expecting a
-  no-op: it is a signature field, so changing the value still forks the record.
-- **Rewrite `perturbation` entries.** The CELLxGENE `genetic_perturbations` shape
-  recommended in v1.4.0 (gene identifier + CRISPR strategy + `control` role) is replaced
-  by a codebook of `{ id, type, role }`. Nothing rejects the old shape — the field is
-  stored unvalidated — so old entries persist silently and will not match consumers
-  reading the new keys.
-- Move any `data_summary.dca_schema_version` value into the dataset's
-  `metadata_schema` list.
-- Fold `cpg_labeled_structure` / `cpg_labeled_molecule` into `biological_target` and
-  `marker` on each channel's `biological_annotation`.
-- For cell lines, change `development_stage` labels from `na` to `not_applicable`.
-- Optionally populate `data_quality.report_assets`, `metrics_assets`, and `metrics`
-  where QC output exists, and `data_sensitivity` where a `Low` / `Medium` / `High`
-  classification is on record.
-- Check `embargoed_until` values are `YYYY-MM-DD`. Other forms are now rejected instead
-  of coerced.
+**Three previously-optional fields are now required.** A payload omitting any of them is
+rejected with a `422`. Backfill all three before upgrading:
+
+- `project` on the dataset — part of the signature, so supplying it where it was
+  previously NULL changes the signature and forks the record.
+- `governance.data_steward`.
+- `storage_platform` on **every** entry in `locations`. If you relied on the `s3://` /
+  `gs://` inference, you must now pass it explicitly; that inference is gone.
+
+Reads are unaffected — legacy rows with a NULL `project` or `storage_platform` still
+parse, because the response models keep both nullable.
+
+Optional work:
+
+- Populate `data_quality.report_assets`, `metrics_assets`, and `metrics` where QC output
+  exists.
+- Move any `data_summary.dca_schema_version` value into the dataset's `metadata_schema`
+  list, and fold `cpg_labeled_structure` / `cpg_labeled_molecule` into
+  `biological_target` and `marker`. Both are dropped from the declared schema but still
+  accepted, so this is a tidying step rather than a fix.
+- `atoll` is available for CoreWeave cluster storage, and `text` for `modality`.
+
+Nothing else changed. If you are comparing the v1.4.0 and v1.5.0 documents directly, see
+[Clarified (no behaviour change)](#clarified-no-behaviour-change) — several rows differ
+because the v1.4.0 document was imprecise, not because the schema moved.

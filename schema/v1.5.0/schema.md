@@ -69,6 +69,32 @@ originally cataloged. Because these are signature fields, registering an asset w
 different checksum creates a new asset record and tombstones the previous one, giving
 a permanent audit trail of what hash was recorded at each point in time.
 
+### Storage platforms
+
+`storage_platform` records where the bytes physically live — it drives where a consumer
+goes to fetch them and which credentials they need.
+
+| Value | Meaning |
+|---|---|
+| `s3` | AWS S3 object storage. |
+| `sf_hpc` | San Francisco HPC cluster storage. |
+| `chi_hpc` | Chicago HPC cluster storage. |
+| `ny_hpc` | New York HPC cluster storage. |
+| `reef` | Reef CoreWeave cluster storage. |
+| `kelp` | Kelp CoreWeave cluster storage. |
+| `atoll` | Atoll CoreWeave cluster storage. |
+| `external` | Externally hosted, e.g. a third-party reference dataset. |
+| `other` | Any backend not covered above. |
+
+It is **required on every asset and is never inferred**. v1.4.0 derived it from the
+`location_uri` scheme for `s3://` and `gs://`; that inference is gone, so an `s3://`
+location that omits it is rejected like any other. Records written before v1.5.0 may
+carry no platform, so it is nullable when read back.
+
+Note that the scheme is not a reliable signal in either direction: a `/hpc/...` path
+could be any of the three HPC sites, and an `https://` URI can front an internal
+platform rather than an external one.
+
 ### Signature fields
 
 The following five fields form the asset's signature. Changing any of them from a
@@ -86,7 +112,7 @@ tombstone, since that is just adding previously missing information.
 
 | Field | Type | Required | Description |
 |---|---|----------|---|
-| `storage_platform` | string | Yes      | Storage backend. Valid values: `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other`. Callers name it; nothing derives it from the URI. |
+| `storage_platform` | string | Yes      | Storage backend holding the bytes. See [Storage platforms](#storage-platforms). Required on every asset and never derived from `location_uri`. |
 | `location_uri` | string | Yes      | Full URI with storage scheme (e.g. `s3://`, `gs://`, `https://`, `globus://`, `file://`). |
 | `asset_type` | string | Yes      | `file` or `folder`. |
 | `size_bytes` | integer | No       | Total size in bytes. For folder assets, the sum of all included files. |
@@ -155,7 +181,7 @@ and creates a new record.
 |---|---|---|---|
 | `canonical_id` | string | Yes | Stable external identifier, unique within a project. Does not change across versions. |
 | `version` | string | No | Version of the dataset. Defaults to `1.0.0`. Still a signature field — see [Signature fields](#signature-fields-1). |
-| `project` | string | Yes | The project this dataset belongs to (e.g. `CellXGene`, `CryoET`, `BCP`, `Dynacell`, `SRA`). |
+| `project` | string | Yes | The project this dataset belongs to (e.g. `CellXGene`, `CryoET`, `BCP`, `Dynacell`, `SRA`). Required since v1.5.0; nullable when read back, since records written earlier may carry none. |
 | `name` | string | Yes | Human-readable dataset name. Safe to fix later — it edits in place. |
 | `description` | string | No | Human-readable description of the dataset. |
 | `modality` | string | Yes | High-level data modality. Valid values: `imaging`, `sequencing`, `mass spec`, `text`, `unknown`. |
@@ -310,7 +336,7 @@ are permitted.
 
 | Field | Type | Required | Description                                                                                                                    |
 |---|---|---|--------------------------------------------------------------------------------------------------------------------------------|
-| `data_steward` | string | **Yes** | Person or org that defines the standards and best practices for the data's accuracy, quality and completeness, and ingests and formats datasets to meet them. |
+| `data_steward` | string | **Yes** | Person or org that defines the standards and best practices for the data's accuracy, quality and completeness, and ingests and formats datasets to meet them. Required since v1.5.0; nullable when read back, since records written earlier may carry none. |
 | `access_scope` | string | No | Gates the visibility of the record. Exactly `internal` (the default) or `public`. Any other string is accepted and lowercased rather than rejected — a typo like `internel` hides the record from the filter everyone searches with. |
 | `license` | string | No | License name (e.g. `MIT`, `CC-BY-4.0`) or a link to the terms of use.                                                          |
 | `data_sensitivity` | string | No | `Low`, `Medium`, or `High`. Separate from `access_scope` — filter on `access_scope`, not on this.                               |
