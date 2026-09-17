@@ -47,7 +47,8 @@ class SampleMetadata(BaseModel):
         description="Disease(s) or pathological condition(s) associated with the sample",
     )
     perturbation: list[dict[str, Any]] | None = Field(
-        default=None, description="Experimental perturbations applied to the sample"
+        default=None,
+        description="Codebook of the distinct perturbations applied, one entry per perturbation with 'id', 'type' (chemical/protein/genetic/environmental/combination/none/other/unknown) and 'role' (treatment/negative_control/positive_control/untreated). Per-cell or per-well assignment stays in the data, keyed by 'id'. Stored unvalidated",
     )
     sample_parent: dict[str, Any] | None = Field(
         default=None, description="Information about the parent sample or source"
@@ -108,14 +109,6 @@ class BiologicalAnnotation(BaseModel):
     marker: str | None = Field(
         default=None,
         description="Specific reagent, protein, or dye used (e.g. 'HSPA1B', 'FastAct_SPY555 Live Cell Dye', 'virtual stain')",
-    )
-    cpg_labeled_structure: str | None = Field(
-        default=None,
-        description="The cellular compartment or structure made visible; SHOULD match the Label_Structure field from the CellPainting Gallery harmonized ontology",
-    )
-    cpg_labeled_molecule: str | None = Field(
-        default=None,
-        description="The specific molecule the reagent binds; SHOULD match the Label_Molecule field from the CellPainting Gallery harmonized ontology",
     )
 
 
@@ -254,10 +247,6 @@ class DataSummaryMetadata(BaseModel):
     channel_normalization: ChannelNormalization | None = Field(
         default=None,
         description="Per-channel normalization statistics stored in dca.normalization_statistics; keyed by zero-based channel index (as string); used for display scaling and AI model training normalization",
-    )
-    dca_schema_version: str | None = Field(
-        default=None,
-        description="Version of the DCA (Dynamic Cell Atlas) array specification used (e.g. '0.2'); stored as the version field in the dca object in zarr.json",
     )
 
 

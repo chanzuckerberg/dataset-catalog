@@ -147,6 +147,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
             )
         ],
         governance=GovernanceMetadata(
+            data_steward="genomics-team",   # required
             data_owner="genomics-team",
             access_scope="internal",
             is_pii=False,
@@ -174,7 +175,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
         )
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
         .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
@@ -202,7 +203,7 @@ To record lineage at registration time:
             modality=DatasetModality.sequencing,
         )
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
         .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
     )
@@ -216,7 +217,7 @@ from catalog_client import DatasetRef
 dataset_id = (
     client.new_registration(...)
     .with_location(...)
-    .with_governance(data_owner="genomics-team", is_pii=False)
+    .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
     .with_lineage(
         DatasetRef(canonical_id="raw-rna-seq", version="1.0.0", project="atlas"),
         lineage_type=LineageType.transformed_from,
@@ -237,7 +238,7 @@ The builder exposes further optional methods:
 | `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
 | `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
 | `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
-| `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed, failed, skipped check names) |
+| `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed/failed/skipped check names, plus `report_assets`, `metrics_assets`, `metrics`) |
 | `.with_custom_metadata(**kwargs)` | Add arbitrary key-value pairs at the dataset-metadata level |
 | `.with_doi(doi)` | Set the dataset DOI |
 | `.with_cross_db_references(refs)` | Set external DB references (list or `; `-joined string) |
@@ -870,12 +871,13 @@ except LineageResolutionError as e:
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
 | `DataAssetRequest`             | Asset entry inside `DatasetRequest.locations`                          |
 | `DataAssetResponse`            | Asset entry inside response `locations`                                |
-| `GovernanceMetadata`           | Access control and ownership info                                      |
+| `GovernanceMetadata`           | Access control and ownership info; `data_steward` is required          |
+| `GovernanceMetadataResponse`   | Response-side governance — `data_steward` optional for pre-v1.5.0 records |
 | `DatasetMetadata`              | Top-level metadata envelope (`experiment`, `sample`, `data_summary`)   |
 | `SampleMetadata`               | Biological sample information                                          |
 | `ExperimentMetadata`           | Experimental setup and instrument info                                 |
 | `DataSummaryMetadata`          | Content descriptors and modality-specific measurements                 |
-| `DataQualityChecks`            | QC pass / fail / skipped check names                                   |
+| `DataQualityChecks`            | QC pass / fail / skipped check names, plus `report_assets`, `metrics_assets`, `metrics` |
 | `OntologyEntry`                | `{ label, ontology_id }` — organism, disease, development stage        |
 | `TissueEntry`                  | Extends `OntologyEntry` with optional `type` field                     |
 | `CollectionRequest`            | Creating/Updating a collection                                         |

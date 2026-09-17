@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.4.0](#v140--current) | **Current** — active, default for new registrations |
+| [v1.5.0](#v150--current) | **Current** — active, default for new registrations |
+| [v1.4.0](#v140) | Supported for read |
 | [v1.3.0](#v130) | Supported for read |
 | [v1.2.0](#v120) | Supported for read |
 | [v1.1.0](#v110) | Supported for read |
@@ -17,9 +18,69 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.4.0 — Current
+## v1.5.0 — Current
 
 **Status:** Active. All new registrations default to this version. See
+[`v1.5.0/schema.md`](v1.5.0/schema.md).
+
+### Added
+
+- **Data Asset:** `storage_platform` now accepts `atoll` (CoreWeave cluster storage,
+  alongside `reef` and `kelp`).
+- **Dataset:** `modality` now accepts `text`.
+- **Data quality:** new `report_assets` and `metrics_assets` (each a list of
+  `{ name, uri }` pointers to QC reports and metric files) and `metrics` (a list of
+  inline `{ name, value }` entries for the handful worth reading without opening a file).
+
+### Changed
+
+Three previously-optional fields are now **required on create and update**. A request
+missing any of them is rejected with a `422`.
+
+- **Dataset:** `project` is now required. It is part of the signature
+  (`canonical_id`, `version`, `project`), and a NULL in it defeated the
+  `canonical_id` + `version` uniqueness constraint — Postgres treats NULLs as
+  distinct, so the same pair could be registered repeatedly as long as no project
+  was named.
+- **Governance:** `data_steward` is now required.
+- **Data Asset:** `storage_platform` is now required on **every** entry in
+  `locations`, and is no longer derived from the `location_uri` scheme. The
+  `s3://` / `gs://` inference that v1.4.0 applied is gone, so an `s3://` location
+  that omits it is rejected like any other.
+
+Stored records are unaffected and still read back: both columns stay nullable, and the
+response models keep `project` and `storage_platform` nullable, so a legacy row does not
+fail response validation.
+
+- **Dataset:** `record_schema_version` now defaults to `v1.5.0`.
+
+### Removed
+
+Dropped from the *declared* schema. All three models set `extra="allow"`, so existing
+records keep these keys and callers may still submit them — they are simply no longer
+part of the documented schema.
+
+- **Data summary:** `dca_schema_version`. Record the applicable schema in the dataset's
+  `metadata_schema` list instead.
+- **Channels:** `BiologicalAnnotation.cpg_labeled_structure` and
+  `cpg_labeled_molecule`. Use `biological_target` and `marker`.
+
+### Clarified (no behaviour change)
+
+These were already true in v1.4.0; the v1.4.0 document described them imprecisely.
+
+- **Dataset:** `version` is optional on write and defaults to `1.0.0` — it has carried
+  that default since v1.4.0, despite being a signature field. The v1.4.0 table's
+  *Required* column omitted the default.
+- **Collection:** membership entries carry their own `metadata` and are discriminated by
+  `entry_type` (`dataset` / `collection`); the 4-level depth limit is a modelling
+  convention, not an enforced constraint. Cycles are rejected at write time with a `400`.
+
+---
+
+## v1.4.0
+
+**Status:** Supported for read. New registrations should use v1.5.0. See
 [`v1.4.0/schema.md`](v1.4.0/schema.md).
 
 ### Added
@@ -53,7 +114,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.3.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -79,7 +140,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.2.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -103,7 +164,7 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ## v1.1.0
 
-**Status:** Supported for read. New registrations should use v1.4.0.
+**Status:** Supported for read. New registrations should use v1.5.0.
 
 ### Added
 
@@ -184,3 +245,31 @@ version remains valid under newer ones, with the exception of newly required fie
   equivalent exists.
 - The `data_sensitivity` governance field is dropped; express public visibility via
   `access_scope`.
+
+### v1.4.0 → v1.5.0
+
+**Three previously-optional fields are now required.** A payload omitting any of them is
+rejected with a `422`. Backfill all three before upgrading:
+
+- `project` on the dataset — part of the signature, so supplying it where it was
+  previously NULL changes the signature and forks the record.
+- `governance.data_steward`.
+- `storage_platform` on **every** entry in `locations`. If you relied on the `s3://` /
+  `gs://` inference, you must now pass it explicitly; that inference is gone.
+
+Reads are unaffected — legacy rows with a NULL `project` or `storage_platform` still
+parse, because the response models keep both nullable.
+
+Optional work:
+
+- Populate `data_quality.report_assets`, `metrics_assets`, and `metrics` where QC output
+  exists.
+- Move any `data_summary.dca_schema_version` value into the dataset's `metadata_schema`
+  list, and fold `cpg_labeled_structure` / `cpg_labeled_molecule` into
+  `biological_target` and `marker`. Both are dropped from the declared schema but still
+  accepted, so this is a tidying step rather than a fix.
+- `atoll` is available for CoreWeave cluster storage, and `text` for `modality`.
+
+Nothing else changed. If you are comparing the v1.4.0 and v1.5.0 documents directly, see
+[Clarified (no behaviour change)](#clarified-no-behaviour-change) — some rows differ
+because the v1.4.0 document was imprecise, not because the schema moved.

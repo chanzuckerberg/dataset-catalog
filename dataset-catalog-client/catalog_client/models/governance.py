@@ -16,11 +16,11 @@ class GovernanceMetadata(BaseModel):
     )
     data_sensitivity: str | None = Field(
         default=None,
-        description="Classification level of data sensitivity (e.g., 'low', 'medium', 'high', 'extremely high')",
+        description="Classification level of data sensitivity: 'Low', 'Medium' or 'High'",
     )
     access_scope: str | None = Field(
         default=None,
-        description="Scope of access permissions (e.g., 'public', 'internal', 'private')",
+        description="Gates record visibility: exactly 'internal' (the server default) or 'public'",
     )
     is_pii: bool | None = Field(
         default=None,
@@ -30,9 +30,8 @@ class GovernanceMetadata(BaseModel):
         default=None,
         description="Whether the dataset contains Protected Health Information",
     )
-    data_steward: str | None = Field(
-        default=None,
-        description="Person or group responsible for data stewardship and quality",
+    data_steward: str = Field(
+        description="Required. Person or org that defines the standards and best practices for the data's accuracy, quality and completeness, and ingests and formats datasets to meet them",
     )
     data_owner: str | None = Field(
         default=None, description="Person or organization that owns the data"
@@ -44,4 +43,16 @@ class GovernanceMetadata(BaseModel):
     embargoed_until: datetime.date | None = Field(
         default=None,
         description="Date until which the dataset is under embargo/restricted access",
+    )
+
+
+class GovernanceMetadataResponse(GovernanceMetadata):
+    # Lenient on parse: `data_steward` became required in schema v1.5.0, but records
+    # written under earlier versions were stored without one and are still returned.
+    # The API makes the same allowance — its response model types governance as a bare
+    # dict. Intentionally widens a required request field; responses are never
+    # submitted back as create requests.
+    data_steward: str | None = Field(  # type: ignore[assignment]
+        default=None,
+        description="Person or org responsible for the data's accuracy, quality and completeness",
     )

@@ -93,10 +93,10 @@ What happens in order:
 3. **Dry-run, and iterate until coverage is clean.** This is the step that catches mistakes:
 
    ```text
-   [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 1 dropped of 25 source fields
+   [mapping valid] schema=v1.5.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [coverage] 24 mapped + 2 dropped of 26 source fields
      ✓ every source field is mapped or explicitly dropped
-     metadata blocks populated: experiment, sample
+     metadata blocks populated: experiment, sample, data_summary
    ```
 
    A field that is neither mapped nor explicitly dropped is reported as **SILENTLY LOST**, by name.
@@ -188,7 +188,7 @@ omitted fields are not backfilled, and omitted locations are tombstoned. Always 
 | --- | --- |
 | `KeyError` / `None` in `build_request` | Source data is missing a field the mapping assumes. Use `src.get("x")` for optional fields. |
 | `ValidationError: ... Field required` on `--dry-run` | A required block was not mapped: `governance`, `metadata`, or at least one `location`. |
-| `ValueError: 'x' is not a valid DatasetModality` | Map the source value onto a real enum member: `imaging`, `sequencing`, `mass spec`, `unknown`. |
+| `ValueError: 'x' is not a valid DatasetModality` | Map the source value onto a real enum member: `imaging`, `sequencing`, `mass spec`, `text`, `unknown`. |
 | A value landed at the wrong nesting level in the payload | A typo'd field name, silently kept as an extra because the block is `extra="allow"`. Cross-check against `--fields`. |
 | A block you filled in twice is missing half its content | `with_experiment` / `with_sample` / `with_data_summary` **replace** their block. Build each in a single call. |
 | `DuplicateDatasetError` on `--submit` | A record with the same signature exists. Choose skip or update from the table above. |
