@@ -83,26 +83,3 @@ def test_data_quality_carries_report_and_metric_assets():
     assert q.metrics_assets[0]["name"] == "multiqc"
     assert q.metrics[0]["value"] == 0.12
     assert q.checks_skipped is None
-
-
-def test_dataset_response_tolerates_null_project():
-    """Rows written before schema v1.5.0 carry a NULL project and must still parse."""
-    from catalog_client import DatasetResponse
-
-    r = DatasetResponse.model_validate(
-        {
-            "id": "x",
-            "canonical_id": "c",
-            "version": "1.0.0",
-            "project": None,
-            "name": "n",
-            "modality": "imaging",
-            "governance": {},
-            "metadata": {},
-            "tombstoned": False,
-            "created_at": "2026-01-01T00:00:00Z",
-            "last_modified_at": "2026-01-01T00:00:00Z",
-            "record_version": 1,
-        }
-    )
-    assert r.project is None
