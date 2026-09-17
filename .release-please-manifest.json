@@ -1,4 +1,4 @@
 {
-  "dataset-catalog-client": "0.7.0",
-  "plugins/catalog": "0.6.0"
+  "dataset-catalog-client": "1.0.0",
+  "plugins/catalog": "1.0.0"
 }
