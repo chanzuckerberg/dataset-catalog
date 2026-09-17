@@ -8,6 +8,7 @@ from catalog_client._context import reset_client, set_client
 from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
+from catalog_client.client.publications import AsyncPublicationClient, PublicationClient
 from catalog_client.exceptions import (
     CatalogError,
     DuplicateDatasetError,
@@ -38,6 +39,7 @@ class CatalogClient:
         self.datasets = DatasetClient(self._http)
         self.lineages = LineageClient(self._http)
         self.collections = CollectionClient(self._http)
+        self.publications = PublicationClient(self._http)
         self._context_token: object = None
 
     def register(
@@ -181,6 +183,7 @@ class AsyncCatalogClient:
         self.datasets = AsyncDatasetClient(self._http)
         self.lineages = AsyncLineageClient(self._http)
         self.collections = AsyncCollectionClient(self._http)
+        self.publications = AsyncPublicationClient(self._http)
 
     async def register(
         self,
