@@ -22,13 +22,24 @@ dependencies = [
 catalog = "catalog_client.cli:main"
 
 [project.optional-dependencies]
-dev = [
-    "jupyter>=1.1.1",
+# Named `notebook`, not `dev`: this ships jupyter to users who want to run the
+# quickstart, and is published. The local toolchain — pytest, ruff, mypy — is
+# the `dev` entry under [dependency-groups], which is not published. Two
+# things called `dev` invited installing one and expecting the other.
+notebook = [
+  "jupyter>=1.1.1",
 ]
 checksum = [
   "blake3>=0.3.0",
   "awscrt>=0.32.1",
   "crcmod>=1.7",
+]
+dataframe = [
+  # 3.0 is the only line still receiving releases (2.x ended at 2.3.3), and it
+  # requires Python >=3.11, which this package already floors at — so pinning
+  # here strands no supported interpreter. Matching the floor to the line CI
+  # resolves means the version we test is the version we promise.
+  "pandas>=3.0",
 ]
 
 [tool.ruff]
@@ -40,8 +51,8 @@ select = ["E", "F", "I"]
 ignore = ["E501"]
 
 [dependency-groups]
+# Test and lint tooling only; jupyter lives in the `notebook` extra.
 dev = [
-    "jupyter>=1.1.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
@@ -49,13 +60,14 @@ dev = [
     "ruff>=0.9.0",
     "moto>=4.0.0",
     "mypy>=2.0.0",
+    "pandas>=3.0",
 ]
 
 [tool.mypy]
 python_version = "3.12"
 
 [[tool.mypy.overrides]]
-module = ["boto3", "boto3.*", "botocore.*", "crcmod", "crcmod.*", "awscrt.*"]
+module = ["boto3", "boto3.*", "botocore.*", "crcmod", "crcmod.*", "awscrt.*", "pandas", "pandas.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
