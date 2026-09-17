@@ -72,11 +72,6 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 - **Dataset:** `version` is optional on write and defaults to `1.0.0` — it has carried
   that default since v1.4.0, despite being a signature field. The v1.4.0 table's
   *Required* column omitted the default.
-- **Governance:** `data_sensitivity` (`Low` / `Medium` / `High`) was never removed. It is
-  descriptive only — access filtering is driven by `access_scope`.
-- **Channels:** `channel_type` and `marker_type` became free-text strings in **v1.4.0**,
-  not here. The DCA v0.2 values remain the recommendation.
-- **Data summary:** `plate` has accepted `string | object` since **v1.4.0**.
 - **Collection:** membership entries carry their own `metadata` and are discriminated by
   `entry_type` (`dataset` / `collection`); the 4-level depth limit is a modelling
   convention, not an enforced constraint. Cycles are rejected at write time with a `400`.
@@ -276,5 +271,5 @@ Optional work:
 - `atoll` is available for CoreWeave cluster storage, and `text` for `modality`.
 
 Nothing else changed. If you are comparing the v1.4.0 and v1.5.0 documents directly, see
-[Clarified (no behaviour change)](#clarified-no-behaviour-change) — several rows differ
+[Clarified (no behaviour change)](#clarified-no-behaviour-change) — some rows differ
 because the v1.4.0 document was imprecise, not because the schema moved.
