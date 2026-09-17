@@ -16,11 +16,11 @@ class GovernanceMetadata(BaseModel):
     )
     data_sensitivity: str | None = Field(
         default=None,
-        description="Classification level of data sensitivity: 'Low', 'Medium' or 'High'. Descriptive only; filter on access_scope instead",
+        description="Classification level of data sensitivity: 'Low', 'Medium' or 'High'",
     )
     access_scope: str | None = Field(
         default=None,
-        description="Gates record visibility: exactly 'internal' (the server default) or 'public'. Any other string is lowercased and stored rather than rejected, so a typo hides the record from the filter everyone searches with",
+        description="Gates record visibility: exactly 'internal' (the server default) or 'public'",
     )
     is_pii: bool | None = Field(
         default=None,
