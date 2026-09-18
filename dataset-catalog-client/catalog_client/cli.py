@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
 import os
 import sys
 from typing import Any, NoReturn
@@ -574,7 +575,43 @@ def _compute(args: argparse.Namespace) -> ChecksumResult:
     )
 
 
+def _enable_verbose_logging() -> None:
+    """
+    Route the checksum package's per-file INFO lines to stderr.
+
+    Configures that one logger rather than calling logging.basicConfig, which
+    would raise the root level and pull in botocore's own INFO output — tens of
+    lines per request, drowning the per-file lines this flag is for.
+
+    stderr, not stdout, so `-o json` stays parseable while --verbose is on.
+
+    asctime and threadName come from the record rather than the message: logging
+    already captures both, and they lead the line because a path may contain
+    spaces, so only a trailing path can be split off reliably. A serial walk
+    reports MainThread, which is worth seeing — the pool gate in _hash_files is
+    decided from measured file sizes, not from --workers alone.
+
+    datefmt plus msecs rather than the default asctime, which renders as
+    "... 12:34:56,789" — two tokens where the rest of the line is one field per
+    token. Milliseconds are kept because a small file hashes in less than one,
+    and a second-resolution stamp would put a whole tree at the same instant.
+    Local time, matching every other timestamp this CLI prints.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s.%(msecs)03d  %(threadName)s  %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    )
+    checksum_logger = logging.getLogger("catalog_client.utils.checksum")
+    checksum_logger.addHandler(handler)
+    checksum_logger.setLevel(logging.INFO)
+
+
 def cmd_checksum(args: argparse.Namespace) -> None:
+    if args.verbose:
+        _enable_verbose_logging()
     try:
         result = _compute(args)
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -779,6 +816,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="threads to use for a folder (default: chosen from available CPUs; "
         "1 forces serial). Never changes the checksum.",
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="log one line per file to stderr as it is resolved: timestamp, "
+        "worker, digest, algorithm, size, source, path",
     )
     p.set_defaults(func=cmd_checksum)
 

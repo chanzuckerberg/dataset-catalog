@@ -167,6 +167,7 @@ catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored chec
 catalog checksum s3://my-bucket/data/file.h5ad --recompute
 catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
 catalog checksum data/folder/ --workers 1                  # serial, for comparison
+catalog checksum data/folder/ --verbose                    # one stderr line per file
 ```
 
 Like `for_location`, omitting `--algorithm` lets a checksum already stored on the S3
@@ -176,6 +177,40 @@ adds the fields the Python API exposes as properties: `content_digest`, `s3_base
 and `s3_composite_base64` (files only). See the [CLI section of
 USAGE.md](../USAGE.md#checksums-from-the-command-line) for every flag and the exit
 codes.
+
+### Per-file logging from the SDK
+
+`--verbose` is only a handler on a standard library logger, so Python callers get the
+same per-file lines without the CLI. Nothing is emitted unless you opt in — the
+package adds no handler of its own:
+
+```python
+import logging
+
+handler = logging.StreamHandler()
+handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s.%(msecs)03d  %(threadName)s  %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+)
+logger = logging.getLogger("catalog_client.utils.checksum")
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+```
+
+The message itself is `digest algorithm size source path`. Neither the timestamp nor
+the worker is in the message — they are the record's standard `asctime` and
+`threadName`, so include them via the formatter as above (the CLI's `--verbose` does
+exactly this, and a bare `StreamHandler` would show neither). `threadName` reads
+`checksum_N` for a pooled walk and `MainThread` for a serial one. Reach for
+`%(created)f` instead of `asctime` if you want an epoch float to do arithmetic on.
+
+One record per file, whether the digest was computed, read from S3 metadata, or
+served from `cached_results`. Directories emit nothing. Folder walks hash through a
+thread pool, so records arrive in completion order rather than walk order; sort by
+path if you need a stable listing. Neither the pool nor the ordering affects the
+digest.
 
 ---
 

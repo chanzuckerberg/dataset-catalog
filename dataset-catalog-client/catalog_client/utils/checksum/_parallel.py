@@ -68,7 +68,10 @@ def ordered_map(
 
     remaining = iter(items)
     pending: deque[Future[R]] = deque()
-    pool = ThreadPoolExecutor(max_workers=max_workers)
+    # Named so the per-file log lines identify their worker as "checksum_3"
+    # rather than the default "ThreadPoolExecutor-0_3", which also renumbers its
+    # pool counter per executor and so repeats across successive walks.
+    pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="checksum")
     try:
         for item in islice(remaining, max_workers * _WINDOW_PER_WORKER):
             pending.append(pool.submit(fn, item))

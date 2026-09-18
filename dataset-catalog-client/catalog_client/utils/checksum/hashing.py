@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from dataclasses import replace
@@ -24,6 +25,8 @@ from catalog_client.utils.checksum.s3 import (
     _iter_listing,
     _parse_s3_uri,
 )
+
+logger = logging.getLogger(__name__)
 
 READ_BUFFER = 64 * 1024  # 64KB I/O buffer
 
@@ -67,6 +70,38 @@ def _iter_stream(stream, read_buffer: int | None = None):
         if not chunk:
             break
         yield chunk
+
+
+def _log_file(result: ChecksumResult) -> ChecksumResult:
+    """
+    Emit one INFO line for a resolved file, and return it unchanged.
+
+    Returns its argument so it can wrap a `return`, which keeps every exit from
+    _hash_s3_file logged without restructuring its early returns into a chain.
+
+    Directories are deliberately not logged: the digest of a folder is a fold
+    over children already reported here, so a line for it would repeat
+    information under a path that read as a fourth kind of source. `source` is
+    included because it is the difference between bytes this process actually
+    hashed and a digest taken from S3's metadata on trust — the distinction an
+    integrity audit is run to see.
+
+    Called from pool workers in _hash_files; logging emits a record atomically,
+    so lines from concurrent files do not interleave, though their order is not
+    the walk order.
+    """
+    logger.info(
+        "%s  %s  %s  %s  %s",
+        result.content_digest,
+        # Not .value: Algorithm is a StrEnum, so %s renders the bare value, and
+        # for_assets(algorithm="blake3") reaches here with a plain str that has
+        # no .value at all.
+        result.algorithm,
+        "?" if result.total_size is None else result.total_size,
+        result.source,
+        result.path,
+    )
+    return result
 
 
 def _combine_child_digests(raw_digests: list[bytes], algorithm: Algorithm) -> str:
@@ -248,8 +283,8 @@ def _hash_local_file(
         # the exact file being hashed, with no second path lookup and no window
         # for the path to be replaced between the stat and the read.
         size = os.fstat(fh.fileno()).st_size
-        return _hash_stream(
-            fh, algorithm, path, total_size=size, read_buffer=read_buffer
+        return _log_file(
+            _hash_stream(fh, algorithm, path, total_size=size, read_buffer=read_buffer)
         )
 
 
@@ -471,12 +506,12 @@ def _hash_s3_file(
     path = f"s3://{bucket}/{key}"
 
     if cached_results and path in cached_results:
-        return _with_size(cached_results[path], size)
+        return _log_file(_with_size(cached_results[path], size))
 
     if use_stored:
         stored = _fetch_s3_stored_checksum(bucket, key, algorithm, s3)
         if stored is not None:
-            return _with_size(stored, size)
+            return _log_file(_with_size(stored, size))
 
     resp = s3.get_object(Bucket=bucket, Key=key)
     # .get, not []: GetObject always returns ContentLength in practice, but the
@@ -484,8 +519,10 @@ def _hash_s3_file(
     # (None) rather than fatal.
     if size is None:
         size = resp.get("ContentLength")
-    return _hash_stream(
-        resp["Body"], algorithm, path, total_size=size, read_buffer=read_buffer
+    return _log_file(
+        _hash_stream(
+            resp["Body"], algorithm, path, total_size=size, read_buffer=read_buffer
+        )
     )
 
 

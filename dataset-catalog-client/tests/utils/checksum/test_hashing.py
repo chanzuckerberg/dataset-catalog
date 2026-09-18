@@ -4,6 +4,7 @@ S3 tests use a MagicMock client; local tests use real I/O via tmp_path.
 """
 
 import io
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -549,3 +550,124 @@ def test_a_deeply_nested_tree_does_not_exhaust_the_stack(tmp_path):
 
     result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
     assert result.total_size == 4
+
+
+# ── per-file logging ─────────────────────────────────────────────────────────
+
+
+def test_no_handler_is_installed_and_info_is_silent_by_default(tmp_path, caplog):
+    """A library must not log unless the application asks it to."""
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"payload")
+
+    assert hashing.logger.handlers == []
+    with caplog.at_level(logging.WARNING, logger=hashing.logger.name):
+        compute_checksum_localfs(str(target), Algorithm.blake3)
+
+    assert caplog.records == []
+
+
+def test_a_local_file_logs_its_digest_size_source_and_path(tmp_path, caplog):
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"payload")
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        result = compute_checksum_localfs(str(target), Algorithm.blake3)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage() == (
+        f"{result.content_digest}  blake3  7  computed  {target}"
+    )
+
+
+def test_a_local_tree_logs_one_line_per_file_and_none_for_directories(tmp_path, caplog):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "sub" / "b.bin").write_bytes(b"bb")
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+
+    logged = {record.getMessage().split("  ")[-1] for record in caplog.records}
+    assert logged == {
+        str(tmp_path / "a.bin"),
+        str(tmp_path / "sub" / "b.bin"),
+    }
+
+
+@pytest.mark.parametrize(
+    "head, use_stored, expected_source",
+    [
+        ({"ChecksumCRC32": "AAAAAA==", "ContentLength": 5}, True, "s3_native"),
+        ({}, True, "computed"),
+        ({"ChecksumCRC32": "AAAAAA==", "ContentLength": 5}, False, "computed"),
+    ],
+)
+def test_an_s3_object_logs_the_source_it_was_resolved_from(
+    head, use_stored, expected_source, caplog
+):
+    """The reason `source` is in the line: it separates verified bytes from trust."""
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_s3(
+            FILE_URI, Algorithm.crc32, _s3(head=head), use_stored=use_stored
+        )
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage().split("  ")[3] == expected_source
+
+
+def test_a_pooled_walk_attributes_each_file_to_a_named_worker(
+    tmp_path, caplog, monkeypatch
+):
+    """The worker is read off the LogRecord, so it has to be the thread that did
+    the hashing rather than the one that started the walk.
+
+    The size gate is lowered instead of writing megabytes: it decides only
+    whether a pool is used, and is not an input to any digest.
+    """
+    monkeypatch.setattr(hashing, "PARALLEL_MIN_MEAN_BYTES", 0)
+    for i in range(8):
+        (tmp_path / f"f{i}.bin").write_bytes(bytes([i]) * 64)
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_localfs(str(tmp_path), Algorithm.blake3, max_workers=4)
+
+    workers = {record.threadName for record in caplog.records}
+    assert workers
+    assert workers <= {f"checksum_{n}" for n in range(4)}
+
+
+def test_a_serial_walk_attributes_its_files_to_the_calling_thread(tmp_path, caplog):
+    """--workers 1 creates no pool at all, and the log has to show that."""
+    for i in range(8):
+        (tmp_path / f"f{i}.bin").write_bytes(bytes([i]) * 64)
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_localfs(str(tmp_path), Algorithm.blake3, max_workers=1)
+
+    assert {record.threadName for record in caplog.records} == {"MainThread"}
+
+
+def test_logging_survives_an_algorithm_passed_as_a_plain_string(tmp_path, caplog):
+    """`for_assets(algorithm="blake3")` reaches the hashers with a str, not the
+    enum, and generate.py turns any exception here into a ChecksumWarning with a
+    null digest — so a formatting slip in the log line would look like a
+    checksum failure rather than a logging bug."""
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"payload")
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_localfs(str(target), "blake3")
+
+    assert caplog.records[0].getMessage().split("  ")[1] == "blake3"
+
+
+def test_a_cached_s3_child_is_still_logged(caplog):
+    """A cache hit is an event the verbose listing should not silently skip."""
+    cached = {FILE_URI: _make_result(FILE_URI)}
+
+    with caplog.at_level(logging.INFO, logger=hashing.logger.name):
+        compute_checksum_s3(FILE_URI, Algorithm.blake3, _s3(), cached_results=cached)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage().endswith(FILE_URI)

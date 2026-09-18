@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from datetime import datetime
 
 import boto3
 import pytest
@@ -373,6 +375,52 @@ def test_checksum_local_file_matches_library(tmp_path, capsys):
     assert out["is_directory"] is False
     assert out["s3_base64"]
     assert out["s3_composite_base64"]
+
+
+@pytest.fixture
+def checksum_logger():
+    """Undo the handler --verbose installs, which would outlive the test."""
+    logger = logging.getLogger("catalog_client.utils.checksum")
+    before = list(logger.handlers), logger.level
+    yield logger
+    logger.handlers, logger.level = before
+
+
+def test_checksum_verbose_logs_each_file_to_stderr_only(
+    tmp_path, capsys, checksum_logger
+):
+    """stdout has to stay parseable while --verbose is on."""
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"bb")
+
+    main(["checksum", str(tmp_path), "--algorithm", "crc32", "--verbose"])
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["is_directory"] is True
+    lines = captured.err.strip().splitlines()
+    assert len(lines) == 2
+    # timestamp and worker lead, path trails: those are the positions a consumer
+    # can split off without knowing whether a path contains spaces.
+    assert {line.split("  ")[-1] for line in lines} == {
+        str(tmp_path / "a.bin"),
+        str(tmp_path / "b.bin"),
+    }
+    # This tree is far below the pool gate, so it is hashed on the caller's
+    # thread and the worker column says so.
+    assert {line.split("  ")[1] for line in lines} == {"MainThread"}
+    # One ISO-8601 token with milliseconds, not the default "... 12:34:56,789",
+    # which would split into two fields where every other column is one.
+    for line in lines:
+        stamp = line.split("  ")[0]
+        assert datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+def test_checksum_without_verbose_logs_nothing(tmp_path, capsys, checksum_logger):
+    (tmp_path / "a.bin").write_bytes(b"a")
+
+    main(["checksum", str(tmp_path), "--algorithm", "crc32"])
+
+    assert capsys.readouterr().err == ""
 
 
 def test_checksum_table_is_default_on_tty(tmp_path, capsys, monkeypatch):
