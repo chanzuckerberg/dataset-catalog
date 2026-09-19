@@ -87,6 +87,57 @@ def test_s3_file_cached_result_returned_immediately():
     assert result is cached[FILE_URI]
 
 
+def test_s3_file_force_recompute_ignores_cache():
+    s3 = _s3(body=b"fresh data")
+    cached = {FILE_URI: _make_result(FILE_URI)}
+
+    result = compute_checksum_s3(
+        FILE_URI, Algorithm.blake3, s3, use_stored=False, cached_results=cached
+    )
+
+    s3.head_object.assert_not_called()
+    s3.get_object.assert_called_once()
+    assert result.source == "computed"
+    assert result.file_hash != HEX64
+
+
+@pytest.mark.parametrize("is_prefix", [False, True])
+def test_s3_cache_rejects_a_different_algorithm(is_prefix):
+    key = f"{PREFIX}child.h5ad" if is_prefix else FILE_KEY
+    uri = f"s3://{BUCKET}/{key}"
+    s3 = _s3_prefix([key]) if is_prefix else _s3()
+
+    result = compute_checksum_s3(
+        PREFIX_URI if is_prefix else uri,
+        Algorithm.crc32,
+        s3,
+        cached_results={uri: _make_result(uri)},
+    )
+
+    s3.get_object.assert_called_once_with(Bucket=BUCKET, Key=key)
+    assert result.algorithm == Algorithm.crc32
+    if is_prefix:
+        assert result.children["child.h5ad"].algorithm == Algorithm.crc32
+
+
+@pytest.mark.parametrize("input_scheme,cache_scheme", [("s3a", "s3"), ("s3", "s3a")])
+def test_s3_cache_normalizes_uri_scheme(input_scheme, cache_scheme):
+    s3 = _s3()
+    cached_uri = FILE_URI.replace("s3://", f"{cache_scheme}://")
+    cached_result = _make_result(cached_uri)
+
+    result = compute_checksum_s3(
+        FILE_URI.replace("s3://", f"{input_scheme}://"),
+        Algorithm.blake3,
+        s3,
+        cached_results={cached_uri: cached_result},
+    )
+
+    assert result.file_hash == cached_result.file_hash
+    s3.head_object.assert_not_called()
+    s3.get_object.assert_not_called()
+
+
 def test_s3_file_stored_checksum_returned_without_download():
     # use_stored=True, stored metadata found → return stored; no download
     s3 = _s3(head={"Metadata": {"x-checksum-blake3": HEX64}})
@@ -182,6 +233,20 @@ def test_s3_prefix_use_stored_false_downloads_all_children():
 
     assert s3.get_object.call_count == 2
     s3.head_object.assert_not_called()
+
+
+def test_s3_prefix_force_recompute_ignores_cached_children():
+    keys = [f"{PREFIX}a.h5ad", f"{PREFIX}b.h5ad"]
+    s3 = _s3_prefix(keys, body=b"fresh data")
+    cached = {f"s3://{BUCKET}/{key}": _make_result(key) for key in keys}
+
+    result = compute_checksum_s3(
+        PREFIX_URI, Algorithm.blake3, s3, use_stored=False, cached_results=cached
+    )
+
+    assert s3.get_object.call_count == 2
+    s3.head_object.assert_not_called()
+    assert all(child.file_hash != HEX64 for child in result.children.values())
 
 
 def test_s3_prefix_virtual_subdirectories_hashed_recursively():

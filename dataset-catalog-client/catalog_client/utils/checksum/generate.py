@@ -7,8 +7,8 @@ from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlat
 from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
+    _compute_checksum_s3,
     compute_checksum_localfs,
-    compute_checksum_s3,
 )
 from catalog_client.utils.checksum.models import ChecksumResult, LocationChecksum
 from catalog_client.utils.checksum.s3 import (
@@ -122,11 +122,13 @@ def compute_for_s3(
     compute_if_no_s3_checksum: bool,
     max_workers: int | None = None,
 ) -> ChecksumResult | None:
+    fresh_results: dict[str, ChecksumResult] = {}
     detection = detect_and_cache_for_s3(
-        location_uri, asset_type, algorithm, cached_results, s3_client, max_workers
+        location_uri, asset_type, algorithm, fresh_results, s3_client, max_workers
     )
-    if detection.algorithm and location_uri in cached_results:
-        return cached_results[location_uri]
+    cached_results.update(fresh_results)
+    if detection.algorithm and location_uri in fresh_results:
+        return fresh_results[location_uri]
 
     # Assembling a folder digest from already-cached children needs no
     # downloads, so compute_if_no_s3_checksum does not apply to it. Partial
@@ -139,12 +141,12 @@ def compute_for_s3(
         )
         return None
 
-    return compute_checksum_s3(
+    return _compute_checksum_s3(
         location_uri,
         algorithm=detection.algorithm or default_algorithm(),
         s3_client=s3_client,
         use_stored=False,
-        cached_results=cached_results,
+        cached_results=fresh_results,
         is_folder=asset_type == AssetType.folder,
         max_workers=max_workers,
     )
@@ -267,37 +269,49 @@ def for_assets(
 
     result: list[AssetT] = []
     cached_results: dict[str, ChecksumResult] = {}
-    if s3_client is None:
-        # Ours to configure, so the pool is sized for the workers the folder
-        # scan will ask for rather than left at botocore's default 10.
-        s3_client = owned_s3_client(max_workers)
+    owned_client = None
 
-    for asset in assets:
-        asset_copy = asset.model_copy()
-        if asset_copy.checksum is not None:
+    try:
+        for asset in assets:
+            asset_copy = asset.model_copy()
+            if asset_copy.checksum is not None:
+                result.append(asset_copy)
+                continue
+
+            if (
+                s3_client is None
+                and asset_copy.storage_platform == StoragePlatform.s3
+                and asset_copy.location_uri
+            ):
+                owned_client = s3_client = owned_s3_client(max_workers)
+
+            result_checksum = for_location(
+                asset_copy.location_uri,
+                asset_copy.asset_type,
+                asset_copy.storage_platform,
+                algorithm,
+                s3_client,
+                cached_results,
+                compute_if_no_s3_checksum=compute_if_no_s3_checksum,
+                max_workers=max_workers,
+            )
+
+            if result_checksum:
+                asset_copy.checksum = result_checksum.value
+                asset_copy.checksum_alg = result_checksum.algorithm
+                # A size the caller already supplied wins: they may be describing
+                # something we cannot see (a logical size, a pre-move total), and
+                # silently replacing it would be a surprise mutation.
+                if (
+                    asset_copy.size_bytes is None
+                    and result_checksum.total_size is not None
+                ):
+                    asset_copy.size_bytes = result_checksum.total_size
+
             result.append(asset_copy)
-            continue
 
-        result_checksum = for_location(
-            asset_copy.location_uri,
-            asset_copy.asset_type,
-            asset_copy.storage_platform,
-            algorithm,
-            s3_client,
-            cached_results,
-            compute_if_no_s3_checksum=compute_if_no_s3_checksum,
-            max_workers=max_workers,
-        )
-
-        if result_checksum:
-            asset_copy.checksum = result_checksum.value
-            asset_copy.checksum_alg = result_checksum.algorithm
-            # A size the caller already supplied wins: they may be describing
-            # something we cannot see (a logical size, a pre-move total), and
-            # silently replacing it would be a surprise mutation.
-            if asset_copy.size_bytes is None and result_checksum.total_size is not None:
-                asset_copy.size_bytes = result_checksum.total_size
-
-        result.append(asset_copy)
+    finally:
+        if owned_client is not None:
+            owned_client.close()
 
     return result

@@ -477,6 +477,20 @@ def _with_size(result: ChecksumResult, size: int | None) -> ChecksumResult:
     return replace(result, total_size=size)
 
 
+def _cached_s3_result(
+    cached_results: dict[str, ChecksumResult] | None,
+    bucket: str,
+    key: str,
+    algorithm: Algorithm,
+) -> ChecksumResult | None:
+    if cached_results is not None:
+        for scheme in ("s3", "s3a"):
+            result = cached_results.get(f"{scheme}://{bucket}/{key}")
+            if result is not None and result.algorithm == algorithm:
+                return result
+    return None
+
+
 def _hash_s3_file(
     bucket: str,
     key: str,
@@ -490,12 +504,13 @@ def _hash_s3_file(
     """
     Return a ChecksumResult for an S3 object.
 
-    If cached_results contains a result for this path, return it immediately.
+    Reuse a cached result only when its algorithm matches the request.
     If use_stored=True (default), checks for a stored S3 checksum first via
     _fetch_s3_stored_checksum. Falls back to streaming download only when no
     stored checksum exists for the requested algorithm.
 
-    Set use_stored=False to always recompute (e.g. for integrity audits).
+    use_stored=False skips HEAD requests; internal callers may still supply
+    freshly detected results. Public audit calls discard the cache first.
 
     size is the object's byte size if the caller already knows it (the prefix
     walk reads it from the listing). Cache hits and stored checksums carry a
@@ -505,8 +520,9 @@ def _hash_s3_file(
     """
     path = f"s3://{bucket}/{key}"
 
-    if cached_results and path in cached_results:
-        return _log_file(_with_size(cached_results[path], size))
+    cached = _cached_s3_result(cached_results, bucket, key, algorithm)
+    if cached is not None:
+        return _log_file(_with_size(cached, size))
 
     if use_stored:
         stored = _fetch_s3_stored_checksum(bucket, key, algorithm, s3)
@@ -578,7 +594,7 @@ def _hash_s3_prefix(
     fetched: dict[str, ChecksumResult] = {}
     misses: list[str] = []
     for key in keys:
-        if f"s3://{bucket}/{key}" in cached:
+        if _cached_s3_result(cached, bucket, key, algorithm) is not None:
             fetched[key] = fetch(key)
         else:
             misses.append(key)
@@ -638,8 +654,30 @@ def compute_checksum_s3(
     having appended a slash.
 
     use_stored=True (default) returns any checksum already on the S3 object
-    without downloading. Set False to always recompute (e.g. integrity audits).
+    without downloading. Set False to bypass both stored and cached checksums
+    and always recompute (e.g. integrity audits).
     """
+    return _compute_checksum_s3(
+        path,
+        algorithm,
+        s3_client,
+        use_stored,
+        cached_results if use_stored else None,
+        is_folder,
+        max_workers,
+    )
+
+
+def _compute_checksum_s3(
+    path: str,
+    algorithm: Algorithm,
+    s3_client,
+    use_stored: bool,
+    cached_results: dict[str, ChecksumResult] | None,
+    is_folder: bool | None,
+    max_workers: int | None,
+) -> ChecksumResult:
+    # Detection supplies fresh results while disabling duplicate HEAD requests.
     bucket, key = _parse_s3_uri(path)
     if is_folder is None:
         is_folder = _is_folder_key(key)

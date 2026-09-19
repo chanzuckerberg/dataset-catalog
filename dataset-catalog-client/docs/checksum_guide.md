@@ -470,11 +470,13 @@ assets = for_assets(assets, s3_client=s3, max_workers=32)
 
 ## Caching
 
-`for_assets` maintains an internal `cached_results` dict across assets in the same batch.
-If multiple assets share files (e.g. overlapping S3 prefixes), each file is only hashed once.
+`for_location` checks S3 metadata on each call and reuses the results from that
+detection pass when assembling a folder. It does not use older entries from a
+caller-provided cache to override fresh detection. Objects without a stored
+checksum may therefore be downloaded again on subsequent calls.
 
-You can also pass a pre-populated `cached_results` dict to `for_location` to share a cache across
-multiple calls:
+The optional `cached_results` dictionary receives stored checksums discovered
+during detection:
 
 ```python
 from catalog_client.models.asset import AssetType, StoragePlatform
@@ -491,3 +493,15 @@ for uri in uris:
         cached_results=cache,
     )
 ```
+
+For low-level `compute_checksum` and `compute_checksum_s3` calls, an explicitly
+supplied cache is a caller-managed snapshot: entries are reused only for the
+requested algorithm, and `s3://` and `s3a://` cache keys are equivalent. Clear the
+cache when objects change. Set `use_stored=False` to bypass both the cache and
+stored S3 metadata and hash the downloaded bytes, including every folder child.
+
+`for_assets` creates an S3 client only when it reaches a nonempty S3 location
+without an existing checksum. Local-only, unsupported, and already-checksummed
+batches do not trigger AWS credential discovery. The utility reuses its client
+within the batch and closes it when processing finishes or raises an error.
+A caller-provided client remains open and is owned by the caller.
