@@ -51,7 +51,7 @@ folder's Merkle root.
 
 Two deliberate exceptions:
 
-- **Folder digests include child names**, so renaming a file changes its folder's
+- **Folder digests include child names and types**, so renaming a file changes its folder's
   digest even though no content changed. This is what makes a folder digest useful
   for change detection.
 - **Multipart composite checksums are ignored.** When S3 reports a composite value
@@ -63,6 +63,28 @@ Two deliberate exceptions:
 Stored values that are not well-formed digests for their algorithm — wrong width, or
 not hex — are ignored for the same reason, since they could not be combined into a
 folder digest.
+
+### Directory names in folder hashes
+
+Children are sorted by their original name. Each child contributes its UTF-8
+name followed by its raw content-digest bytes. Directory child names receive a
+trailing `/` in the hash input; file names do not. A file contributes `x` plus
+its digest, while a same-named directory contributes `x/` plus its digest.
+Nested directories use the same rule. The keys in `ChecksumResult.children`
+remain the original names.
+
+Empty directories hash empty bytes, just like empty files; the trailing slash
+distinguishes them when they contribute to a parent. File hashes and file chunk
+manifests are unchanged. Algorithm labels remain unchanged (for example,
+`blake3`); no format version is stored.
+
+**Compatibility:** folders containing subdirectories receive different hashes;
+empty folders and folders containing only files retain their previous hashes.
+Existing assets with checksums are passed through unchanged. Recompute older
+nested-folder checksums before comparing them with newly computed values;
+the algorithm label does not distinguish the old encoding from the new one.
+S3 folder markers continue to be ignored, so empty local subdirectories have
+no corresponding entry in an S3 prefix.
 
 ---
 

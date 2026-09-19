@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Distinguish directory children in folder checksums by appending `/` to their
+  names in the hash input. Folders containing subdirectories receive new hashes;
+  algorithm labels, file hashes, and existing checksummed assets remain unchanged.
+  Recompute older nested-folder checksums before comparing them with new values.
+
 ## [0.7.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.6.0...catalog-client-v0.7.0) (2026-08-17)
 
 

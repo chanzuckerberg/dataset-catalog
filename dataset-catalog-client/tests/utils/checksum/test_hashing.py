@@ -3,6 +3,7 @@
 S3 tests use a MagicMock client; local tests use real I/O via tmp_path.
 """
 
+import hashlib
 import io
 import logging
 from unittest.mock import MagicMock, patch
@@ -264,14 +265,13 @@ def test_s3_prefix_virtual_subdirectories_hashed_recursively():
 
 
 def test_s3_prefix_empty_prefix_returns_hash_of_empty():
-    # no objects under prefix → Merkle of empty child list (hash of empty bytes)
     s3 = _s3_prefix(keys=[])
 
-    result = compute_checksum_s3(PREFIX_URI, Algorithm.blake3, s3)
+    result = compute_checksum_s3(PREFIX_URI, Algorithm.blake2b, s3)
 
     assert result.is_directory
     assert result.children == {}
-    assert result.file_hash is not None  # deterministic hash of empty bytes
+    assert result.file_hash == hashlib.blake2b(b"").hexdigest()
     assert result.file_hash == result.merkle_root
 
 
@@ -377,12 +377,11 @@ def test_localfs_directory_with_subdirectories(tmp_path):
 
 
 def test_localfs_empty_directory(tmp_path):
-    # empty directory → hash of empty bytes; no children
-    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake2b)
 
     assert result.is_directory
     assert result.children == {}
-    assert result.file_hash is not None
+    assert result.file_hash == hashlib.blake2b(b"").hexdigest()
     assert result.file_hash == result.merkle_root
 
 

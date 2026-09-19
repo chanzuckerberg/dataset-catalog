@@ -9,6 +9,9 @@ S3 cases run against moto so they exercise real HeadObject / ListObjectsV2
 response shapes rather than a mock's idea of them.
 """
 
+import hashlib
+import zlib
+
 import boto3
 import pytest
 from moto import mock_aws
@@ -35,6 +38,95 @@ ALGORITHMS = [
     Algorithm.crc64,
     Algorithm.crc64nvme,
 ]
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_empty_file_and_empty_directory_preserve_empty_digest(tmp_path, algorithm):
+    empty_file = tmp_path / "empty-file"
+    empty_file.touch()
+    empty_dir = tmp_path / "empty-dir"
+    empty_dir.mkdir()
+
+    file_result = compute_checksum_localfs(str(empty_file), algorithm)
+    directory_result = compute_checksum_localfs(str(empty_dir), algorithm)
+
+    assert file_result.content_digest == directory_result.content_digest
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_replacing_empty_file_with_empty_directory_changes_parent(tmp_path, algorithm):
+    child = tmp_path / "x"
+    child.touch()
+    before = compute_checksum_localfs(str(tmp_path), algorithm)
+
+    child.unlink()
+    child.mkdir()
+    after = compute_checksum_localfs(str(tmp_path), algorithm)
+
+    assert before.content_digest != after.content_digest
+
+
+@pytest.mark.parametrize("algorithm", [Algorithm.blake2b, Algorithm.crc32])
+def test_directory_trailing_slash_matches_independent_reference(tmp_path, algorithm):
+    def digest(data):
+        if algorithm == Algorithm.blake2b:
+            return hashlib.blake2b(data).digest()
+        return zlib.crc32(data).to_bytes(4, "big")
+
+    (tmp_path / "é").write_bytes(b"payload")
+    (tmp_path / "a").mkdir()
+    encoded = b"a/" + digest(b"") + "é".encode("utf-8") + digest(b"payload")
+
+    result = compute_checksum_localfs(str(tmp_path), algorithm)
+
+    assert result.content_digest == digest(encoded).hex()
+    assert result.children["é"].content_digest == digest(b"payload").hex()
+    assert list(result.children) == ["a", "é"]
+
+
+def test_flat_directory_retains_legacy_digest(tmp_path):
+    (tmp_path / "é").write_bytes(b"second")
+    (tmp_path / "a").write_bytes(b"first")
+    encoded = (
+        b"a"
+        + hashlib.blake2b(b"first").digest()
+        + "é".encode("utf-8")
+        + hashlib.blake2b(b"second").digest()
+    )
+
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake2b)
+
+    assert result.content_digest == hashlib.blake2b(encoded).hexdigest()
+
+
+def test_directory_children_sort_before_adding_slash_suffix(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a.").write_bytes(b"payload")
+    encoded = (
+        b"a/"
+        + hashlib.blake2b(b"").digest()
+        + b"a."
+        + hashlib.blake2b(b"payload").digest()
+    )
+
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake2b)
+
+    assert result.content_digest == hashlib.blake2b(encoded).hexdigest()
+    assert list(result.children) == ["a", "a."]
+
+
+def test_directory_digest_ignores_creation_order(tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    for parent, names in [(left, ["z", "a", "é"]), (right, ["é", "a", "z"])]:
+        for name in names:
+            (parent / name).write_bytes(name.encode())
+
+    assert (
+        compute_checksum_localfs(str(left), Algorithm.blake2b).content_digest
+        == compute_checksum_localfs(str(right), Algorithm.blake2b).content_digest
+    )
 
 
 @pytest.fixture
@@ -119,6 +211,21 @@ def test_local_and_s3_copies_of_the_same_bytes_agree(s3, tmp_path):
     local = compute_checksum_localfs(str(tmp_path / "f.bin"), Algorithm.blake2b)
     remote = compute_checksum_s3(
         f"s3://{BUCKET}/f.bin", Algorithm.blake2b, s3, use_stored=False
+    )
+
+    assert local.content_digest == remote.content_digest
+
+
+@pytest.mark.parametrize("algorithm", ALGORITHMS)
+def test_local_and_s3_nested_directories_have_the_same_digest(s3, tmp_path, algorithm):
+    (tmp_path / "subdir").mkdir()
+    for name in ["é.bin", "subdir/f.bin"]:
+        (tmp_path / name).write_bytes(BODY)
+        s3.put_object(Bucket=BUCKET, Key=f"tree/{name}", Body=BODY)
+
+    local = compute_checksum_localfs(str(tmp_path), algorithm)
+    remote = compute_checksum_s3(
+        f"s3://{BUCKET}/tree/", algorithm, s3, use_stored=False
     )
 
     assert local.content_digest == remote.content_digest

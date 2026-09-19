@@ -149,9 +149,8 @@ def _directory_result(
     """
     Build the tree node for a directory (local or S3 prefix) from its children.
 
-    Each child contributes its name bytes plus the raw bytes of its
-    content_digest, so a rename changes the parent digest even when file
-    contents are identical.
+    Append a slash to directory child names before hashing, so
+    replacing a file with a same-named directory changes the parent digest.
 
     content_digest — not merkle_root — is what makes folder hashing
     reproducible: it is the same value the child would report if checksummed
@@ -159,7 +158,8 @@ def _directory_result(
     downloaded and hashed contribute identical bytes to the parent.
     """
     child_raw = [
-        name.encode() + raw_from_hex(child.content_digest, algorithm)
+        (f"{name}/" if child.is_directory else name).encode("utf-8")
+        + raw_from_hex(child.content_digest, algorithm)
         for name, child in children.items()
     ]
     digest = _combine_child_digests(child_raw, algorithm)
