@@ -577,11 +577,15 @@ def _compute(args: argparse.Namespace) -> ChecksumResult:
 
 def _enable_verbose_logging() -> None:
     """
-    Route the checksum package's per-file INFO lines to stderr.
+    Route the checksum package's DEBUG output to stderr.
 
     Configures that one logger rather than calling logging.basicConfig, which
-    would raise the root level and pull in botocore's own INFO output — tens of
-    lines per request, drowning the per-file lines this flag is for.
+    would raise the root level and pull in botocore's own output — tens of
+    lines per request, drowning the ones this flag is for. That containment is
+    what makes DEBUG affordable here: the level applies to this package only,
+    so --verbose reports everything the checksum walk decided (the algorithm it
+    chose, each resolved path, and why a location was skipped or a stored value
+    rejected) without the transport chatter underneath it.
 
     stderr, not stdout, so `-o json` stays parseable while --verbose is on.
 
@@ -606,7 +610,7 @@ def _enable_verbose_logging() -> None:
     )
     checksum_logger = logging.getLogger("catalog_client.utils.checksum")
     checksum_logger.addHandler(handler)
-    checksum_logger.setLevel(logging.INFO)
+    checksum_logger.setLevel(logging.DEBUG)
 
 
 def cmd_checksum(args: argparse.Namespace) -> None:
@@ -821,8 +825,10 @@ def build_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="log one line per file to stderr as it is resolved: timestamp, "
-        "worker, digest, algorithm, size, source, path",
+        help="log the checksum walk to stderr at debug level: the algorithm "
+        "chosen, one line per file and folder as it is resolved (timestamp, "
+        "worker, digest, algorithm, size, source, path), and why anything was "
+        "skipped or a stored checksum rejected",
     )
     p.set_defaults(func=cmd_checksum)
 

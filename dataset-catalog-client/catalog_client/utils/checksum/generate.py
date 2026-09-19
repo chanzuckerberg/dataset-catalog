@@ -185,6 +185,12 @@ def compute_for_s3(
         location_uri, algorithm, fresh_results, s3_client
     )
     cached_results.update(fresh_results)
+    # The effective algorithm, not detection's: a HEAD that found nothing
+    # leaves that None and the default takes over below, so logging the raw
+    # detection would name an algorithm no digest was ever produced under.
+    chosen = detection.algorithm or default_algorithm()
+    logger.debug("Selected %s for %s", chosen, location_uri)
+
     if detection.algorithm and location_uri in fresh_results:
         return fresh_results[location_uri]
 
@@ -197,7 +203,7 @@ def compute_for_s3(
 
     return _compute_checksum_s3(
         location_uri,
-        algorithm=detection.algorithm or default_algorithm(),
+        algorithm=chosen,
         s3_client=s3_client,
         use_stored=False,
         cached_results=fresh_results,

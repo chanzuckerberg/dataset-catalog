@@ -77,23 +77,27 @@ def _iter_stream(stream, read_buffer: int | None = None):
 
 def _log_file(result: ChecksumResult) -> ChecksumResult:
     """
-    Emit one INFO line for a resolved file, and return it unchanged.
+    Emit one DEBUG line for a resolved node, and return it unchanged.
 
     Returns its argument so it can wrap a `return`, which keeps every exit from
     _hash_s3_file logged without restructuring its early returns into a chain.
 
-    Directories are deliberately not logged: the digest of a folder is a fold
-    over children already reported here, so a line for it would repeat
-    information under a path that read as a fourth kind of source. `source` is
-    included because it is the difference between bytes this process actually
-    hashed and a digest taken from S3's metadata on trust — the distinction an
-    integrity audit is run to see.
+    Directory nodes are logged too, from _directory_result, so a verbose run
+    reports the folded digest of every subtree and not only its leaves. Two
+    columns read differently on those lines and are worth knowing about:
+    `total_size` is the sum over descendants, so summing the column over a
+    whole walk double-counts, and `source` says "computed" because a folder
+    has no other source to report — no directory bytes were ever hashed.
+
+    `source` is included because on a file it is the difference between bytes
+    this process actually hashed and a digest taken from S3's metadata on
+    trust — the distinction an integrity audit is run to see.
 
     Called from pool workers in _hash_files; logging emits a record atomically,
     so lines from concurrent files do not interleave, though their order is not
     the walk order.
     """
-    logger.info(
+    logger.debug(
         "%s  %s  %s  %s  %s",
         result.content_digest,
         # Not .value: Algorithm is a StrEnum, so %s renders the bare value, and
@@ -167,14 +171,16 @@ def _directory_result(
     ]
     digest = _combine_child_digests(child_raw, algorithm)
 
-    return ChecksumResult(
-        path=path,
-        algorithm=algorithm,
-        file_hash=digest,
-        merkle_root=digest,
-        is_directory=True,
-        total_size=_sum_child_sizes(children),
-        children=children,
+    return _log_file(
+        ChecksumResult(
+            path=path,
+            algorithm=algorithm,
+            file_hash=digest,
+            merkle_root=digest,
+            is_directory=True,
+            total_size=_sum_child_sizes(children),
+            children=children,
+        )
     )
 
 

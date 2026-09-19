@@ -200,11 +200,11 @@ and `s3_composite_base64` (files only). See the [CLI section of
 USAGE.md](../USAGE.md#checksums-from-the-command-line) for every flag and the exit
 codes.
 
-### Per-file logging from the SDK
+### Verbose logging from the SDK
 
-`--verbose` is only a handler on a standard library logger, so Python callers get the
-same per-file lines without the CLI. Nothing is emitted unless you opt in — the
-package adds no handler of its own:
+`--verbose` is only a handler and a level on a standard library logger, so Python
+callers get the same lines without the CLI. Nothing is emitted unless you opt in —
+the package adds no handler of its own:
 
 ```python
 import logging
@@ -218,21 +218,63 @@ handler.setFormatter(
 )
 logger = logging.getLogger("catalog_client.utils.checksum")
 logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 ```
 
-The message itself is `digest algorithm size source path`. Neither the timestamp nor
-the worker is in the message — they are the record's standard `asctime` and
+Everything below is emitted at `DEBUG`. The level is set on this package's logger
+alone, never through `logging.basicConfig`, which would raise the root level and
+bring botocore's own per-request output with it. Scoping it this way is what makes
+`DEBUG` usable as the verbose level rather than a firehose.
+
+Three kinds of record appear.
+
+**Per-file records** carry `digest algorithm size source path`. Neither the timestamp
+nor the worker is in the message — they are the record's standard `asctime` and
 `threadName`, so include them via the formatter as above (the CLI's `--verbose` does
 exactly this, and a bare `StreamHandler` would show neither). `threadName` reads
 `checksum_N` for a pooled walk and `MainThread` for a serial one. Reach for
 `%(created)f` instead of `asctime` if you want an epoch float to do arithmetic on.
 
 One record per file, whether the digest was computed, read from S3 metadata, or
-served from `cached_results`. Directories emit nothing. Folder walks hash through a
-thread pool, so records arrive in completion order rather than walk order; sort by
-path if you need a stable listing. Neither the pool nor the ordering affects the
-digest.
+served from `cached_results`. Each directory is reported too, once its children have
+been folded, so a walk also shows the digest of every subtree. Folder walks hash
+through a thread pool, so records arrive in completion order rather than walk order;
+sort by path if you need a stable listing. Neither the pool nor the ordering affects
+the digest.
+
+Two columns read differently on a directory record: `size` is the total over all
+descendants, so summing the column across a walk double-counts, and `source` reads
+`computed` because a folder digest is a fold over child digests and has no other
+source to report — no directory bytes are ever hashed. The log line does not mark
+which records are directories, and the path is not a reliable tell either: an S3
+prefix ends in `/` but a local directory path does not. Read `is_directory` off the
+`ChecksumResult` tree if you need to tell them apart programmatically.
+
+**One selection record per S3 location**, emitted before its files are, naming the
+algorithm the operation settled on and why:
+
+```
+Selected crc32 for s3://bucket/ds/: cheapest over 412 listed objects
+Selected blake3 for s3://bucket/ds/: requested explicitly
+Selected crc32 for s3://bucket/solo.h5ad
+```
+
+It starts with `Selected ` and has no digest, which is how it is told apart from a
+per-file record. For a folder the algorithm is chosen once and applies to every child
+(see [How an S3 folder is resolved](#how-an-s3-folder-is-resolved)); for a single
+object it is the effective algorithm, so it names `default_algorithm()` rather than
+nothing when the object carried no stored checksum. Local paths emit no selection
+record — the algorithm there is the caller's argument or the default, never inferred.
+
+**Diagnostics** explain a decision that would otherwise be invisible — a location
+skipped, a stored checksum rejected as composite or malformed, a worker count clamped
+to the client's connection pool. These are the reason to read the log when a digest
+was recomputed rather than reused, or when an asset came back without one:
+
+```
+Ignoring malformed x-checksum-blake3 metadata on s3://bucket/ds/sub/b.txt
+Skipping s3://bucket/ds/: not every child has a stored S3 checksum and compute_if_no_s3_checksum=False
+```
 
 ---
 

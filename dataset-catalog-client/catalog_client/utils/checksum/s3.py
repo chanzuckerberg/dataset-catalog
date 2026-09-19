@@ -497,9 +497,18 @@ def _select_folder_algorithm(
     listing = _iter_listing(s3_client, bucket, _folder_prefix(key))
 
     if algorithm is not None:
+        # Logged before the listing is consumed, so this line appears even for
+        # a prefix whose pagination or resolution then fails — which is when
+        # knowing which algorithm was in play matters most.
+        logger.debug("Selected %s for %s: requested explicitly", algorithm, path)
         return _FolderSelection(algorithm, listing)
 
     objects = list(listing)
     chosen = _cheapest_algorithm(objects)
-    logger.debug("Selected %s for %s over %d objects", chosen, path, len(objects))
+    logger.debug(
+        "Selected %s for %s: cheapest over %d listed objects",
+        chosen,
+        path,
+        len(objects),
+    )
     return _FolderSelection(chosen, objects)
