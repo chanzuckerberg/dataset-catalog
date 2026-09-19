@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- S3 folder checksums now discover a prefix once and resolve each object
+  concurrently. A folder operation issues **one** `ListObjectsV2` pagination
+  pass instead of two, and no longer HEADs every child before fetching any:
+  a worker can download one object while another object's `HeadObject` is
+  still in flight. That removed barrier is what shortens wall clock on folders
+  where only some children carry a stored checksum. The number of `HeadObject`
+  calls is otherwise unchanged — a listing carries no digest values, so every
+  object whose selected algorithm might be reusable is still HEADed. The
+  exception is objects whose listing explicitly reports a different checksum
+  algorithm (or none at all), which are no longer HEADed.
+- **Behaviour change.** Automatic algorithm selection (`algorithm=None`) for an
+  S3 folder now ranks only the S3-native algorithms the listing reports, so it
+  no longer discovers metadata-backed algorithms such as `blake3` before
+  choosing. A folder that previously auto-selected `blake3` from
+  `x-checksum-blake3` metadata may now select a native algorithm and produce a
+  different folder digest. Pass `algorithm=` explicitly to pin the choice.
+  Previously registered assets are not stranded: the algorithm is recorded
+  alongside the value in `checksum_alg`, so re-verifying an existing asset with
+  its recorded algorithm still reproduces its stored digest. What changed is
+  which algorithm a *new* automatic run picks, not the reproducibility of old
+  values.
 - Distinguish directory children in folder checksums by appending `/` to their
   names in the hash input. Folders containing subdirectories receive new hashes;
   algorithm labels, file hashes, and existing checksummed assets remain unchanged.

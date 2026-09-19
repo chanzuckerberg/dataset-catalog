@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from dataclasses import replace
 from typing import NamedTuple
 
@@ -23,6 +24,8 @@ from catalog_client.utils.checksum.s3 import (
     _insert_key,
     _is_folder_key,
     _iter_listing,
+    _ListedObject,
+    _listing_excludes_native,
     _parse_s3_uri,
 )
 
@@ -542,6 +545,126 @@ def _hash_s3_file(
     )
 
 
+class _PrefixResolution(NamedTuple):
+    """
+    What resolving a prefix's objects produced.
+
+    `children` maps S3 key to result and omits any object left unresolved
+    because downloading was disabled. `stored` is the subset whose digest came
+    off S3 rather than off the wire, keyed by s3:// URI — the only results a
+    caller may add to a checksum cache, since a freshly computed one was never
+    validated against anything. `complete` is the coverage answer: every listed
+    object resolved, and there was at least one. An empty prefix is not
+    complete, which is what keeps compute_if_no_s3_checksum=False from
+    reporting a digest for a prefix that does not exist.
+    """
+
+    children: dict[str, ChecksumResult]
+    stored: dict[str, ChecksumResult]
+    complete: bool
+
+
+def _resolve_s3_objects(
+    bucket: str,
+    algorithm: Algorithm,
+    s3,
+    objects: Iterable[_ListedObject],
+    use_stored: bool,
+    cached_results: dict[str, ChecksumResult] | None,
+    download: bool,
+    max_workers: int | None,
+) -> _PrefixResolution:
+    """
+    Resolve one digest per listed object, concurrently and in bounded batches.
+
+    Each worker decides for its own object and then acts, so a download can be
+    in flight while another object's HeadObject is still outstanding. The
+    previous design HEADed every child before fetching any, which made the
+    slowest HEAD a barrier in front of the first byte.
+
+    The listing hint is only ever used to *cancel* a HeadObject that could not
+    have succeeded (_listing_excludes_native). It never authorises reuse: the
+    listing carries no digest values, so a positive hint still costs a HEAD.
+
+    `objects` is consumed lazily through ordered_map's window, so only a
+    bounded number of futures exist at once no matter how large the prefix is,
+    and — when the caller passes the listing iterator rather than a list —
+    pagination overlaps with resolution. The result maps are still O(objects).
+    """
+
+    def resolve(listed: _ListedObject) -> tuple[str, ChecksumResult | None]:
+        key = listed.key
+        cached = _cached_s3_result(cached_results, bucket, key, algorithm)
+        if cached is not None:
+            return key, _log_file(_with_size(cached, listed.size))
+
+        if use_stored and not _listing_excludes_native(listed, algorithm):
+            stored = _fetch_s3_stored_checksum(bucket, key, algorithm, s3)
+            if stored is not None:
+                return key, _log_file(_with_size(stored, listed.size))
+
+        if not download:
+            return key, None
+
+        # use_stored=False and no cache: both were just consulted, and letting
+        # _hash_s3_file consult them again would issue a second HeadObject and
+        # a second log line for this one object.
+        return key, _hash_s3_file(
+            bucket,
+            key,
+            algorithm,
+            s3,
+            use_stored=False,
+            cached_results=None,
+            size=listed.size,
+            read_buffer=PARALLEL_READ_BUFFER,
+        )
+
+    children: dict[str, ChecksumResult] = {}
+    stored: dict[str, ChecksumResult] = {}
+    total = 0
+    for key, result in ordered_map(resolve, objects, s3_workers(s3, max_workers)):
+        total += 1
+        if result is None:
+            continue
+        children[key] = result
+        if result.source != "computed":
+            stored[f"s3://{bucket}/{key}"] = result
+
+    return _PrefixResolution(children, stored, total > 0 and len(children) == total)
+
+
+def _fold_s3_children(
+    bucket: str,
+    prefix: str,
+    children: dict[str, ChecksumResult],
+    algorithm: Algorithm,
+) -> ChecksumResult:
+    """
+    Fold resolved objects into the virtual directory tree the prefix describes.
+
+    Runs on the coordinating thread over a completed map, so the order objects
+    were *retrieved* in cannot reach the digest: children are combined in
+    sorted(node.items()) order, exactly as the original serial walk combined
+    them.
+    """
+    tree: dict = {}
+    for key in sorted(children):
+        _insert_key(tree, key[len(prefix) :].split("/"), key)
+
+    def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
+        folded: dict[str, ChecksumResult] = {}
+        for name, value in sorted(node.items()):
+            if isinstance(value, tuple) and value[0] == "file":
+                folded[name] = children[value[1]]
+            elif isinstance(value, dict):
+                folded[name] = hash_tree(value, f"{virtual_path}{name}/")
+
+        return _directory_result(f"s3://{bucket}/{virtual_path}", folded, algorithm)
+
+    return hash_tree(tree, prefix)
+
+
 def _hash_s3_prefix(
     bucket: str,
     prefix: str,
@@ -554,70 +677,26 @@ def _hash_s3_prefix(
     """
     Hash all objects under an S3 prefix as a virtual directory tree.
 
-    Listed through _iter_listing, the same helper the detect phase uses, so both
-    phases apply one definition of which objects a prefix contains — a folder
-    marker skipped by one and not the other would change the digest.
+    Listed through _iter_listing, the same helper selection uses, so both
+    apply one definition of which objects a prefix contains — a folder marker
+    skipped by one and not the other would change the digest.
 
     The listing reports every object's size, so a folder's total is known from
-    it regardless of how each child's digest is later obtained (cache, stored
-    checksum, or download).
+    it regardless of how each child's digest is obtained (cache, stored
+    checksum, or download). Downloading is unconditional here: this is the
+    direct hashing API, which has no way to report partial coverage.
     """
-    sizes = dict(_iter_listing(s3, bucket, prefix))
-    keys = sorted(sizes)
-
-    tree: dict = {}
-    for key in keys:
-        _insert_key(tree, key[len(prefix) :].split("/"), key)
-
-    # Every object is resolved before the tree is folded, so the walk below sees
-    # a completed map and runs exactly as it did serially. Only the order the
-    # objects are *retrieved* in changes; the order they are *combined* in is
-    # still sorted(node.items()), which is what the digest depends on.
-    def fetch(key: str) -> ChecksumResult:
-        return _hash_s3_file(
-            bucket,
-            key,
-            algorithm,
-            s3,
-            use_stored,
-            cached_results,
-            size=sizes.get(key),
-            read_buffer=PARALLEL_READ_BUFFER,
-        )
-
-    # Children the detect phase already resolved are taken inline: _hash_s3_file
-    # returns those straight from cached_results without issuing a request, and
-    # routing a dict lookup through the pool costs more in dispatch than the
-    # lookup itself. A prefix whose children all carry a stored checksum is the
-    # case that phase exists for, and it now creates no pool at all.
-    cached = cached_results or {}
-    fetched: dict[str, ChecksumResult] = {}
-    misses: list[str] = []
-    for key in keys:
-        if _cached_s3_result(cached, bucket, key, algorithm) is not None:
-            fetched[key] = fetch(key)
-        else:
-            misses.append(key)
-    if misses:
-        fetched.update(
-            zip(
-                misses,
-                ordered_map(fetch, misses, s3_workers(s3, max_workers)),
-                strict=True,
-            )
-        )
-
-    def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
-        children: dict[str, ChecksumResult] = {}
-        for name, value in sorted(node.items()):
-            if isinstance(value, tuple) and value[0] == "file":
-                children[name] = fetched[value[1]]
-            elif isinstance(value, dict):
-                children[name] = hash_tree(value, f"{virtual_path}{name}/")
-
-        return _directory_result(f"s3://{bucket}/{virtual_path}", children, algorithm)
-
-    return hash_tree(tree, prefix)
+    resolution = _resolve_s3_objects(
+        bucket,
+        algorithm,
+        s3,
+        _iter_listing(s3, bucket, prefix),
+        use_stored,
+        cached_results,
+        download=True,
+        max_workers=max_workers,
+    )
+    return _fold_s3_children(bucket, prefix, resolution.children, algorithm)
 
 
 def compute_checksum_localfs(

@@ -297,11 +297,12 @@ if you need the same algorithm regardless of what is installed.
 
 ### Algorithm auto-detection
 
-When `algorithm=None`, the library inspects both S3 native checksum fields (`crc32`,
-`crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
-`x-checksum-crc64`) in a single `HeadObject` call.
+When `algorithm=None`, the library picks the algorithm from what S3 already holds.
 
-**For a single file**, it picks the highest-priority algorithm present, ranked by
+**For a single file**, it inspects both S3 native checksum fields (`crc32`,
+`crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
+`x-checksum-crc64`) in a single `HeadObject` call, then picks the highest-priority
+algorithm present, ranked by
 `ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
 
 `crc64nvme` > `crc32` > `blake3` > `blake2b` > `crc64`
@@ -319,13 +320,64 @@ breaks ties, which in practice means two algorithms that both need no downloads 
 
 Mixing stored and computed digests is safe: a child hashed locally produces the same
 value it would report as a stored checksum, so the folder digest is identical either
-way. If no child carries anything readable, the folder falls back to
-`default_algorithm()` and every object is downloaded.
+way. If the listing offers no usable native candidate, the folder falls back to
+`default_algorithm()`.
 
 > **Digest width.** Selection optimises for recompute cost and does not impose a minimum
 > digest strength, so a prefix where `crc32` has better coverage than the alternatives
 > will be registered with a 32-bit digest. Distinct 32-bit values collide at around 65k
 > objects by the birthday bound. Pass an explicit `algorithm=` where that matters.
+
+> **Only native algorithms influence folder auto-selection.** The ranking is done from
+> the `ListObjectsV2` listing, which reports `crc32` and `crc64nvme` but can never
+> mention a `blake3` written into user metadata — discovering those would cost a
+> `HeadObject` per object *before* anything could be chosen. So a folder may auto-select
+> an algorithm that requires downloads even when `x-checksum-blake3` is present on every
+> object. Pass `algorithm=Algorithm.blake3` to have the metadata reused; per-object
+> reuse of metadata algorithms works exactly as before once one is named, and if
+> `default_algorithm()` is itself metadata-backed, workers still try to reuse it.
+>
+> This changes which algorithm a *new* automatic run picks, and therefore can change a
+> folder's digest. It does not strand already-registered assets: the algorithm is
+> recorded next to the value in `checksum_alg`, so re-verifying an existing asset with
+> its recorded algorithm still reproduces its stored digest.
+
+### How an S3 folder is resolved
+
+A folder operation is four phases over **one** listing pass:
+
+1. **Discover.** One `ListObjectsV2` pagination over the prefix, collecting each
+   object's key, size, `ChecksumAlgorithm`, `ChecksumType` and `ETag`. Folder-marker
+   keys are skipped. Any field the listing does not supply stays `None` — which is not
+   the same as an empty value. An empty `ChecksumAlgorithm` list means "this object has
+   no native checksum"; an absent one means "this listing does not report checksum
+   algorithms", and only the first is evidence.
+2. **Select.** One algorithm for the whole folder, from the listing alone. No
+   `HeadObject` and no `GetObject` are issued. An explicitly named algorithm skips this
+   phase entirely, which also lets resolution start on the first page instead of waiting
+   out pagination.
+3. **Resolve.** Each object is resolved independently in a bounded worker pool, so one
+   object's download can be in flight while another's `HeadObject` is outstanding.
+4. **Fold.** The results are combined into the virtual directory tree on the calling
+   thread, in sorted child order. Worker completion order never reaches the digest: for
+   a fixed algorithm and unchanged content, serial and concurrent runs produce the same
+   value.
+
+Because the listing carries no digest *values*, a positive hint can never by itself
+yield a checksum — it can only cancel a `HeadObject` that could not have succeeded:
+
+| What the listing says about the object | What a worker does |
+|---|---|
+| Reports algorithms, and the selected native algorithm is not among them (including an empty list) | Download and hash — no HEAD |
+| Reports the selected native algorithm, with `ChecksumType: COMPOSITE` | Download and hash — no HEAD |
+| Reports the selected native algorithm, with `FULL_OBJECT` or no `ChecksumType` | HEAD for the digest; download only if it is unusable |
+| Reports no checksum algorithms at all | HEAD first; download only if unusable |
+| The selected algorithm is metadata-backed (e.g. `blake3`) | HEAD first — a listing cannot reveal user metadata |
+
+A multipart `ETag` suffix (`"abc123"-7`) marks a multipart *upload*, not a composite
+checksum: such an object may still carry a whole-object `crc64nvme`. The cost model in
+phase 2 prices it pessimistically as needing a download, but that estimate never becomes
+a decision — the worker still HEADs it and still reuses a valid whole-object digest.
 
 ### Controlling downloads
 
@@ -492,13 +544,15 @@ assets = for_assets(assets, s3_client=s3, max_workers=32)
 
 ## Caching
 
-`for_location` checks S3 metadata on each call and reuses the results from that
-detection pass when assembling a folder. It does not use older entries from a
-caller-provided cache to override fresh detection. Objects without a stored
-checksum may therefore be downloaded again on subsequent calls.
+`for_location` validates S3 metadata on each call. It does not use older entries from a
+caller-provided cache to override that: an entry an earlier asset left behind was
+validated against *that* object, not this one. Objects without a stored checksum may
+therefore be downloaded again on subsequent calls.
 
-The optional `cached_results` dictionary receives stored checksums discovered
-during detection:
+The optional `cached_results` dictionary receives the stored checksums that were
+validated during the call — including when a folder is then skipped for incomplete
+coverage, since those digests are real either way. Freshly computed digests are not
+added: they were never checked against anything S3 holds.
 
 ```python
 from catalog_client.models.asset import AssetType, StoragePlatform

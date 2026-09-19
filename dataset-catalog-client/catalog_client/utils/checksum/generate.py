@@ -8,11 +8,14 @@ from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
     _compute_checksum_s3,
+    _fold_s3_children,
+    _resolve_s3_objects,
     compute_checksum_localfs,
 )
 from catalog_client.utils.checksum.models import ChecksumResult, LocationChecksum
 from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
+    _folder_prefix,
     _parse_s3_uri,
     _select_best_algorithm,
     _select_folder_algorithm,
@@ -55,45 +58,34 @@ def _skip(message: str) -> None:
 @dataclass
 class _S3Detection:
     """
-    What the detect phase learned about an S3 location.
+    What the detect phase learned about a single S3 object.
 
-    Bundled rather than returned as a loose tuple because the compute phase
-    needs both fields to route correctly; dropping one silently changes
-    behaviour (see `covers_all_children`, whose predecessor defaulted to False
-    on the auto-detect path and made algorithm=None strictly worse than
-    naming the algorithm auto-detection would have chosen).
+    Object-only: a folder is no longer detected ahead of being computed, so
+    there is nothing here about children. `covers_all_children` and the folder
+    branch that produced it are gone with it — coverage is now an outcome of
+    resolution (see `_compute_folder_for_s3`), not something a phase preceding
+    it can claim.
 
-    covers_all_children is a boolean rather than the child counts it is derived
-    from: only this answer has a reader, and carrying the counts obliged the
-    single-object branches to invent a total of 1 to make the arithmetic agree.
-    _FolderSelection still reports the counts, which is where they are real.
+    Still a dataclass rather than a bare Algorithm so that a second thing the
+    HEAD learned can be added without rewriting the call site.
     """
 
     algorithm: Algorithm | None
-    covers_all_children: bool = False
 
 
 def detect_and_cache_for_s3(
     location_uri: str,
-    asset_type: AssetType,
     algorithm: Algorithm | None,
     cached_results: dict[str, ChecksumResult],
     s3_client,
-    max_workers: int | None = None,
 ) -> _S3Detection:
-    if asset_type == AssetType.folder:
-        # Every child carrying the chosen algorithm is reusable, whether that
-        # algorithm was named by the caller or picked here by cost. Coverage
-        # need not be universal: a child without it is one download, not a
-        # reason to discard the digests every other child already has.
-        selection = _select_folder_algorithm(
-            location_uri, s3_client, algorithm, max_workers
-        )
-        if selection.algorithm is None:
-            return _S3Detection(algorithm=None)
-        cached_results.update(selection.cached)
-        return _S3Detection(selection.algorithm, selection.covers_all_children)
+    """
+    HEAD one S3 object, choose an algorithm for it, and cache what it carries.
 
+    Populates `cached_results` only when the chosen algorithm is actually
+    stored on the object; the caller reads that entry back to tell "already
+    covered" from "must be computed".
+    """
     bucket, key = _parse_s3_uri(location_uri)
     all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
     # A named algorithm is used as named; otherwise pick the best one stored.
@@ -105,12 +97,68 @@ def detect_and_cache_for_s3(
         if algorithm is not None
         else _select_best_algorithm(set(all_checksums))
     )
-    # A single object is either covered or not, which is all the compute phase
-    # asks; there are no children to count.
     if chosen is not None and chosen in all_checksums:
         cached_results[location_uri] = all_checksums[chosen]
-        return _S3Detection(chosen, covers_all_children=True)
     return _S3Detection(chosen)
+
+
+def _compute_folder_for_s3(
+    location_uri: str,
+    algorithm: Algorithm | None,
+    cached_results: dict[str, ChecksumResult],
+    s3_client,
+    compute_if_no_s3_checksum: bool,
+    max_workers: int | None,
+) -> ChecksumResult | None:
+    """
+    Discover, select, resolve and fold a prefix in one pass.
+
+    One ListObjectsV2 pagination, one algorithm, one resolution attempt per
+    object. The detect-then-compute pair this replaced listed the prefix twice
+    and HEADed every child before fetching any of them.
+
+    Coverage is read off the resolved children, never off the listing: the
+    listing's checksum hints are a cost estimate and can be both optimistic
+    (a reported algorithm whose stored value turns out to be unusable) and
+    pessimistic (a multipart ETag over a perfectly good whole-object digest).
+    Only what came back may decide whether a digest is reported.
+    """
+    selection = _select_folder_algorithm(location_uri, s3_client, algorithm)
+    bucket, key = _parse_s3_uri(location_uri)
+    prefix = _folder_prefix(key)
+    chosen = selection.algorithm or default_algorithm()
+
+    # cached_results is the caller's shared dict, written to below but never
+    # read here: an entry an earlier asset left behind was validated against
+    # that asset's object, not this one. Resolution re-validates every child.
+    resolution = _resolve_s3_objects(
+        bucket,
+        chosen,
+        s3_client,
+        selection.objects,
+        use_stored=True,
+        cached_results=None,
+        download=compute_if_no_s3_checksum,
+        max_workers=max_workers,
+    )
+    # Accumulated even when the folder is then skipped: the digests are real
+    # and the caller's cache is the only place they survive the call.
+    cached_results.update(resolution.stored)
+
+    # With downloads allowed, resolution leaves nothing unresolved, so this is
+    # reached only under compute_if_no_s3_checksum=False. Guarding on the flag
+    # rather than on `complete` alone matters for the empty prefix, which is
+    # never "complete" but still folds to an empty-folder digest when
+    # downloading is permitted — as it did before.
+    if not compute_if_no_s3_checksum and not resolution.complete:
+        logger.debug(
+            "Skipping %s: not every child has a stored S3 checksum and "
+            "compute_if_no_s3_checksum=False",
+            location_uri,
+        )
+        return None
+
+    return _fold_s3_children(bucket, prefix, resolution.children, chosen)
 
 
 def compute_for_s3(
@@ -122,19 +170,25 @@ def compute_for_s3(
     compute_if_no_s3_checksum: bool,
     max_workers: int | None = None,
 ) -> ChecksumResult | None:
+    if asset_type == AssetType.folder:
+        return _compute_folder_for_s3(
+            location_uri,
+            algorithm,
+            cached_results,
+            s3_client,
+            compute_if_no_s3_checksum,
+            max_workers,
+        )
+
     fresh_results: dict[str, ChecksumResult] = {}
     detection = detect_and_cache_for_s3(
-        location_uri, asset_type, algorithm, fresh_results, s3_client, max_workers
+        location_uri, algorithm, fresh_results, s3_client
     )
     cached_results.update(fresh_results)
     if detection.algorithm and location_uri in fresh_results:
         return fresh_results[location_uri]
 
-    # Assembling a folder digest from already-cached children needs no
-    # downloads, so compute_if_no_s3_checksum does not apply to it. Partial
-    # coverage does not qualify: the children that are missing would still
-    # have to be fetched, which is exactly what this flag forbids.
-    if not compute_if_no_s3_checksum and not detection.covers_all_children:
+    if not compute_if_no_s3_checksum:
         logger.debug(
             "Skipping %s: no stored S3 checksum and compute_if_no_s3_checksum=False",
             location_uri,
@@ -147,7 +201,7 @@ def compute_for_s3(
         s3_client=s3_client,
         use_stored=False,
         cached_results=fresh_results,
-        is_folder=asset_type == AssetType.folder,
+        is_folder=False,
         max_workers=max_workers,
     )
 
