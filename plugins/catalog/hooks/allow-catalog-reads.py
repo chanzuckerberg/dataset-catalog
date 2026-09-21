@@ -65,7 +65,7 @@ reads = (
     or re.search(r"\bcatalog\s+collections\s+(list|get|entries|parents)\b", cmd)
     or re.search(r"\bcatalog\s+--version\b", cmd)
     # bundled read-only scripts, anchored to the scripts/ dir (not a bare filename).
-    or re.search(r"scripts/(preflight|search_expanded|ols)\.py\b", cmd)
+    or re.search(r"scripts/(preflight|search_expanded|ols|api_map)\.py\b", cmd)
     # stdlib REST GET against the catalog. Require the sanctioned read signature:
     # the token sent as the X-catalog-api-token *header* (exfiltration puts it in
     # the URL instead), no mutation, and no URL literal to a non-catalog host.

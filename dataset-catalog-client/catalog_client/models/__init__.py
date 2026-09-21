@@ -29,7 +29,10 @@ from catalog_client.models.dataset import (
     DatasetWithRelationsResponse,
     FacetBucket,
 )
-from catalog_client.models.governance import GovernanceMetadata
+from catalog_client.models.governance import (
+    GovernanceMetadata,
+    GovernanceMetadataResponse,
+)
 from catalog_client.models.lineage import (
     LineageEdgeRequest,
     LineageEdgeResponse,
@@ -88,6 +91,7 @@ __all__ = [
     "ExperimentMetadata",
     "FacetBucket",
     "GovernanceMetadata",
+    "GovernanceMetadataResponse",
     "IntensityStatistics",
     "LineageEdgeRequest",
     "LineageEdgeResponse",

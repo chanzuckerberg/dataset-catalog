@@ -50,6 +50,13 @@ The list route may ignore an unsupported parameter and appear to match
 everything. If a filter should reduce `total` but does not, report that the filter
 may have been ignored rather than trusting the count.
 
+The API surface itself is in flux: endpoint paths and parameters documented in
+`reference/rest.md` are snapshots, not contracts. On a `404`/`405` for a
+documented path or a `422` for a documented parameter, rediscover the current
+surface with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py"` (read-only,
+auto-approved) and adapt the call — never conclude from a stale path that the
+data or capability is missing.
+
 ## Output hygiene
 
 * Lead a search or list with the **number of matches** and the exact filters or
@@ -60,6 +67,34 @@ may have been ignored rather than trusting the count.
 * Keep out of the conversation: raw JSON, command output, full record dumps, facet
   dumps, raw OLS payloads, pagination responses, and unrequested metadata. If the
   user explicitly asks for a full record, return that record and nothing else.
+
+## Judgment — answer quality
+
+Output hygiene keeps context clean; these rules keep the *answer* trustworthy.
+
+* **Never invent catalog facts.** Every dataset, `canonical_id`, owner,
+  location, or count you report must have come back from the API in this
+  session. No plausible reconstructions.
+* **Zero results is a real answer.** `q` is full-text over indexed content — a
+  plausible business phrase can legitimately return nothing (some projects
+  name datasets by accession, not description). Before concluding "none
+  exist", retry once within scope: drop `q` and lean on exact filters, or
+  request a facet to see what values the catalog actually holds. Report the
+  terms and filters tried.
+* **Rank, don't dump.** When many datasets match, surface the best few and
+  name the axis you ranked on (relevance, freshness, latest-version). Say
+  plainly when the top hit is weak — a hedged recommendation beats a
+  confident wrong one.
+* **Prefer `is_latest=true`** unless the user asked about a specific version;
+  mention `/api/datasets/{id}/history` when version lineage matters.
+* **Recommendations must be actionable.** For each dataset you recommend,
+  include `canonical_id` + `version`, why it matches, and — when the user
+  needs to request, attribute, or fetch the data — `access_scope`, the
+  owner/steward, and `locations` URIs. The user should not need a second
+  lookup to act on the answer.
+* **Ambiguous ask** ("brain data", "user data"): run one faceted search first
+  and use the value/count clusters to ask a targeted follow-up, rather than
+  asking cold or guessing.
 
 ## Completeness labeling
 

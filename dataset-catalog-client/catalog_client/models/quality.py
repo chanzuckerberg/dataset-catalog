@@ -20,3 +20,15 @@ class DataQualityChecks(BaseModel):
         default=None,
         description="List of data quality checks that were skipped or not applicable",
     )
+    report_assets: list[dict[str, str]] | None = Field(
+        default=None,
+        description="Human-readable QC reports, one entry per file, as {'name': ..., 'uri': ...} (e.g. {'name': 'fastqc', 'uri': 's3://bucket/qc/fastqc.html'}). Pointers only; the catalog never fetches or hosts them",
+    )
+    metrics_assets: list[dict[str, str]] | None = Field(
+        default=None,
+        description="Machine-readable metric files backing the checks, one entry per file, as {'name': ..., 'uri': ...} (e.g. {'name': 'multiqc', 'uri': 's3://bucket/qc/multiqc_data.json'})",
+    )
+    metrics: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Metric values inline, one entry per metric with at least a name and value (e.g. {'name': 'duplication_rate', 'value': 0.12}); use for the few worth reading without opening a file, and put the bulk in metrics_assets",
+    )

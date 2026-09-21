@@ -20,6 +20,7 @@ class StoragePlatform(str, enum.Enum):
     ny_hpc = "ny_hpc"
     reef = "reef"
     kelp = "kelp"
+    atoll = "atoll"
     external = "external"
     other = "other"
 

@@ -62,6 +62,12 @@ class RegistrationRequest:
     lineage: list[LineageSpec] = field(default_factory=list)
 
     def to_dataset_request(self) -> DatasetRequest:
+        # Pydantic accepts an already-constructed nested model without re-checking it,
+        # so a builder placeholder missing the required `data_steward` would otherwise
+        # reach the API and come back a 422. Revalidate here instead.
+        governance = GovernanceMetadata.model_validate(
+            self.governance.model_dump(exclude_unset=True)
+        )
         return DatasetRequest(
             canonical_id=self.canonical_id,
             name=self.name,
@@ -69,7 +75,7 @@ class RegistrationRequest:
             project=self.project,
             modality=self.modality,
             locations=self.locations,
-            governance=self.governance,
+            governance=governance,
             metadata=self.metadata,
             description=self.description,
             dataset_type=self.dataset_type,
