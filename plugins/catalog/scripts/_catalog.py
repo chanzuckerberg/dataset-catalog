@@ -27,14 +27,11 @@ from typing import Any, NoReturn
 DEFAULT_API_URL = "https://datacatalog.prod-sci-data.prod.czi.team/"
 DEFAULT_TIMEOUT = 30.0
 
-# Candidate OpenAPI-spec locations, most likely first. The API is in flux;
-# probing these lets a relocated spec (or endpoint) degrade to one extra
-# request instead of a broken script.
-SPEC_PATHS = (
-    "/api/meta/openapi.json",
-    "/api/openapi.json",
-    "/openapi.json",
-)
+# The OpenAPI spec lives here. Kept as a sequence so probe_spec can try more
+# than one location if the spec ever moves again; the unauthenticated
+# /openapi.json is deliberately absent — it is behind the SSO proxy, which
+# answers 200 with an HTML login page rather than a 404.
+SPEC_PATHS = ("/api/meta/openapi.json",)
 
 # Dataset routes as of authoring — the fast path. If one of them 404s/405s the
 # REST client re-resolves the current routes from the live spec (once) and

@@ -21,10 +21,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" datasets/search
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/api_map.py" lineage --json
 ```
 
-The script probes the known spec locations (`/api/meta/openapi.json` and
-fallbacks) with the token header, so a relocated spec degrades to a slower
-first call rather than a broken skill. It is read-only and auto-approved by
-the plugin hook.
+The script reads the spec from `/api/meta/openapi.json` with the token header,
+so a moved endpoint degrades to a slower first call rather than a broken skill.
+It is read-only and auto-approved by the plugin hook.
 
 When to discover:
 
