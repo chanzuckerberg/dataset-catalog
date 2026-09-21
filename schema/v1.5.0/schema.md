@@ -113,7 +113,7 @@ tombstone, since that is just adding previously missing information.
 | Field | Type | Required | Description |
 |---|---|----------|---|
 | `storage_platform` | string | Yes      | Storage backend holding the bytes. See [Storage platforms](#storage-platforms). Required on every asset and never derived from `location_uri`. |
-| `location_uri` | string | Yes      | Full URI with storage scheme (e.g. `s3://`, `gs://`, `https://`, `globus://`, `file://`). |
+| `location_uri` | string | Yes      | Full URI with storage scheme (e.g. `s3://`, `gs://`, `https://`, `globus://`). |
 | `asset_type` | string | Yes      | `file` or `folder`. |
 | `size_bytes` | integer | No       | Total size in bytes. For folder assets, the sum of all included files. |
 | `checksum` | string | No       | Integrity hash. Single files use a standard hash; folders use a Merkle-style hash over sorted individual file checksums. |
