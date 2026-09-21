@@ -23,6 +23,7 @@ algorithm to that dict enrols it in the conformance suite automatically.
 
 import boto3
 import pytest
+from botocore.config import Config
 from moto import mock_aws
 
 from catalog_client.utils.checksum import hashing
@@ -67,7 +68,13 @@ def strip_part_count(value: str) -> str:
 @pytest.fixture
 def s3():
     with mock_aws():
-        client = boto3.client("s3", region_name="us-east-1")
+        # Wide enough that the 32-worker case in the sweep below actually
+        # runs 32 rather than clamping to a stock pool of 10.
+        client = boto3.client(
+            "s3",
+            region_name="us-east-1",
+            config=Config(max_pool_connections=40),
+        )
         client.create_bucket(Bucket=BUCKET)
         yield client
 
@@ -168,7 +175,7 @@ def test_every_child_of_a_prefix_matches_s3s_own_value(
 
 
 @native_algorithms
-@pytest.mark.parametrize("workers", [1, 2, 3, 8], ids=lambda w: f"w{w}")
+@pytest.mark.parametrize("workers", [1, 2, 3, 8, 32], ids=lambda w: f"w{w}")
 def test_a_prefix_digest_is_the_same_at_any_worker_count(
     s3, algorithm, response_key, workers
 ):

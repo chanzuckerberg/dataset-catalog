@@ -503,7 +503,7 @@ def test_checksum_workers_does_not_change_the_digest(tmp_path, capsys):
     _worker_tree(tmp_path)
 
     digests = []
-    for workers in ("1", "2", "8"):
+    for workers in ("1", "2", "8", "32"):
         main(
             [
                 "checksum",

@@ -108,11 +108,15 @@ class _Paginator:
 
 
 class _Config:
-    max_pool_connections = 10
+    # Above DEFAULT_S3_WORKERS so the stub exercises the real default rather
+    # than silently clamping every walk. Per-instance so a test can narrow it.
+    def __init__(self, max_pool_connections=40):
+        self.max_pool_connections = max_pool_connections
 
 
 class _Meta:
-    config = _Config()
+    def __init__(self, max_pool_connections=40):
+        self.config = _Config(max_pool_connections)
 
 
 class StubS3:
@@ -126,9 +130,13 @@ class StubS3:
     without a sleep.
     """
 
-    meta = _Meta()
-
-    def __init__(self, objects: list[StubObject], page_size: int = 1000):
+    def __init__(
+        self,
+        objects: list[StubObject],
+        page_size: int = 1000,
+        max_pool_connections: int = 40,
+    ):
+        self.meta = _Meta(max_pool_connections)
         self.objects = objects
         self._by_key = {o.key: o for o in objects}
         self._page_size = page_size

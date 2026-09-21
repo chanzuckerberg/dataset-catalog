@@ -831,9 +831,11 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
     mock_client.assert_called_once()
     assert mock_client.call_args.args == ("s3",)
     # We own this client, so its pool is sized for the concurrent folder scan.
-    # A stock client caps at 10 and discards connections past that silently.
+    # Strictly greater, not merely equal: the headroom above the worker budget
+    # is what keeps the paginator from contending with a full set of workers,
+    # and it is also what keeps an owned client off the clamp warning path.
     config = mock_client.call_args.kwargs["config"]
-    assert config.max_pool_connections >= DEFAULT_S3_WORKERS
+    assert config.max_pool_connections > DEFAULT_S3_WORKERS
 
 
 # ── Skip reporting: one mechanism for every skip ─────────────────────────────

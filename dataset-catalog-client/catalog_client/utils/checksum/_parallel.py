@@ -32,11 +32,16 @@ R = TypeVar("R")
 # own locking cost more than the extra parallelism returns.
 DEFAULT_LOCAL_WORKERS = 8
 
-# S3 is latency-bound, so more workers would help — but a stock boto3 client
-# caps its connection pool at 10, and botocore leaves urllib3 at block=False,
-# which means an over-subscribed pool silently closes and re-opens connections
-# rather than queueing. Staying under the default leaves room for the paginator.
-DEFAULT_S3_WORKERS = 8
+# S3 is latency-bound: a walk spends its time waiting on round trips, not on
+# CPU, so the budget should track the connection pool we control rather than
+# the one boto3 happens to ship. `owned_s3_client` sizes its pool to this
+# number plus headroom, which is why the two must move together.
+#
+# It is only honoured where we own both sides. A caller's own client still
+# clamps it down — a stock one to 10 — and `effective_s3_workers` now says so
+# out loud rather than only at DEBUG, because at this default that clamp is
+# the common case rather than the exception.
+DEFAULT_S3_WORKERS = 32
 
 # Futures held in flight per worker. Enough that a worker never idles waiting
 # for the consumer to advance, small enough that the queue stays bounded.

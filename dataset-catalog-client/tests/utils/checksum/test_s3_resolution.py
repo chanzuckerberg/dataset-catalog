@@ -298,7 +298,7 @@ def test_a_download_starts_while_another_objects_head_is_outstanding():
     assert not resolver.is_alive()
 
 
-@pytest.mark.parametrize("workers", [1, 2, 8])
+@pytest.mark.parametrize("workers", [1, 2, 8, 32])
 def test_the_folder_digest_does_not_depend_on_worker_count(workers):
     objects = [listed(f"{i}.bin", body=bytes([i]) * (i + 1)) for i in range(8)]
     objects[3].with_native(Algorithm.crc32)

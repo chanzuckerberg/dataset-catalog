@@ -45,6 +45,10 @@ def _s3(head=None, body=b"hello"):
     # key, so the second child to read it would see an exhausted stream. Serial
     # execution made that deterministic; concurrent children would race on it.
     s3.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(body)}
+    # These tests are about routing, not concurrency. Without an int here the
+    # mock falls back to DEFAULT_S3_WORKERS and every one of them spins up a
+    # full pool for a handful of keys.
+    s3.meta.config.max_pool_connections = 2
     return s3
 
 

@@ -20,6 +20,7 @@ from catalog_client.utils.checksum._parallel import (
     effective_s3_workers,
     local_workers,
     ordered_map,
+    owned_s3_client,
     requested_s3_workers,
 )
 
@@ -149,8 +150,10 @@ def test_effective_s3_workers_clamps_to_a_stock_client_pool():
     boto3 = pytest.importorskip("boto3")
     client = boto3.client("s3", region_name="us-east-1")
     assert client.meta.config.max_pool_connections == 10
-    # Default stays under the pool; an oversized request is clamped to it.
-    assert effective_s3_workers(client, None) == DEFAULT_S3_WORKERS
+    # The default now sits above a stock pool, so it is the default itself that
+    # gets clamped — not just an oversized explicit request.
+    assert DEFAULT_S3_WORKERS > 10
+    assert effective_s3_workers(client, None) == 10
     assert effective_s3_workers(client, 64) == 10
     assert effective_s3_workers(client, 2) == 2
 
@@ -208,3 +211,27 @@ def test_effective_s3_workers_applies_the_same_precedence(s3, hash_max, expected
         config=botocore_config.Config(max_pool_connections=100),
     )
     assert effective_s3_workers(client, s3, hash_max) == expected
+
+
+def test_the_s3_default_is_thirty_two():
+    """A tripwire: changing this number means revisiting its rationale.
+
+    The comment on the constant argues for it from the pool `owned_s3_client`
+    builds, and the checksum guide documents it. Neither follows automatically.
+    """
+    assert DEFAULT_S3_WORKERS == 32
+
+
+@pytest.mark.parametrize("requested, pool", [(None, 40), (16, 40), (64, 72)])
+def test_owned_clients_are_never_clamped_by_their_own_pool(requested, pool):
+    """The invariant owned_s3_client's docstring claims but nothing tested.
+
+    When the pool it writes and the budget effective_s3_workers reads disagree,
+    the walk silently pays a TLS handshake per excess request.
+    """
+    pytest.importorskip("boto3")
+    client = owned_s3_client(requested)
+    assert client.meta.config.max_pool_connections == pool
+    assert effective_s3_workers(client, requested) == requested_s3_workers(
+        requested, None
+    )
