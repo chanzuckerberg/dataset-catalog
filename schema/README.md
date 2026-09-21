@@ -11,7 +11,8 @@ client, see [`dataset-catalog-client/USAGE.md`](../dataset-catalog-client/USAGE.
 
 | Version | Document | Status |
 |---------|----------|--------|
-| v1.4.0 | [`v1.4.0/schema.md`](v1.4.0/schema.md) | **Current** — default for new registrations |
+| v1.5.0 | [`v1.5.0/schema.md`](v1.5.0/schema.md) | **Current** — default for new registrations |
+| v1.4.0 | [`v1.4.0/schema.md`](v1.4.0/schema.md) | Supported for read |
 
 The active schema version is recorded on each dataset record as `record_schema_version`.
 

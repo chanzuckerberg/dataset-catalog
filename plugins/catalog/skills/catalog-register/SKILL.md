@@ -87,8 +87,8 @@ Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the
    Validates with the API's own Pydantic rules, prints the JSON payload,
    mock-submits, and reports **coverage** — every source field mapped, dropped, or *silently lost*. Iterate until clean:
    ```
-   [mapping valid] schema=v1.4.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 1 dropped of 25 source fields
+   [mapping valid] schema=v1.5.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [coverage] 24 mapped + 2 dropped of 26 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
 5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser). Run the
@@ -111,7 +111,7 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 |---------------------------------------------------|---|----------------------------------------------------------------------------------------------------------|
 | stable external id                                | `canonical_id` (signature) | `new_registration(canonical_id=...)`                                                                     |
 | version / project                                 | `version`, `project` (signature) | `new_registration(version=..., project=...)`                                                             |
-| modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `unknown`                     |
+| modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `text` / `unknown`                     |
 | raw vs processed                                  | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`)                                                       |
 | file/folder URI + checksum /  size                | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=..., size_bytes=)` |
 | license / access / owner / PHI / PII              | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=..., is_pii=...)`         |
@@ -148,6 +148,8 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 1. `governance` is fixed-shape. Never route extras into `.with_governance(...)`.
    - Map only the schema's named fields (`license`, `access_scope`, `is_pii`, `is_phi`,
       `data_steward`, `data_owner`, `is_external_reference`, `embargoed_until`);
+      `data_steward` is **required** since schema v1.5.0 — the block will not
+      validate without it.
    - **Skip `data_sensitivity`.** It is a named governance field, but leave it unset — do not map a source value onto it, and do not route it to `.with_custom_metadata(...)` either.
    - A source field about access, licensing, ownership, compliance, or data
      sensitivity (e.g. `confidentiality`, `usage_restrictions`, `data_use_agreement`,
@@ -164,10 +166,13 @@ Goal: **lossless** mappings. Coverage report ensures every field is a deliberate
 2. **Normalize, don't copy.** Source key names rarely match. Write small
   helpers (`_ontology()`, `_storage_platform()`) instead of inlining renames.
 3. **Infer the enums.**
-  - `modality` ∈ {`imaging`,`sequencing`,`mass spec`,`unknown`}
+  - `modality` ∈ {`imaging`,`sequencing`,`mass spec`,`text`,`unknown`}
   - `dataset_type` ∈ {`raw`,`processed`} usually have to be *derived* from the source (assay type, file format, processing stage), not copied verbatim.
 4. **Don't invent values.** If the source has no `checksum`/owner, leave it
 unset — empty is honest; a fabricated value is a data-quality bug.
+   - `data_steward` is the one field with no honest empty value: it is required,
+     so ask the user for it. Do not substitute `data_owner` or a contact address
+     — the steward and the owner are different accountabilities.
 5. **`license`: ask, don't guess.** If you can't find license information in the
   source, check with the user what it should be rather than leaving it blank or
   fabricating one. Only set `license` to a value the user confirms.
@@ -180,7 +185,7 @@ unset — empty is honest; a fabricated value is a data-quality bug.
         backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site.
    - An `http(s)://` URI is **not** always `external` — internal platforms can sit behind a URL.
    - State your assumption and confirm with the user before mapping. (Members: `s3`,
-        `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other`.) Validate this with the client.
+        `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other`.) Validate this with the client.
 9. **Resolve ontology labels via the OLS MCP server.** This plugin configures an MCP server named `ols` that points at the EBI Ontology Lookup Service, so its tools are available directly.
    - Don't shell out to `curl`/REST. When an ontology field gives only a `label` and no id, call the
      `ols` server's **`searchClasses`** tool (`query=<label>`, plus
@@ -301,7 +306,7 @@ Get token from catalog's `/tokens` page (open in a logged-in browser; SSO-gated)
 - `ValidationError: ... Field required` on `--dry-run` → a required block
   (`governance`, `metadata`, ≥1 `locations`) wasn't mapped.
 - `ValueError: 'x' is not a valid DatasetModality` → map the source value to a
-  valid enum member (`imaging` / `sequencing` / `mass spec` / `unknown`).
+  valid enum member (`imaging` / `sequencing` / `mass spec` / `text` / `unknown`).
 - `DuplicateDatasetError` on `--submit` → a dataset with the same signature
   exists; confirm intent with the user, then pass `error_on_duplicate=False` to
   skip (return the existing id) or `error_on_duplicate=False, update_if_exists=True`

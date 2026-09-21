@@ -40,10 +40,12 @@ from catalog_client.exceptions import (
     CatalogConnectionError,
     CatalogError,
     CatalogServerError,
+    CatalogUsageError,
     NotFoundError,
 )
 from catalog_client.models.asset import AssetType
 from catalog_client.models.dataset import (
+    DatasetListSortOption,
     DatasetModality,
     DatasetRef,
     DatasetSortOption,
@@ -204,8 +206,9 @@ def cmd_search(args: argparse.Namespace) -> None:
             development_stage=args.development_stage,
             facets=args.facets.split(",") if args.facets else None,
             sort=DatasetSortOption(sort),
-            offset=args.offset,
+            cursor=args.cursor,
             limit=args.limit,
+            hydrate=args.hydrate,
         )
     if args.output == "json":
         _dump(_model(response))
@@ -286,6 +289,8 @@ def cmd_list(args: argparse.Namespace) -> None:
             is_latest=None if args.all_versions else True,
             include_lineage=args.lineage,
             include_collections=args.collections,
+            sort=DatasetListSortOption(args.sort) if args.sort else None,
+            cursor=args.cursor,
             offset=args.offset,
             limit=args.limit,
         )
@@ -600,6 +605,27 @@ def _add_paging(parser: argparse.ArgumentParser, limit: int) -> None:
     parser.add_argument("--offset", type=int, default=0)
 
 
+def _add_cursor_paging(
+    parser: argparse.ArgumentParser, limit: int, *, offset: bool
+) -> None:
+    """Paging flags for the cursor-paginated dataset routes.
+
+    `search` is cursor-only; `list` still accepts an offset, but the two are
+    mutually exclusive server-side.
+    """
+    parser.add_argument("--limit", type=int, default=limit)
+    parser.add_argument(
+        "--cursor",
+        help="next_cursor from a previous page; constant-cost at any depth",
+    )
+    if offset:
+        parser.add_argument(
+            "--offset",
+            type=int,
+            help="skip N records (max 10000); use --cursor past that",
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="catalog",
@@ -635,7 +661,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="default: relevance with --q, last_modified without",
     )
     p.add_argument("--all-versions", action="store_true")
-    _add_paging(p, limit=10)
+    p.add_argument(
+        "--hydrate",
+        action="store_true",
+        help="return full records instead of lightweight hits (caps --limit at 100)",
+    )
+    _add_cursor_paging(p, limit=10, offset=False)
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser(
@@ -674,7 +705,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lineage", action="store_true")
     p.add_argument("--collections", action="store_true")
     p.add_argument("--full", action="store_true", help="full records, not summaries")
-    _add_paging(p, limit=100)
+    p.add_argument(
+        "--sort",
+        choices=[option.value for option in DatasetListSortOption],
+        help=(
+            "default: server's (last_modified). Sort on newest/oldest for a "
+            "cursor walk: last_modified is mutable, so a record edited "
+            "mid-walk can be skipped or repeated"
+        ),
+    )
+    _add_cursor_paging(p, limit=100, offset=True)
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser(
@@ -760,6 +800,14 @@ def main(argv: list[str] | None = None) -> None:
         _fail(exc, EXIT_NOT_FOUND, "not found")
     except (CatalogServerError, CatalogConnectionError) as exc:
         _fail(exc, EXIT_SERVER, "catalog unreachable or server error")
+    except CatalogUsageError as exc:
+        # Caller-input problems the SDK catches without a round trip (offset
+        # too deep, cursor with offset, oversized page). Must precede the
+        # CatalogError arm, which would otherwise claim it first. Catching
+        # bare ValueError here instead would also swallow
+        # pydantic.ValidationError — a response-parsing failure, which is a
+        # real fault and should not be reported as the user's mistake.
+        _usage_error(str(exc))
     except CatalogError as exc:
         _fail(exc, EXIT_ERROR, "request failed")
 

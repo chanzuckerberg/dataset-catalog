@@ -78,7 +78,10 @@ Useful flags:
 
 - `-o/--output` (all subcommands) — `table` or `json`; defaults to `table` on a terminal, `json` when piped.
 - `--all-versions` (`search`, `list`, `facets`) — include superseded versions; by default only `is_latest` records are returned.
-- `--sort` (`search`) — `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest`. Defaults to `relevance` when `--q` is given, `last_modified` otherwise.
+- `--cursor` (`search`, `list`) — the `next_cursor` from a previous page; constant-cost at any depth. Required past `--offset 10000` on `list`, and the only way to page `search`.
+- `--offset` (`list` only) — skip N records, max 10000; deeper paging exits with code 2 and directs you to `--cursor`.
+- `--sort` (`search`) — `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest`. Defaults to `relevance` when `--q` is given, `last_modified` otherwise. This default is applied by the CLI only; the Python `datasets.search()` omits `sort` unless you pass one, leaving the choice to the server.
+- `--sort` (`list`) — `last_modified`, `newest`, `oldest` only; the list route has no relevance score and no alphabetical order. Unset leaves the choice to the server. Prefer `newest`/`oldest` for a `--cursor` walk: they sort on the immutable `created_at`, whereas `last_modified` can shift mid-walk and skip or repeat a record.
 - `--facets` (`search`) — request bucket counts alongside hits, e.g. `--facets organism,tissue`.
 - `--type` (`lineage`) — restrict the walk to one edge type (`version_of`, `transformed_from`, `copy_of`).
 
@@ -144,6 +147,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
             )
         ],
         governance=GovernanceMetadata(
+            data_steward="genomics-team",   # required
             data_owner="genomics-team",
             access_scope="internal",
             is_pii=False,
@@ -171,7 +175,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
         )
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
         .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
@@ -199,7 +203,7 @@ To record lineage at registration time:
             modality=DatasetModality.sequencing,
         )
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
         .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
     )
@@ -213,7 +217,7 @@ from catalog_client import DatasetRef
 dataset_id = (
     client.new_registration(...)
     .with_location(...)
-    .with_governance(data_owner="genomics-team", is_pii=False)
+    .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
     .with_lineage(
         DatasetRef(canonical_id="raw-rna-seq", version="1.0.0", project="atlas"),
         lineage_type=LineageType.transformed_from,
@@ -234,7 +238,7 @@ The builder exposes further optional methods:
 | `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
 | `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
 | `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
-| `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed, failed, skipped check names) |
+| `.with_data_quality(**kwargs)` | Set `DataQualityChecks` (passed/failed/skipped check names, plus `report_assets`, `metrics_assets`, `metrics`) |
 | `.with_custom_metadata(**kwargs)` | Add arbitrary key-value pairs at the dataset-metadata level |
 | `.with_doi(doi)` | Set the dataset DOI |
 | `.with_cross_db_references(refs)` | Set external DB references (list or `; `-joined string) |
@@ -275,7 +279,7 @@ Note: `update_if_exists=True` and `error_on_duplicate=True` cannot be used toget
 ### List datasets
 
 ```python
-from catalog_client import DatasetModality
+from catalog_client import DatasetListSortOption, DatasetModality
 
 page = client.datasets.list(
     canonical_id="my-rna-seq-dataset",  # exact match filter
@@ -287,8 +291,10 @@ page = client.datasets.list(
     exclude_tombstoned=True,            # set False to include tombstoned records
     include_lineage=False,
     include_collections=False,
-    offset=0,
-    limit=100,
+    sort=DatasetListSortOption.last_modified,  # optional; omit to use the server default
+    offset=0,                           # shallow paging only, max 10000
+    limit=100,                          # 1-500, enforced client-side
+    include_total=True,                 # False skips the count query
 )
 
 print(f"{page.total} total results")
@@ -296,26 +302,95 @@ for ds in page.results:
     print(ds.id, ds.name, ds.version)
 ```
 
+Returns a `CursorPaginatedResponse`. `total` is `None` when
+`include_total=False`, and `offset` is `None` when paging by cursor.
+
+### Paginating datasets
+
+The list route pages either by `offset` or by keyset `cursor` — passing both
+raises `CatalogUsageError`. Offset paging is fine for the first few pages, but
+its cost grows with depth and the server must walk and discard every skipped
+row, so **`offset` above 10,000 raises `CatalogUsageError`** and points you at
+the cursor. Past a few thousand records, follow `next_cursor` instead:
+
+```python
+cursor = None
+while True:
+    page = client.datasets.list(project="atlas", cursor=cursor, limit=500,
+                                include_total=False)
+    for ds in page.results:
+        print(ds.id)
+    if page.next_cursor is None:
+        break
+    cursor = page.next_cursor
+```
+
+`iter_all()` does that walk for you:
+
+```python
+for ds in client.datasets.iter_all(project="atlas", limit=500):
+    print(ds.id, ds.name)
+```
+
+`sort` is omitted unless you pass one, so the server default applies — and
+that default sorts on a mutable key, meaning a row modified mid-walk can be
+skipped or repeated. For a walk that cannot miss or duplicate rows, sort on
+the immutable `created_at`:
+
+```python
+for ds in client.datasets.iter_all(sort=DatasetListSortOption.newest, limit=500):
+    print(ds.id, ds.name)
+```
+
+A cursor is only valid for the `sort` and filters it was issued with —
+changing either mid-walk raises `RecordValidationError` (422).
+
+`iter_all()` and `iter_search()` stop rather than loop if the server hands
+back a cursor it already issued, or promises another page while returning an
+empty one. Either would otherwise be an unbounded request loop; both raise
+`CatalogError`, since they are server faults rather than caller mistakes.
+
 ### Search datasets
 
-Full-text and faceted search over the active index. Returns lightweight hits; fetch
-the full record with `datasets.get(id)`.
+Full-text and faceted search over the active index. Returns lightweight hits;
+fetch the full record with `datasets.get(id)`, or pass `hydrate=True` below.
 
 ```python
 results = client.datasets.search(
     q="rna-seq liver",
     modality=DatasetModality.sequencing,
     organism="Homo sapiens",
+    cohort="cohort-a",                         # from metadata.experiment.cohort
+    file_format="fastq",                       # matches a dataset location
+    storage_platform="s3",                     # matches a dataset location
     facets=["modality", "project"],            # repeatable; returns bucket counts
-    sort=DatasetSortOption.relevance,          # relevance | alphabetical | last_modified | newest | oldest
-    offset=0,
-    limit=10,
+    fields=["license", "cell_count"],          # extra fields on each hit
+    sort=DatasetSortOption.relevance,          # optional; omit to use the server default
+    limit=10,                                  # 1-1000 (1-100 with hydrate=True), enforced client-side
 )
 for hit in results.results:
     print(hit.id, hit.name, hit.score)
+    print(hit.model_extra)                     # fields requested via fields=
 if results.facets:
     for value_count in results.facets["modality"]:
         print(value_count.value, value_count.count)
+```
+
+Pass `hydrate=True` to get full `DatasetResponse` records instead of hits,
+at the cost of one extra query per page:
+
+```python
+results = client.datasets.search(q="rna-seq liver", hydrate=True, limit=100)
+for record in results.results:
+    print(record.id, record.metadata)
+```
+
+**Search pages by cursor only** — it has no `offset` parameter. Follow
+`next_cursor` until it comes back `None`, or let `iter_search()` walk it:
+
+```python
+for hit in client.datasets.iter_search(q="rna-seq liver", limit=1000):
+    print(hit.id, hit.name)
 ```
 
 ### Dataset history
@@ -522,7 +597,7 @@ The client provides utilities to automatically generate checksums for dataset as
 The `checksum` extra adds `blake3`, `crcmod`, and `awscrt`:
 
 ```bash
-pip install "catalog-client[checksum]"
+uv pip install 'catalog-client[checksum] @ git+https://github.com/chanzuckerberg/dataset-catalog.git#subdirectory=dataset-catalog-client'
 ```
 
 It is optional — without it, `blake2b` and `crc32` still work from the standard library,
@@ -745,6 +820,7 @@ from catalog_client import (
     CatalogServerError,
     CatalogConnectionError,
     CatalogError,
+    CatalogUsageError,
     DuplicateDatasetError,
     LineageResolutionError,
     NotFoundError,
@@ -765,6 +841,11 @@ except CatalogHTTPError as e:
     print(f"Unexpected HTTP error {e.status_code}: {e.detail}")
 except CatalogConnectionError as e:
     print(f"Network error: {e}")
+except CatalogUsageError as e:
+    # Bad arguments the client rejects without a round trip: offset past
+    # 10,000, cursor together with offset, a page size over the route's
+    # ceiling. Also a ValueError, so existing `except ValueError` still works.
+    print(f"Bad arguments: {e}")
 except CatalogError as e:
     print(f"Unexpected catalog error: {e}")
 
@@ -790,12 +871,13 @@ except LineageResolutionError as e:
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
 | `DataAssetRequest`             | Asset entry inside `DatasetRequest.locations`                          |
 | `DataAssetResponse`            | Asset entry inside response `locations`                                |
-| `GovernanceMetadata`           | Access control and ownership info                                      |
+| `GovernanceMetadata`           | Access control and ownership info; `data_steward` is required          |
+| `GovernanceMetadataResponse`   | Response-side governance — `data_steward` optional for pre-v1.5.0 records |
 | `DatasetMetadata`              | Top-level metadata envelope (`experiment`, `sample`, `data_summary`)   |
 | `SampleMetadata`               | Biological sample information                                          |
 | `ExperimentMetadata`           | Experimental setup and instrument info                                 |
 | `DataSummaryMetadata`          | Content descriptors and modality-specific measurements                 |
-| `DataQualityChecks`            | QC pass / fail / skipped check names                                   |
+| `DataQualityChecks`            | QC pass / fail / skipped check names, plus `report_assets`, `metrics_assets`, `metrics` |
 | `OntologyEntry`                | `{ label, ontology_id }` — organism, disease, development stage        |
 | `TissueEntry`                  | Extends `OntologyEntry` with optional `type` field                     |
 | `CollectionRequest`            | Creating/Updating a collection                                         |
@@ -803,7 +885,11 @@ except LineageResolutionError as e:
 | `LineageEdgeRequest`           | Creating a lineage edge                                                |
 | `LineageEdgeResponse`          | Lineage edge return value                                              |
 | `RegistrationRequest`          | Full registration payload (built via `new_registration()` builder)     |
-| `PaginatedResponse[T]`         | Wrapper for list endpoints (`total`, `limit`, `offset`, `results`)     |
+| `PaginatedResponse[T]`         | Wrapper for collection/lineage/history lists (`total`, `limit`, `offset`, `results`) |
+| `CursorPaginatedResponse[T]`   | Wrapper for `datasets.list()` — adds `next_cursor`; `total` and `offset` are nullable |
+| `DatasetSearchResponse[T]`     | `datasets.search()` result — `total` (nullable), `limit`, `next_cursor`, `results`, `facets` (no `offset`). Generic over the hit type, so `hydrate` is validated rather than guessed |
+| `DatasetSearchPage`            | What `search()` returns: `DatasetSearchResponse[DatasetResponse]` when `hydrate=True`, `DatasetSearchResponse[DatasetSearchHit]` otherwise |
+| `DatasetSearchHit`             | Lightweight search hit; extra `fields=` land in `model_extra`          |
 
 ### Enums
 
@@ -815,3 +901,5 @@ except LineageResolutionError as e:
 | `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training` |
+| `DatasetSortOption` | `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest` — `datasets.search()`; unset omits the param |
+| `DatasetListSortOption` | `last_modified`, `newest`, `oldest` — `datasets.list()`; unset omits the param |

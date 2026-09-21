@@ -50,7 +50,7 @@ _PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
 
 # Enum vocabularies, duplicated here so a script can validate CLI choices with
 # no SDK installed. Keep in sync with catalog_client.models.dataset.
-MODALITIES = ("imaging", "sequencing", "mass spec", "unknown")
+MODALITIES = ("imaging", "sequencing", "mass spec", "text", "unknown")
 SORTS = ("relevance", "alphabetical", "last_modified", "newest", "oldest")
 DEFAULT_SORT = "relevance"
 
