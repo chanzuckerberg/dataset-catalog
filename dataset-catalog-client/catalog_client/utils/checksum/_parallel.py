@@ -100,7 +100,7 @@ def local_workers(requested: int | None) -> int:
     return max(1, min(DEFAULT_LOCAL_WORKERS, available))
 
 
-def s3_workers(s3, requested: int | None) -> int:
+def effective_s3_workers(s3, requested: int | None) -> int:
     """
     Worker count for S3 requests, clamped to the client's own connection pool.
 
@@ -132,8 +132,8 @@ def owned_s3_client(max_workers: int | None = None):
     A boto3 S3 client whose connection pool is sized for our own worker count.
 
     Only for clients we construct: a client passed in by a caller is used as-is
-    and `s3_workers` clamps to whatever pool they chose. Lives beside
-    `s3_workers` because it is the same policy from the other side — that
+    and `effective_s3_workers` clamps to whatever pool they chose. Lives beside
+    `effective_s3_workers` because it is the same policy from the other side — that
     function reads a pool limit, this one writes it, and when the two disagree
     the walk silently pays a TLS handshake per excess request.
 

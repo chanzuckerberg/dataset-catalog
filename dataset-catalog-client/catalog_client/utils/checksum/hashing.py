@@ -6,9 +6,9 @@ from dataclasses import replace
 from typing import NamedTuple
 
 from catalog_client.utils.checksum._parallel import (
+    effective_s3_workers,
     local_workers,
     ordered_map,
-    s3_workers,
 )
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
@@ -629,7 +629,9 @@ def _resolve_s3_objects(
     children: dict[str, ChecksumResult] = {}
     stored: dict[str, ChecksumResult] = {}
     total = 0
-    for key, result in ordered_map(resolve, objects, s3_workers(s3, max_workers)):
+    for key, result in ordered_map(
+        resolve, objects, effective_s3_workers(s3, max_workers)
+    ):
         total += 1
         if result is None:
             continue

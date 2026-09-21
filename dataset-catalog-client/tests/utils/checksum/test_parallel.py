@@ -17,9 +17,9 @@ import pytest
 from catalog_client.utils.checksum._parallel import (
     DEFAULT_LOCAL_WORKERS,
     DEFAULT_S3_WORKERS,
+    effective_s3_workers,
     local_workers,
     ordered_map,
-    s3_workers,
 )
 
 # ── Ordering ──────────────────────────────────────────────────────────────────
@@ -144,17 +144,17 @@ def test_local_workers_defaults_within_the_cap():
     assert 1 <= local_workers(None) <= DEFAULT_LOCAL_WORKERS
 
 
-def test_s3_workers_clamps_to_a_stock_client_pool():
+def test_effective_s3_workers_clamps_to_a_stock_client_pool():
     boto3 = pytest.importorskip("boto3")
     client = boto3.client("s3", region_name="us-east-1")
     assert client.meta.config.max_pool_connections == 10
     # Default stays under the pool; an oversized request is clamped to it.
-    assert s3_workers(client, None) == DEFAULT_S3_WORKERS
-    assert s3_workers(client, 64) == 10
-    assert s3_workers(client, 2) == 2
+    assert effective_s3_workers(client, None) == DEFAULT_S3_WORKERS
+    assert effective_s3_workers(client, 64) == 10
+    assert effective_s3_workers(client, 2) == 2
 
 
-def test_s3_workers_respects_a_narrowed_client_pool():
+def test_effective_s3_workers_respects_a_narrowed_client_pool():
     boto3 = pytest.importorskip("boto3")
     botocore_config = pytest.importorskip("botocore.config")
     client = boto3.client(
@@ -162,13 +162,13 @@ def test_s3_workers_respects_a_narrowed_client_pool():
         region_name="us-east-1",
         config=botocore_config.Config(max_pool_connections=4),
     )
-    assert s3_workers(client, None) == 4
-    assert s3_workers(client, 8) == 4
+    assert effective_s3_workers(client, None) == 4
+    assert effective_s3_workers(client, 8) == 4
 
 
-def test_s3_workers_falls_back_when_the_client_reports_no_usable_pool():
+def test_effective_s3_workers_falls_back_when_the_client_reports_no_usable_pool():
     # Test doubles answer every attribute with a Mock, so the pool size is not
     # an int and must not be compared against.
-    assert s3_workers(MagicMock(), None) == DEFAULT_S3_WORKERS
-    assert s3_workers(MagicMock(), 3) == 3
-    assert s3_workers(object(), None) == DEFAULT_S3_WORKERS
+    assert effective_s3_workers(MagicMock(), None) == DEFAULT_S3_WORKERS
+    assert effective_s3_workers(MagicMock(), 3) == 3
+    assert effective_s3_workers(object(), None) == DEFAULT_S3_WORKERS
