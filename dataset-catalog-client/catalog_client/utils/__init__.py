@@ -11,6 +11,7 @@
 # and appear in user annotations and warning filters.
 from catalog_client.utils.checksum import (
     Algorithm,
+    ChecksumPoolWarning,
     ChecksumResult,
     ChecksumWarning,
     LocationChecksum,
@@ -32,6 +33,7 @@ __all__ = [
     "Algorithm",
     "ChecksumResult",
     "ChecksumWarning",
+    "ChecksumPoolWarning",
     "LocationChecksum",
     # Manifest
     "FieldFilter",

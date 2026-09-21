@@ -9,6 +9,7 @@ what ThreadPoolExecutor.map does and why this module exists.
 
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
@@ -17,6 +18,7 @@ import pytest
 from catalog_client.utils.checksum._parallel import (
     DEFAULT_LOCAL_WORKERS,
     DEFAULT_S3_WORKERS,
+    ChecksumPoolWarning,
     effective_s3_workers,
     local_workers,
     ordered_map,
@@ -153,7 +155,8 @@ def test_effective_s3_workers_clamps_to_a_stock_client_pool():
     # The default now sits above a stock pool, so it is the default itself that
     # gets clamped — not just an oversized explicit request.
     assert DEFAULT_S3_WORKERS > 10
-    assert effective_s3_workers(client, None) == 10
+    with pytest.warns(ChecksumPoolWarning):
+        assert effective_s3_workers(client, None) == 10
     assert effective_s3_workers(client, 64) == 10
     assert effective_s3_workers(client, 2) == 2
 
@@ -166,8 +169,13 @@ def test_effective_s3_workers_respects_a_narrowed_client_pool():
         region_name="us-east-1",
         config=botocore_config.Config(max_pool_connections=4),
     )
-    assert effective_s3_workers(client, None) == 4
-    assert effective_s3_workers(client, 8) == 4
+    with pytest.warns(ChecksumPoolWarning):
+        assert effective_s3_workers(client, None) == 4
+    # Halved, not more than halved, so this one stays below the warning
+    # threshold: the caller has nothing worth acting on.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert effective_s3_workers(client, 8) == 4
 
 
 def test_effective_s3_workers_falls_back_when_the_client_reports_no_usable_pool():
@@ -235,3 +243,101 @@ def test_owned_clients_are_never_clamped_by_their_own_pool(requested, pool):
     assert effective_s3_workers(client, requested) == requested_s3_workers(
         requested, None
     )
+
+
+# ── The pool clamp warning ────────────────────────────────────────────────────
+
+
+def _stock_client():
+    boto3 = pytest.importorskip("boto3")
+    return boto3.client("s3", region_name="us-east-1")  # pool of 10
+
+
+def _client_with_pool(size):
+    boto3 = pytest.importorskip("boto3")
+    botocore_config = pytest.importorskip("botocore.config")
+    return boto3.client(
+        "s3",
+        region_name="us-east-1",
+        config=botocore_config.Config(max_pool_connections=size),
+    )
+
+
+def test_a_stock_pool_warns_that_it_is_holding_the_budget_down():
+    with pytest.warns(ChecksumPoolWarning, match="max_pool_connections"):
+        assert effective_s3_workers(_stock_client(), None) == 10
+
+
+def test_the_clamp_warning_fires_once_per_process():
+    client = _stock_client()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        effective_s3_workers(client, None)
+        effective_s3_workers(client, None)
+    assert len(caught) == 1
+
+
+@pytest.mark.parametrize(
+    "pool, requested, why",
+    [
+        (40, None, "a pool above the default is not clamped at all"),
+        (24, None, "losing 8 of 32 is not worth interrupting anyone about"),
+        (10, 4, "an explicit request that fits needs no advice"),
+    ],
+)
+def test_no_warning_when_there_is_nothing_to_act_on(pool, requested, why):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert effective_s3_workers(_client_with_pool(pool), requested), why
+
+
+def test_an_owned_client_never_warns():
+    """The pool we build is sized to the budget, so it cannot clamp."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        effective_s3_workers(owned_s3_client(), None)
+        effective_s3_workers(owned_s3_client(64), 64)
+
+
+def test_the_clamp_warning_is_raised_on_the_calling_thread():
+    """pytest.warns cannot catch this: the warnings registry is process-wide.
+
+    A regression that moved the clamp check inside a pool worker would still
+    surface a warning, just not one the caller's filters could act on.
+    """
+    from tests.utils.checksum.stub_s3 import StubObject, StubS3
+    from tests.utils.checksum.test_s3_resolution import resolve
+
+    threads = []
+    original = warnings.showwarning
+
+    def record(message, category, *args, **kwargs):
+        if category is ChecksumPoolWarning:
+            threads.append(threading.current_thread().name)
+
+    s3 = StubS3(
+        [StubObject(key=f"dataset/f{i}.bin", body=b"x") for i in range(4)],
+        max_pool_connections=2,
+    )
+    warnings.showwarning = record
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            resolve(s3, workers=32)
+    finally:
+        warnings.showwarning = original
+
+    assert threads == ["MainThread"]
+
+
+def test_the_clamp_warning_is_not_a_checksum_warning():
+    """Callers escalate ChecksumWarning to an error; a clamp still succeeds.
+
+    Making this a subclass would turn every correct-but-slower walk against a
+    stock client into a hard failure for anyone following that documented
+    pattern.
+    """
+    from catalog_client.utils.checksum import ChecksumWarning
+
+    assert not issubclass(ChecksumPoolWarning, ChecksumWarning)
+    assert issubclass(ChecksumPoolWarning, UserWarning)

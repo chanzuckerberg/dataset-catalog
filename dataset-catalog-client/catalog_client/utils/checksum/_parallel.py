@@ -16,6 +16,7 @@ scheduling state before any work is reported.
 
 import logging
 import os
+import warnings
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -26,6 +27,19 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+
+class ChecksumPoolWarning(UserWarning):
+    """
+    A connection pool held the S3 worker count below what was asked for.
+
+    Deliberately not a ChecksumWarning. That class means no digest was
+    produced, and callers are documented to escalate it with
+    `warnings.simplefilter("error", ChecksumWarning)`. A clamped pool still
+    produces a correct digest — only more slowly — so escalating this one
+    would fail walks that in fact succeeded.
+    """
+
 
 # Local hashing is CPU-bound and measured scaling plateaus between 4 and 8
 # threads, then declines: past that point the GIL handoff and the filesystem's
@@ -50,6 +64,17 @@ _WINDOW_PER_WORKER = 4
 # Spare connections kept above the worker count on a client we build ourselves,
 # so the paginator driving a walk never contends with a full set of workers.
 _POOL_HEADROOM = 8
+
+# How far below the requested budget a clamp has to land before it is worth
+# interrupting the caller about. Losing a few workers to a slightly narrow pool
+# is noise; losing half of them is a mis-sized pool they can actually fix.
+_CLAMP_WARN_FRACTION = 0.5
+
+# Clamps already reported, keyed (effective, limit). Once per process, not once
+# per folder: for_assets over hundreds of prefixes would otherwise repeat the
+# same advice hundreds of times. Not left to Python's duplicate filter, which
+# simplefilter("always") and pytest.warns both bypass.
+_warned_pool_clamps: set[tuple[int, int]] = set()
 
 
 def ordered_map(
@@ -145,12 +170,21 @@ def effective_s3_workers(
     wanted = requested_s3_workers(s3_workers, hash_max_workers)
     workers = max(1, min(wanted, limit))
     if workers < wanted:
-        logger.debug(
-            "Limiting S3 checksum workers to %d: the client's connection pool "
-            "allows %d. Raise max_pool_connections on the client to use more.",
-            workers,
-            limit,
+        message = (
+            f"Limiting S3 checksum workers to {workers}: the client's "
+            f"connection pool allows {limit}, but {wanted} were requested. "
+            f"Raise max_pool_connections on the client to use more."
         )
+        logger.debug(message)
+        # Called from the coordinator before ordered_map builds its pool, so
+        # this warning is always raised on the calling thread — the contract
+        # the checksum guide documents for every warning this package emits.
+        if (
+            workers < wanted * _CLAMP_WARN_FRACTION
+            and (workers, limit) not in _warned_pool_clamps
+        ):
+            _warned_pool_clamps.add((workers, limit))
+            warnings.warn(message, ChecksumPoolWarning, stacklevel=3)
     return workers
 
 
