@@ -86,7 +86,7 @@ GET /api/datasets/?canonical_id=<value>
   `{total, limit, offset, results: […]}`.
 * Search `limit` ranges 1–1000 (1–100 when `hydrate=true`); `limit=0` returns
   `422`. The default is 10.
-* The list routes cap `limit` at 100; `limit > 100` returns HTTP 422.
+* List `limit` ranges 1–500; values outside that range return `422`.
 
 ## Search or list?
 
@@ -326,14 +326,14 @@ record that actually carries it.
 **Search does not expand relationships.** Take dataset ids from search and
 pivot to these routes.
 
-> **Gotcha:** the detail endpoint `GET /api/datasets/{id}` returns
-> `incoming_lineage`, `outgoing_lineage`, and `collections` as **`null`** — it
-> does *not* embed relationships. To get lineage or collections for a known
-> dataset, use the list route with the include flags —
-> `GET /api/datasets/?canonical_id=<cid>&include_lineage=true&include_collections=true`
-> — or the dedicated `/api/lineage/` endpoint. **Never conclude "no lineage"
-> from a detail-endpoint response.** An empty edge list from `/api/lineage/`
-> (or `total=0`) is the real "no lineage recorded" answer.
+> **Gotcha:** `incoming_lineage`, `outgoing_lineage`, and `collections` are
+> `null` unless you ask for them. Both `include_lineage` and
+> `include_collections` default to `false` on the detail *and* list routes, so
+> set them explicitly —
+> `GET /api/datasets/{id}?include_lineage=true&include_collections=true`
+> — or use the dedicated `/api/lineage/` endpoint. **Never conclude "no
+> lineage" from a response that left the flags off.** An empty edge list from
+> `/api/lineage/` (or `total=0`) is the real "no lineage recorded" answer.
 
 * Lineage edges are directed records (`source_dataset_id`,
   `destination_dataset_id`, optional asset-level ids, `lineage_type`,
@@ -353,7 +353,7 @@ pivot to these routes.
 | HTML redirect to an SSO login page | The call went out without (or with a bad) `X-catalog-api-token`, or hit a non-`/api` path behind the auth proxy. Set the header; use `/api/...` paths. |
 | `401` `{"detail":"Missing required header: X-catalog-api-token"}` | Header name/value wrong. It is `X-catalog-api-token`, not `Authorization: Bearer`. |
 | `401` (token rejected) | Token missing/expired/wrong environment. Ask the user to refresh `CATALOG_API_TOKEN`; do not retry in a loop. |
-| `422` | Invalid parameter or value (e.g. a `facets`/`sort` value outside the allowed list, `limit=0`, list `limit>100`). Fix the parameter; check the spec. |
+| `422` | Invalid parameter or value (e.g. a `facets`/`sort` value outside the allowed list, `limit=0`, list `limit>500`). Fix the parameter; check the spec. |
 | `503` | Search backend unavailable. Retry once, then report — never substitute guessed data. |
 | `404` on a dataset id | Wrong or tombstoned id; re-run search or the list route to get a current id. |
 | `404`/`405` on a documented *path*, or `422` on a documented *parameter* | The API surface moved since this doc was written. Run `scripts/api_map.py` to discover the current path/params and adapt — do not report the data or feature as missing. |
