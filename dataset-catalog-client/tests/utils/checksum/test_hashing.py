@@ -3,6 +3,7 @@
 S3 tests use a MagicMock client; local tests use real I/O via tmp_path.
 """
 
+import hashlib
 import io
 from unittest.mock import MagicMock, patch
 
@@ -44,6 +45,10 @@ def _s3(head=None, body=b"hello"):
     # key, so the second child to read it would see an exhausted stream. Serial
     # execution made that deterministic; concurrent children would race on it.
     s3.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(body)}
+    # These tests are about routing, not concurrency. Without an int here the
+    # mock falls back to DEFAULT_S3_WORKERS and every one of them spins up a
+    # full pool for a handful of keys.
+    s3.meta.config.max_pool_connections = 2
     return s3
 
 
@@ -84,6 +89,57 @@ def test_s3_file_cached_result_returned_immediately():
     s3.head_object.assert_not_called()
     s3.get_object.assert_not_called()
     assert result is cached[FILE_URI]
+
+
+def test_s3_file_force_recompute_ignores_cache():
+    s3 = _s3(body=b"fresh data")
+    cached = {FILE_URI: _make_result(FILE_URI)}
+
+    result = compute_checksum_s3(
+        FILE_URI, Algorithm.blake3, s3, use_stored=False, cached_results=cached
+    )
+
+    s3.head_object.assert_not_called()
+    s3.get_object.assert_called_once()
+    assert result.source == "computed"
+    assert result.file_hash != HEX64
+
+
+@pytest.mark.parametrize("is_prefix", [False, True])
+def test_s3_cache_rejects_a_different_algorithm(is_prefix):
+    key = f"{PREFIX}child.h5ad" if is_prefix else FILE_KEY
+    uri = f"s3://{BUCKET}/{key}"
+    s3 = _s3_prefix([key]) if is_prefix else _s3()
+
+    result = compute_checksum_s3(
+        PREFIX_URI if is_prefix else uri,
+        Algorithm.crc32,
+        s3,
+        cached_results={uri: _make_result(uri)},
+    )
+
+    s3.get_object.assert_called_once_with(Bucket=BUCKET, Key=key)
+    assert result.algorithm == Algorithm.crc32
+    if is_prefix:
+        assert result.children["child.h5ad"].algorithm == Algorithm.crc32
+
+
+@pytest.mark.parametrize("input_scheme,cache_scheme", [("s3a", "s3"), ("s3", "s3a")])
+def test_s3_cache_normalizes_uri_scheme(input_scheme, cache_scheme):
+    s3 = _s3()
+    cached_uri = FILE_URI.replace("s3://", f"{cache_scheme}://")
+    cached_result = _make_result(cached_uri)
+
+    result = compute_checksum_s3(
+        FILE_URI.replace("s3://", f"{input_scheme}://"),
+        Algorithm.blake3,
+        s3,
+        cached_results={cached_uri: cached_result},
+    )
+
+    assert result.file_hash == cached_result.file_hash
+    s3.head_object.assert_not_called()
+    s3.get_object.assert_not_called()
 
 
 def test_s3_file_stored_checksum_returned_without_download():
@@ -183,6 +239,20 @@ def test_s3_prefix_use_stored_false_downloads_all_children():
     s3.head_object.assert_not_called()
 
 
+def test_s3_prefix_force_recompute_ignores_cached_children():
+    keys = [f"{PREFIX}a.h5ad", f"{PREFIX}b.h5ad"]
+    s3 = _s3_prefix(keys, body=b"fresh data")
+    cached = {f"s3://{BUCKET}/{key}": _make_result(key) for key in keys}
+
+    result = compute_checksum_s3(
+        PREFIX_URI, Algorithm.blake3, s3, use_stored=False, cached_results=cached
+    )
+
+    assert s3.get_object.call_count == 2
+    s3.head_object.assert_not_called()
+    assert all(child.file_hash != HEX64 for child in result.children.values())
+
+
 def test_s3_prefix_virtual_subdirectories_hashed_recursively():
     # keys with sub-paths create virtual directory nodes in the tree
     keys = [f"{PREFIX}subdir/a.h5ad", f"{PREFIX}subdir/b/c.h5ad"]
@@ -198,14 +268,13 @@ def test_s3_prefix_virtual_subdirectories_hashed_recursively():
 
 
 def test_s3_prefix_empty_prefix_returns_hash_of_empty():
-    # no objects under prefix → Merkle of empty child list (hash of empty bytes)
     s3 = _s3_prefix(keys=[])
 
-    result = compute_checksum_s3(PREFIX_URI, Algorithm.blake3, s3)
+    result = compute_checksum_s3(PREFIX_URI, Algorithm.blake2b, s3)
 
     assert result.is_directory
     assert result.children == {}
-    assert result.file_hash is not None  # deterministic hash of empty bytes
+    assert result.file_hash == hashlib.blake2b(b"").hexdigest()
     assert result.file_hash == result.merkle_root
 
 
@@ -311,12 +380,11 @@ def test_localfs_directory_with_subdirectories(tmp_path):
 
 
 def test_localfs_empty_directory(tmp_path):
-    # empty directory → hash of empty bytes; no children
-    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake3)
+    result = compute_checksum_localfs(str(tmp_path), Algorithm.blake2b)
 
     assert result.is_directory
     assert result.children == {}
-    assert result.file_hash is not None
+    assert result.file_hash == hashlib.blake2b(b"").hexdigest()
     assert result.file_hash == result.merkle_root
 
 

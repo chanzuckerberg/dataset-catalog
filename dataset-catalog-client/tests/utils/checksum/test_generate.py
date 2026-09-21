@@ -3,6 +3,7 @@
 All I/O is mocked; no real files, S3 calls, or network access.
 """
 
+import io
 import warnings
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +16,10 @@ from catalog_client.models.asset import (
     StoragePlatform,
 )
 from catalog_client.utils.checksum._parallel import DEFAULT_S3_WORKERS
-from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
+from catalog_client.utils.checksum.algorithm import (
+    Algorithm,
+    default_algorithm,
+)
 from catalog_client.utils.checksum.generate import (
     UNSUPPORTED_PLATFORMS,
     ChecksumWarning,
@@ -23,7 +27,7 @@ from catalog_client.utils.checksum.generate import (
     for_location,
 )
 from catalog_client.utils.checksum.models import ChecksumResult
-from catalog_client.utils.checksum.s3 import _FolderSelection
+from tests.utils.checksum.stub_s3 import StubObject, StubS3
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -125,9 +129,7 @@ def test_missing_platform_warns_and_leaves_checksum_unset(mock_s3):
 )
 def test_s3_file_stored_checksum_returned_without_download(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
     mock_compute.assert_not_called()
     assert result[0].checksum == HASH
@@ -139,7 +141,7 @@ def test_s3_file_stored_checksum_returned_without_download(mock_fetch, mock_s3):
     return_value={},
 )
 @patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.blake3, HASH),
 )
 def test_s3_file_no_stored_checksum_falls_back_to_blake3(
@@ -158,9 +160,7 @@ def test_s3_file_no_stored_checksum_falls_back_to_blake3(
 )
 def test_s3_file_stored_checksum_returned_when_compute_flag_false(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
     mock_compute.assert_not_called()
     assert result[0].checksum == HASH
@@ -173,16 +173,14 @@ def test_s3_file_stored_checksum_returned_when_compute_flag_false(mock_fetch, mo
 )
 def test_s3_file_no_stored_no_compute_flag_leaves_checksum_unset(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
     mock_compute.assert_not_called()
     assert result[0].checksum is None
 
 
 @patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.crc32, HASH),
 )
 def test_s3_file_explicit_algo_with_compute_flag_downloads_and_computes(
@@ -203,9 +201,7 @@ def test_s3_file_explicit_algo_with_compute_flag_downloads_and_computes(
 
 def test_s3_file_explicit_algo_no_compute_flag_skips_download(mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -227,9 +223,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_true_uses_stored(
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -249,9 +243,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_false_uses_stored(
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -264,7 +256,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_false_uses_stored(
 
 
 @patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.crc32, HASH),
 )
 @patch(
@@ -295,9 +287,7 @@ def test_s3_file_explicit_algo_mismatched_stored_compute_flag_false_leaves_check
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -309,246 +299,247 @@ def test_s3_file_explicit_algo_mismatched_stored_compute_flag_false_leaves_check
 
 
 # ── S3 folder ─────────────────────────────────────────────────────────────────
+#
+# Driven through StubS3 rather than mocks of the selection/compute pair: the
+# folder route is now one discover-select-resolve-fold pipeline, so there is no
+# intermediate call whose arguments would prove anything. What the tests assert
+# instead is the observable contract — which requests were issued, what landed
+# in the caller's cache, and whether a digest was reported at all.
 
 _CHILD_URI = "s3://bucket/data/folder/file.h5ad"
-_CHILD_RESULT = make_result(_CHILD_URI, Algorithm.blake3, HASH)
-_FOLDER_RESULT = make_result(S3_FOLDER, Algorithm.blake3, HASH, is_directory=True)
 
 
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
-)
-def test_s3_folder_full_coverage_builds_merkle_from_cached_children(
-    mock_find, mock_compute, mock_s3
-):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
-    mock_compute.assert_called_once()
-    cached = mock_compute.call_args.kwargs["cached_results"]
-    assert _CHILD_URI in cached
-    assert result[0].checksum == HASH
+def _folder_stub(*objects, page_size=1000):
+    return StubS3([*objects], page_size=page_size)
 
 
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(),
-)
-def test_s3_folder_with_nothing_detectable_falls_back_to_blake3(
-    mock_find, mock_compute, mock_s3
-):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
-    mock_compute.assert_called_once()
-    assert mock_compute.call_args.kwargs["algorithm"] == Algorithm.blake3
-    assert result[0].checksum == HASH
+def _blake3_child(key, body=b"payload"):
+    return StubObject(key=f"data/folder/{key}", body=body).with_metadata(
+        Algorithm.blake3
+    )
 
 
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
-)
-def test_s3_folder_auto_detect_no_compute_flag_still_uses_cached_children(
-    mock_find, mock_compute, mock_s3
-):
+def _folder_asset():
+    return make_asset(S3_FOLDER, AssetType.folder)
+
+
+def test_s3_folder_full_coverage_builds_digest_without_downloading():
+    s3 = _folder_stub(_blake3_child("a.h5ad"), _blake3_child("b.h5ad", b"other"))
+    cache = {}
+
+    result = for_location(
+        S3_FOLDER,
+        AssetType.folder,
+        StoragePlatform.s3,
+        None,
+        s3,
+        cache,
+        compute_if_no_s3_checksum=True,
+    )
+
+    assert s3.gets == []
+    assert sorted(cache) == [
+        "s3://bucket/data/folder/a.h5ad",
+        "s3://bucket/data/folder/b.h5ad",
+    ]
+    assert result.value
+
+
+def test_s3_folder_with_nothing_stored_falls_back_to_the_default_algorithm():
+    s3 = _folder_stub(StubObject(key="data/folder/a.h5ad", body=b"payload"))
+
+    result = for_assets([_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=True)
+
+    assert s3.gets == ["data/folder/a.h5ad"]
+    assert result[0].checksum_alg == default_algorithm()
+
+
+def test_s3_folder_full_coverage_is_assembled_even_with_downloads_disabled():
     # Every child carries a stored blake3, so assembling the folder digest needs
     # no download and compute_if_no_s3_checksum=False must not block it.
-    # Auto-detection must not be worse than naming the algorithm it would pick.
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
-    mock_compute.assert_called_once()
-    assert mock_compute.call_args.kwargs["algorithm"] == Algorithm.blake3
-    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
-    assert result[0].checksum == HASH
+    s3 = _folder_stub(_blake3_child("a.h5ad"), _blake3_child("b.h5ad", b"other"))
+
+    result = for_assets(
+        [_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=False
+    )
+
+    assert s3.gets == []
+    assert result[0].checksum
 
 
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 1),
-)
-def test_s3_folder_auto_detect_matches_explicit_algo_under_no_compute_flag(
-    mock_find, mock_s3
-):
-    # Regression guard for the asymmetry itself: algorithm=None and
-    # algorithm=blake3 must reach the same outcome when blake3 is what
-    # auto-detection finds.
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3",
-        return_value=_FOLDER_RESULT,
-    ):
-        auto = for_assets(
-            [make_asset(S3_FOLDER, AssetType.folder)],
-            s3_client=mock_s3,
-            compute_if_no_s3_checksum=False,
-        )
-        explicit = for_assets(
-            [make_asset(S3_FOLDER, AssetType.folder)],
-            algorithm=Algorithm.blake3,
-            s3_client=mock_s3,
-            compute_if_no_s3_checksum=False,
-        )
+def test_s3_folder_auto_detect_matches_explicit_algo_under_no_compute_flag():
+    # Regression guard for the asymmetry itself: algorithm=None and an explicit
+    # algorithm must reach the same outcome when that is what selection picks.
+    body = b"payload"
+    native = StubObject(key="data/folder/a.h5ad", body=body).with_native(
+        Algorithm.crc32
+    )
+
+    auto = for_assets(
+        [_folder_asset()],
+        s3_client=_folder_stub(native),
+        compute_if_no_s3_checksum=False,
+    )
+    explicit = for_assets(
+        [_folder_asset()],
+        algorithm=Algorithm.crc32,
+        s3_client=_folder_stub(native),
+        compute_if_no_s3_checksum=False,
+    )
+
     assert auto[0].checksum == explicit[0].checksum
-    assert auto[0].checksum_alg == explicit[0].checksum_alg
+    assert auto[0].checksum_alg == explicit[0].checksum_alg == Algorithm.crc32
 
 
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(),
-)
-def test_s3_folder_with_nothing_detectable_no_compute_flag_leaves_checksum_unset(
-    mock_find, mock_s3
-):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
-        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
-    mock_compute.assert_not_called()
+def test_s3_folder_with_nothing_stored_and_no_compute_flag_leaves_checksum_unset():
+    s3 = _folder_stub(StubObject(key="data/folder/a.h5ad", body=b"payload"))
+
+    result = for_assets(
+        [_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=False
+    )
+
+    assert s3.gets == []
     assert result[0].checksum is None
 
 
-# Two children, one of which carries the algorithm: coverage is real but partial.
-_PARTIAL = _FolderSelection(Algorithm.blake3, {_CHILD_URI: _CHILD_RESULT}, 2)
-
-
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_PARTIAL,
-)
-def test_s3_folder_partial_coverage_no_compute_flag_skips(mock_find, mock_s3):
+def test_s3_folder_partial_coverage_no_compute_flag_skips():
     # Partial coverage is not complete coverage. The uncovered child would have
     # to be downloaded, which is exactly what compute_if_no_s3_checksum=False
     # forbids, so the folder is skipped rather than partly fetched.
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
-        result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
-    mock_compute.assert_not_called()
+    s3 = _folder_stub(
+        _blake3_child("a.h5ad"), StubObject(key="data/folder/b.h5ad", body=b"bare")
+    )
+
+    result = for_assets(
+        [_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=False
+    )
+
+    assert s3.gets == []
     assert result[0].checksum is None
 
 
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_PARTIAL,
-)
-def test_s3_folder_partial_coverage_still_reuses_the_covered_children(
-    mock_find, mock_compute, mock_s3
-):
-    # With downloads allowed, the child that already has a digest must still be
-    # reused rather than re-fetched — that saving is the point of the change.
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
-    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
-    assert result[0].checksum == HASH
-
-
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT,
-)
-def test_s3_folder_explicit_algo_compute_flag_downloads_all_objects(
-    mock_compute, mock_s3
-):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets(
-        [asset],
-        algorithm=Algorithm.crc32,
-        s3_client=mock_s3,
-        compute_if_no_s3_checksum=True,
+def test_s3_folder_partial_coverage_caches_the_covered_child_even_when_skipped():
+    # The digests resolution did validate are real, and the caller's cache is
+    # the only place they survive a skipped folder.
+    s3 = _folder_stub(
+        _blake3_child("a.h5ad"), StubObject(key="data/folder/b.h5ad", body=b"bare")
     )
-    mock_compute.assert_called_once()
-    assert mock_compute.call_args.kwargs["algorithm"] == Algorithm.crc32
-    assert result[0].checksum == HASH
+    cache = {}
 
-
-def test_s3_folder_explicit_algo_no_compute_flag_skips(mock_s3):
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3"
-    ) as mock_compute:
-        result = for_assets(
-            [asset],
-            algorithm=Algorithm.crc32,
-            s3_client=mock_s3,
-            compute_if_no_s3_checksum=False,
-        )
-    mock_compute.assert_not_called()
-    assert result[0].checksum is None
-
-
-_CHILD_RESULT_CRC32 = make_result(_CHILD_URI, Algorithm.crc32, HASH)
-_FOLDER_RESULT_CRC32 = make_result(S3_FOLDER, Algorithm.crc32, HASH, is_directory=True)
-
-
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT_CRC32,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(
-        Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}, 1
-    ),
-)
-def test_s3_folder_explicit_algo_matching_children_compute_flag_true_uses_stored(
-    mock_find, mock_compute, mock_s3
-):
-    # Children's shared algo matches explicit — Merkle built from cached children, no download
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets(
-        [asset],
-        algorithm=Algorithm.crc32,
-        s3_client=mock_s3,
-        compute_if_no_s3_checksum=True,
-    )
-    mock_compute.assert_called_once()
-    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
-    assert result[0].checksum == HASH
-    assert result[0].checksum_alg == Algorithm.crc32
-
-
-@patch(
-    "catalog_client.utils.checksum.generate.compute_checksum_s3",
-    return_value=_FOLDER_RESULT_CRC32,
-)
-@patch(
-    "catalog_client.utils.checksum.generate._select_folder_algorithm",
-    return_value=_FolderSelection(
-        Algorithm.crc32, {_CHILD_URI: _CHILD_RESULT_CRC32}, 1
-    ),
-)
-def test_s3_folder_explicit_algo_matching_children_compute_flag_false_uses_stored(
-    mock_find, mock_compute, mock_s3
-):
-    # compute_if_no_s3_checksum=False does not block Merkle build when children are already cached
-    asset = make_asset(S3_FOLDER, AssetType.folder)
-    result = for_assets(
-        [asset],
-        algorithm=Algorithm.crc32,
-        s3_client=mock_s3,
+    for_location(
+        S3_FOLDER,
+        AssetType.folder,
+        StoragePlatform.s3,
+        None,
+        s3,
+        cache,
         compute_if_no_s3_checksum=False,
     )
-    mock_compute.assert_called_once()
-    assert _CHILD_URI in mock_compute.call_args.kwargs["cached_results"]
-    assert result[0].checksum == HASH
+
+    assert list(cache) == ["s3://bucket/data/folder/a.h5ad"]
+
+
+def test_s3_folder_partial_coverage_downloads_only_the_uncovered_child():
+    s3 = _folder_stub(
+        _blake3_child("a.h5ad"), StubObject(key="data/folder/b.h5ad", body=b"bare")
+    )
+
+    result = for_assets([_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=True)
+
+    assert s3.gets == ["data/folder/b.h5ad"]
+    assert result[0].checksum
+
+
+def test_s3_folder_explicit_algo_compute_flag_downloads_uncovered_objects():
+    s3 = _folder_stub(StubObject(key="data/folder/a.h5ad", body=b"payload"))
+
+    result = for_assets(
+        [_folder_asset()],
+        algorithm=Algorithm.crc32,
+        s3_client=s3,
+        compute_if_no_s3_checksum=True,
+    )
+
+    assert s3.gets == ["data/folder/a.h5ad"]
     assert result[0].checksum_alg == Algorithm.crc32
+
+
+def test_s3_folder_explicit_algo_no_compute_flag_skips():
+    s3 = _folder_stub(StubObject(key="data/folder/a.h5ad", body=b"payload"))
+
+    result = for_assets(
+        [_folder_asset()],
+        algorithm=Algorithm.crc32,
+        s3_client=s3,
+        compute_if_no_s3_checksum=False,
+    )
+
+    assert s3.gets == []
+    assert result[0].checksum is None
+
+
+@pytest.mark.parametrize("compute_flag", [True, False])
+def test_s3_folder_explicit_algo_matching_children_uses_stored(compute_flag):
+    s3 = _folder_stub(
+        StubObject(key="data/folder/a.h5ad", body=b"payload").with_native(
+            Algorithm.crc32
+        )
+    )
+
+    result = for_assets(
+        [_folder_asset()],
+        algorithm=Algorithm.crc32,
+        s3_client=s3,
+        compute_if_no_s3_checksum=compute_flag,
+    )
+
+    assert s3.gets == []
+    assert result[0].checksum
+    assert result[0].checksum_alg == Algorithm.crc32
+
+
+def test_an_empty_prefix_still_folds_to_a_digest_when_downloads_are_allowed():
+    # An empty prefix is never "complete coverage" — there is nothing to
+    # cover — but that must not be confused with a folder that was skipped.
+    # With downloads allowed it folds to the empty-folder digest, as before.
+    result = for_assets(
+        [_folder_asset()], s3_client=StubS3([]), compute_if_no_s3_checksum=True
+    )
+
+    assert result[0].checksum
+
+
+def test_an_empty_prefix_is_skipped_when_downloads_are_disabled():
+    result = for_assets(
+        [_folder_asset()], s3_client=StubS3([]), compute_if_no_s3_checksum=False
+    )
+
+    assert result[0].checksum is None
+
+
+def test_s3_folder_lists_the_prefix_exactly_once():
+    s3 = _folder_stub(_blake3_child("a.h5ad"), _blake3_child("b.h5ad", b"other"))
+
+    for_assets([_folder_asset()], s3_client=s3, compute_if_no_s3_checksum=True)
+
+    assert s3.list_calls == 1
+
+
+def test_s3_folder_cache_accumulates_across_assets():
+    # for_assets shares one dict across its loop, and a folder skipped for
+    # incomplete coverage must not drop what an earlier asset contributed.
+    first = _blake3_child("a.h5ad")
+    second = StubObject(key="data/other/b.h5ad", body=b"bare")
+    s3 = StubS3([first, second])
+    assets = [
+        make_asset(S3_FOLDER, AssetType.folder),
+        make_asset("s3://bucket/data/other", AssetType.folder),
+    ]
+
+    result = for_assets(assets, s3_client=s3, compute_if_no_s3_checksum=False)
+
+    assert result[0].checksum
+    assert result[1].checksum is None
 
 
 # ── Non-S3 filesystem ─────────────────────────────────────────────────────────
@@ -623,9 +614,7 @@ def test_local_folder_explicit_algo_computes_merkle(mock_compute, mock_s3):
 )
 def test_compute_failure_warns_and_leaves_checksum_unset(mock_fetch, mock_s3, exc):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate.compute_checksum_s3", side_effect=exc
-    ):
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file", side_effect=exc):
         with pytest.warns(ChecksumWarning, match="Failed to generate checksum"):
             result = for_assets(
                 [asset], s3_client=mock_s3, compute_if_no_s3_checksum=True
@@ -634,7 +623,7 @@ def test_compute_failure_warns_and_leaves_checksum_unset(mock_fetch, mock_s3, ex
 
 
 @patch("catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums")
-@patch("catalog_client.utils.checksum.generate.compute_checksum_s3")
+@patch("catalog_client.utils.checksum.generate._hash_s3_file")
 def test_partial_failure_all_assets_returned(mock_compute, mock_fetch, mock_s3):
     good_uri = S3_FILE
     bad_uri = "s3://bucket/data/bad.h5ad"
@@ -673,6 +662,134 @@ def test_custom_s3_client_forwarded_to_s3_operations(mock_s3):
         asset = make_asset(S3_FILE, AssetType.file)
         for_assets([asset], s3_client=mock_s3)
     mock_fetch.assert_called_once_with("bucket", "data/file.h5ad", mock_s3)
+    mock_s3.close.assert_not_called()
+
+
+@pytest.mark.parametrize("cached_algorithm", [Algorithm.crc32, Algorithm.blake3])
+def test_fresh_s3_detection_does_not_reuse_stale_file_cache(mock_s3, cached_algorithm):
+    mock_s3.head_object.return_value = {}
+    mock_s3.get_object.return_value = {"Body": io.BytesIO(b"fresh data")}
+    cached = {S3_FILE: make_result(S3_FILE, cached_algorithm)}
+
+    result = for_location(
+        S3_FILE,
+        AssetType.file,
+        StoragePlatform.s3,
+        Algorithm.crc32,
+        mock_s3,
+        cached,
+        compute_if_no_s3_checksum=True,
+    )
+
+    mock_s3.head_object.assert_called_once()
+    mock_s3.get_object.assert_called_once_with(Bucket="bucket", Key="data/file.h5ad")
+    assert result.algorithm == Algorithm.crc32
+    assert result.value != HASH
+
+
+def test_fresh_s3_detection_downloads_child_without_current_stored_checksum(mock_s3):
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "data/folder/file.h5ad", "Size": 10}]}
+    ]
+    mock_s3.head_object.return_value = {}
+    mock_s3.get_object.return_value = {"Body": io.BytesIO(b"fresh data")}
+
+    result = for_location(
+        S3_FOLDER,
+        AssetType.folder,
+        StoragePlatform.s3,
+        Algorithm.crc32,
+        mock_s3,
+        {_CHILD_URI: make_result(_CHILD_URI, Algorithm.crc32)},
+        compute_if_no_s3_checksum=True,
+    )
+
+    mock_s3.head_object.assert_called_once()
+    mock_s3.get_object.assert_called_once_with(
+        Bucket="bucket", Key="data/folder/file.h5ad"
+    )
+    assert result.algorithm == Algorithm.crc32
+    assert result.value
+
+
+@pytest.mark.parametrize(
+    "kind", ["empty", "local", "checksummed", "blank", "unsupported"]
+)
+@patch("catalog_client.utils.checksum.generate.owned_s3_client")
+def test_batches_without_s3_work_do_not_create_client(mock_client, kind):
+    assets = {
+        "empty": [],
+        "local": [make_asset(LOCAL_FILE, platform=StoragePlatform.sf_hpc)],
+        "checksummed": [make_asset(S3_FILE, checksum=HASH, checksum_alg="blake3")],
+        "blank": [make_asset("")],
+        "unsupported": [make_asset(LOCAL_FILE, platform=StoragePlatform.other)],
+    }[kind]
+
+    with (
+        patch(
+            "catalog_client.utils.checksum.generate.compute_checksum_localfs",
+            return_value=make_result(LOCAL_FILE),
+        ),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("ignore", ChecksumWarning)
+        for_assets(assets)
+
+    mock_client.assert_not_called()
+
+
+@patch("catalog_client.utils.checksum.generate.owned_s3_client")
+def test_owned_client_is_created_lazily_reused_and_closed(mock_client):
+    client = mock_client.return_value
+    assets = [
+        make_asset(LOCAL_FILE, platform=StoragePlatform.sf_hpc),
+        make_asset(S3_FILE),
+        make_asset("s3://bucket/data/second.h5ad"),
+    ]
+
+    def compute_local(*args, **kwargs):
+        mock_client.assert_not_called()
+        return make_result(LOCAL_FILE)
+
+    with (
+        patch(
+            "catalog_client.utils.checksum.generate.compute_checksum_localfs",
+            side_effect=compute_local,
+        ),
+        patch(
+            "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+            return_value={Algorithm.blake3: make_result(S3_FILE)},
+        ) as fetch,
+    ):
+        results = for_assets(assets, s3_workers=3)
+
+    assert len(results) == 3
+    mock_client.assert_called_once_with(3, None)
+    assert fetch.call_count == 2
+    assert all(call.args[2] is client for call in fetch.call_args_list)
+    client.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("provided", [False, True])
+@patch("catalog_client.utils.checksum.generate.owned_s3_client")
+def test_client_cleanup_when_a_warning_becomes_an_error(mock_client, provided):
+    client = MagicMock() if provided else mock_client.return_value
+    with (
+        patch(
+            "catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums",
+            side_effect=OSError("read failed"),
+        ),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", ChecksumWarning)
+        with pytest.raises(ChecksumWarning, match="read failed"):
+            for_assets([make_asset(S3_FILE)], s3_client=client if provided else None)
+
+    if provided:
+        mock_client.assert_not_called()
+        client.close.assert_not_called()
+    else:
+        client.close.assert_called_once_with()
 
 
 # boto3 is imported lazily inside for_assets, so patch the real module attribute
@@ -690,9 +807,11 @@ def test_default_boto3_client_created_when_no_s3_client_passed(mock_client):
     mock_client.assert_called_once()
     assert mock_client.call_args.args == ("s3",)
     # We own this client, so its pool is sized for the concurrent folder scan.
-    # A stock client caps at 10 and discards connections past that silently.
+    # Strictly greater, not merely equal: the headroom above the worker budget
+    # is what keeps the paginator from contending with a full set of workers,
+    # and it is also what keeps an owned client off the clamp warning path.
     config = mock_client.call_args.kwargs["config"]
-    assert config.max_pool_connections >= DEFAULT_S3_WORKERS
+    assert config.max_pool_connections > DEFAULT_S3_WORKERS
 
 
 # ── Skip reporting: one mechanism for every skip ─────────────────────────────

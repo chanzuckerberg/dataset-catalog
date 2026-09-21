@@ -1,18 +1,20 @@
 import logging
 import warnings
-from dataclasses import dataclass
 from typing import TypeVar
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
+    _fold_s3_children,
+    _hash_s3_file,
+    _resolve_s3_objects,
     compute_checksum_localfs,
-    compute_checksum_s3,
 )
 from catalog_client.utils.checksum.models import ChecksumResult, LocationChecksum
 from catalog_client.utils.checksum.s3 import (
     _fetch_all_s3_stored_checksums,
+    _folder_prefix,
     _parse_s3_uri,
     _select_best_algorithm,
     _select_folder_algorithm,
@@ -52,48 +54,19 @@ def _skip(message: str) -> None:
     warnings.warn(message, ChecksumWarning, stacklevel=3)
 
 
-@dataclass
-class _S3Detection:
-    """
-    What the detect phase learned about an S3 location.
-
-    Bundled rather than returned as a loose tuple because the compute phase
-    needs both fields to route correctly; dropping one silently changes
-    behaviour (see `covers_all_children`, whose predecessor defaulted to False
-    on the auto-detect path and made algorithm=None strictly worse than
-    naming the algorithm auto-detection would have chosen).
-
-    covers_all_children is a boolean rather than the child counts it is derived
-    from: only this answer has a reader, and carrying the counts obliged the
-    single-object branches to invent a total of 1 to make the arithmetic agree.
-    _FolderSelection still reports the counts, which is where they are real.
-    """
-
-    algorithm: Algorithm | None
-    covers_all_children: bool = False
-
-
-def detect_and_cache_for_s3(
+def _detect_s3_object(
     location_uri: str,
-    asset_type: AssetType,
     algorithm: Algorithm | None,
-    cached_results: dict[str, ChecksumResult],
     s3_client,
-    max_workers: int | None = None,
-) -> _S3Detection:
-    if asset_type == AssetType.folder:
-        # Every child carrying the chosen algorithm is reusable, whether that
-        # algorithm was named by the caller or picked here by cost. Coverage
-        # need not be universal: a child without it is one download, not a
-        # reason to discard the digests every other child already has.
-        selection = _select_folder_algorithm(
-            location_uri, s3_client, algorithm, max_workers
-        )
-        if selection.algorithm is None:
-            return _S3Detection(algorithm=None)
-        cached_results.update(selection.cached)
-        return _S3Detection(selection.algorithm, selection.covers_all_children)
+) -> tuple[Algorithm | None, ChecksumResult | None]:
+    """
+    HEAD one S3 object and return the algorithm to use and any digest it
+    already carries.
 
+    The second element is None when the chosen algorithm is not stored on the
+    object, which is how the caller tells "already covered" from "must be
+    computed".
+    """
     bucket, key = _parse_s3_uri(location_uri)
     all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
     # A named algorithm is used as named; otherwise pick the best one stored.
@@ -105,12 +78,75 @@ def detect_and_cache_for_s3(
         if algorithm is not None
         else _select_best_algorithm(set(all_checksums))
     )
-    # A single object is either covered or not, which is all the compute phase
-    # asks; there are no children to count.
-    if chosen is not None and chosen in all_checksums:
-        cached_results[location_uri] = all_checksums[chosen]
-        return _S3Detection(chosen, covers_all_children=True)
-    return _S3Detection(chosen)
+    return chosen, all_checksums.get(chosen) if chosen is not None else None
+
+
+def _compute_folder_for_s3(
+    location_uri: str,
+    algorithm: Algorithm | None,
+    cached_results: dict[str, ChecksumResult],
+    s3_client,
+    compute_if_no_s3_checksum: bool,
+    hash_max_workers: int | None,
+    s3_workers: int | None = None,
+) -> ChecksumResult | None:
+    """
+    Discover, select, resolve and fold a prefix in one pass.
+
+    One ListObjectsV2 pagination, one algorithm, one resolution attempt per
+    object.
+
+    Coverage is read off the resolved children, never off the listing: the
+    listing's checksum hints are a cost estimate and can be both optimistic
+    (a reported algorithm whose stored value turns out to be unusable) and
+    pessimistic (a multipart ETag over a perfectly good whole-object digest).
+    Only what came back may decide whether a digest is reported.
+    """
+    selection = _select_folder_algorithm(location_uri, s3_client, algorithm)
+    bucket, key = _parse_s3_uri(location_uri)
+    prefix = _folder_prefix(key)
+    chosen = selection.algorithm or default_algorithm()
+
+    # cached_results is the caller's shared dict, written to below but never
+    # read here: an entry an earlier asset left behind was validated against
+    # that asset's object, not this one. Resolution re-validates every child.
+    resolution = _resolve_s3_objects(
+        bucket,
+        chosen,
+        s3_client,
+        selection.objects,
+        use_stored=True,
+        cached_results=None,
+        download=compute_if_no_s3_checksum,
+        hash_max_workers=hash_max_workers,
+        s3_workers=s3_workers,
+    )
+    # Accumulated even when the folder is then skipped: the digests are real
+    # and the caller's cache is the only place they survive the call. Only
+    # digests that came off S3 qualify — a computed one was never validated
+    # against anything.
+    cached_results.update(
+        {
+            f"s3://{bucket}/{key}": r
+            for key, r in resolution.children.items()
+            if r.source != "computed"
+        }
+    )
+
+    # With downloads allowed, resolution leaves nothing unresolved, so this is
+    # reached only under compute_if_no_s3_checksum=False. Guarding on the flag
+    # rather than on `complete` alone matters for the empty prefix, which is
+    # never "complete" but still folds to an empty-folder digest when
+    # downloading is permitted — as it did before.
+    if not compute_if_no_s3_checksum and not resolution.complete:
+        logger.debug(
+            "Skipping %s: not every child has a stored S3 checksum and "
+            "compute_if_no_s3_checksum=False",
+            location_uri,
+        )
+        return None
+
+    return _fold_s3_children(bucket, prefix, resolution.children, chosen)
 
 
 def compute_for_s3(
@@ -120,33 +156,49 @@ def compute_for_s3(
     cached_results: dict[str, ChecksumResult],
     s3_client,
     compute_if_no_s3_checksum: bool,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult | None:
-    detection = detect_and_cache_for_s3(
-        location_uri, asset_type, algorithm, cached_results, s3_client, max_workers
-    )
-    if detection.algorithm and location_uri in cached_results:
-        return cached_results[location_uri]
+    if asset_type == AssetType.folder:
+        return _compute_folder_for_s3(
+            location_uri,
+            algorithm,
+            cached_results,
+            s3_client,
+            compute_if_no_s3_checksum,
+            hash_max_workers,
+            s3_workers,
+        )
 
-    # Assembling a folder digest from already-cached children needs no
-    # downloads, so compute_if_no_s3_checksum does not apply to it. Partial
-    # coverage does not qualify: the children that are missing would still
-    # have to be fetched, which is exactly what this flag forbids.
-    if not compute_if_no_s3_checksum and not detection.covers_all_children:
+    detected, stored = _detect_s3_object(location_uri, algorithm, s3_client)
+    if stored is not None:
+        cached_results[location_uri] = stored
+    # The effective algorithm, not the detected one: a HEAD that found nothing
+    # leaves that None and the default takes over below, so logging the raw
+    # detection would name an algorithm no digest was ever produced under.
+    chosen = detected or default_algorithm()
+    logger.debug("Selected %s for %s", chosen, location_uri)
+
+    if stored is not None:
+        return stored
+
+    if not compute_if_no_s3_checksum:
         logger.debug(
             "Skipping %s: no stored S3 checksum and compute_if_no_s3_checksum=False",
             location_uri,
         )
         return None
 
-    return compute_checksum_s3(
-        location_uri,
-        algorithm=detection.algorithm or default_algorithm(),
-        s3_client=s3_client,
+    # Detection already consulted both the stored metadata and the cache, so
+    # they are switched off here to avoid a second HeadObject for this object.
+    bucket, key = _parse_s3_uri(location_uri)
+    return _hash_s3_file(
+        bucket,
+        key,
+        algorithm=chosen,
+        s3=s3_client,
         use_stored=False,
-        cached_results=cached_results,
-        is_folder=asset_type == AssetType.folder,
-        max_workers=max_workers,
+        cached_results=None,
     )
 
 
@@ -158,7 +210,8 @@ def for_location(
     s3_client=None,
     cached_results: dict[str, ChecksumResult] | None = None,
     compute_if_no_s3_checksum: bool = True,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> LocationChecksum:
     """
     Compute the checksum for a single location.
@@ -168,9 +221,11 @@ def for_location(
     all of them into errors with
     `warnings.simplefilter("error", ChecksumWarning)`.
 
-    max_workers caps the threads used for a folder; None picks a default and 1
-    forces serial. It never affects the digest. Warnings are always raised on
-    the calling thread, so the ChecksumWarning contract above holds either way.
+    hash_max_workers caps the threads used to hash file content and s3_workers
+    the concurrent S3 requests, the latter winning on an S3 folder and ignored
+    for a local path. None picks a default and 1 forces serial; neither affects
+    the digest. Warnings are always raised on the calling thread, so the
+    ChecksumWarning contract above holds either way.
     """
     if not location_uri:
         _skip("Cannot generate a checksum for an empty location_uri")
@@ -197,13 +252,14 @@ def for_location(
                 cached_results,
                 s3_client,
                 compute_if_no_s3_checksum,
-                max_workers,
+                hash_max_workers,
+                s3_workers,
             )
         else:
             hash_result = compute_checksum_localfs(
                 location_uri,
                 algorithm=algorithm or default_algorithm(),
-                max_workers=max_workers,
+                hash_max_workers=hash_max_workers,
             )
 
         if hash_result is not None:
@@ -229,7 +285,8 @@ def for_assets(
     algorithm: Algorithm | None = None,
     compute_if_no_s3_checksum: bool = True,
     s3_client=None,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> list[AssetT]:
     """
     Return copies of the given assets with `checksum`, `checksum_alg` and
@@ -256,48 +313,63 @@ def for_assets(
     Unsupported platforms (external, other, None) are passed through with a
     ChecksumWarning. Failures also warn and pass the asset through unchanged.
 
-    max_workers caps the threads used within each folder; None picks a default
-    and 1 forces serial. Assets themselves are always processed one at a time,
-    so every ChecksumWarning is raised on the calling thread. It never affects
-    a digest. A client passed in here is used as-is, including its connection
-    pool limit, which the S3 worker count is clamped to.
+    hash_max_workers caps the threads used to hash file content within each
+    folder and s3_workers the concurrent S3 requests, the latter winning on an
+    S3 folder. None picks a default and 1 forces serial. Assets themselves are
+    always processed one at a time, so every ChecksumWarning is raised on the
+    calling thread. Neither affects a digest. A client passed in here is used
+    as-is, including its connection pool limit, which the S3 worker count is
+    clamped to.
     """
     if not assets:
         return []
 
     result: list[AssetT] = []
     cached_results: dict[str, ChecksumResult] = {}
-    if s3_client is None:
-        # Ours to configure, so the pool is sized for the workers the folder
-        # scan will ask for rather than left at botocore's default 10.
-        s3_client = owned_s3_client(max_workers)
+    owned_client = None
 
-    for asset in assets:
-        asset_copy = asset.model_copy()
-        if asset_copy.checksum is not None:
+    try:
+        for asset in assets:
+            asset_copy = asset.model_copy()
+            if asset_copy.checksum is not None:
+                result.append(asset_copy)
+                continue
+
+            if (
+                s3_client is None
+                and asset_copy.storage_platform == StoragePlatform.s3
+                and asset_copy.location_uri
+            ):
+                owned_client = s3_client = owned_s3_client(s3_workers, hash_max_workers)
+
+            result_checksum = for_location(
+                asset_copy.location_uri,
+                asset_copy.asset_type,
+                asset_copy.storage_platform,
+                algorithm,
+                s3_client,
+                cached_results,
+                compute_if_no_s3_checksum=compute_if_no_s3_checksum,
+                hash_max_workers=hash_max_workers,
+                s3_workers=s3_workers,
+            )
+
+            if result_checksum:
+                asset_copy.checksum = result_checksum.value
+                asset_copy.checksum_alg = result_checksum.algorithm
+                # A size the caller already supplied wins: they may be describing
+                # something we cannot see (a logical size, a pre-move total), and
+                # silently replacing it would be a surprise mutation.
+                if (
+                    asset_copy.size_bytes is None
+                    and result_checksum.total_size is not None
+                ):
+                    asset_copy.size_bytes = result_checksum.total_size
+
             result.append(asset_copy)
-            continue
 
-        result_checksum = for_location(
-            asset_copy.location_uri,
-            asset_copy.asset_type,
-            asset_copy.storage_platform,
-            algorithm,
-            s3_client,
-            cached_results,
-            compute_if_no_s3_checksum=compute_if_no_s3_checksum,
-            max_workers=max_workers,
-        )
-
-        if result_checksum:
-            asset_copy.checksum = result_checksum.value
-            asset_copy.checksum_alg = result_checksum.algorithm
-            # A size the caller already supplied wins: they may be describing
-            # something we cannot see (a logical size, a pre-move total), and
-            # silently replacing it would be a surprise mutation.
-            if asset_copy.size_bytes is None and result_checksum.total_size is not None:
-                asset_copy.size_bytes = result_checksum.total_size
-
-        result.append(asset_copy)
+    finally:
+        if owned_client is not None:
+            owned_client.close()
 
     return result

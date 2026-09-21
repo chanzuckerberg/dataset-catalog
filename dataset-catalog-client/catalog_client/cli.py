@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
 import os
 import sys
 from typing import Any, NoReturn
@@ -515,7 +516,7 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
     algorithm: Algorithm | None = args.algorithm
     # The SDK owns pool sizing: it is the side that knows how many workers the
     # walk will ask for, and it clamps the worker count back to this pool.
-    s3_client = owned_s3_client(args.workers)
+    s3_client = owned_s3_client(args.s3_workers, args.hash_workers)
     # --folder/--file override the URI; argparse guarantees they are not both
     # set. Otherwise defer to the SDK's rule rather than restating it, so a
     # bucket root is classified the same way here as in compute_checksum_s3.
@@ -532,7 +533,8 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
                 s3_client,
                 use_stored=False,
                 is_folder=is_folder,
-                max_workers=args.workers,
+                hash_max_workers=args.hash_workers,
+                s3_workers=args.s3_workers,
             )
         # compute_for_s3 (not compute_checksum) so that --algorithm stays
         # optional: it detects the algorithm already stored on the object and
@@ -545,7 +547,8 @@ def _compute_s3(args: argparse.Namespace) -> ChecksumResult:
             {},
             s3_client,
             compute_if_no_s3_checksum=True,
-            max_workers=args.workers,
+            hash_max_workers=args.hash_workers,
+            s3_workers=args.s3_workers,
         )
     except ClientError as exc:
         if _missing_object_error_code(exc) in _MISSING_S3_TARGET_CODES:
@@ -570,11 +573,38 @@ def _compute(args: argparse.Namespace) -> ChecksumResult:
     # apply; there is no stored checksum to short-circuit either, which makes
     # --recompute a no-op here as well.
     return compute_checksum_localfs(
-        args.path, args.algorithm or default_algorithm(), args.workers
+        args.path, args.algorithm or default_algorithm(), args.hash_workers
     )
 
 
+def _enable_verbose_logging() -> None:
+    """
+    Route the checksum package's DEBUG output to stderr.
+
+    Configures that one logger rather than calling logging.basicConfig, which
+    would raise the root level and pull in botocore's own output — tens of
+    lines per request, drowning the ones this flag is for.
+
+    stderr, not stdout, so `-o json` stays parseable while --verbose is on.
+
+    See docs/checksum_guide.md for the line format and how to read it.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s.%(msecs)03d  %(threadName)s  %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    )
+    checksum_logger = logging.getLogger("catalog_client.utils.checksum")
+    if not checksum_logger.handlers:
+        checksum_logger.addHandler(handler)
+    checksum_logger.setLevel(logging.DEBUG)
+
+
 def cmd_checksum(args: argparse.Namespace) -> None:
+    if args.verbose:
+        _enable_verbose_logging()
     try:
         result = _compute(args)
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -774,11 +804,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="also list every descendant of a folder, not just its total",
     )
     p.add_argument(
+        "--hash-workers",
+        # --workers is the name this flag shipped under, kept as a second
+        # option string on the same action so existing invocations keep working.
         "--workers",
+        dest="hash_workers",
         type=int,
         metavar="N",
-        help="threads to use for a folder (default: chosen from available CPUs; "
-        "1 forces serial). Never changes the checksum.",
+        help="threads used to hash file content (default: chosen from available "
+        "CPUs; 1 forces serial). --workers is a deprecated alias. Never changes "
+        "the checksum.",
+    )
+    p.add_argument(
+        "--s3-workers",
+        type=int,
+        metavar="N",
+        help="concurrent S3 requests for a folder (default: 32). Takes "
+        "precedence over --hash-workers on S3 and is clamped to the client's "
+        "connection pool. Never changes the checksum.",
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="log the checksum walk to stderr at debug level: the algorithm "
+        "chosen, one line per file and folder as it is resolved (timestamp, "
+        "worker, digest, algorithm, size, source, path), and why anything was "
+        "skipped or a stored checksum rejected",
     )
     p.set_defaults(func=cmd_checksum)
 

@@ -60,3 +60,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# moto hands out stock clients whose pool sits below DEFAULT_S3_WORKERS, so
+# most S3 tests legitimately trip the clamp. Silenced here rather than per
+# test; the tests that assert on it use pytest.warns, which overrides this.
+filterwarnings = [
+    "ignore::catalog_client.utils.checksum.ChecksumPoolWarning",
+]

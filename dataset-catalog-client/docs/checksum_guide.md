@@ -51,7 +51,7 @@ folder's Merkle root.
 
 Two deliberate exceptions:
 
-- **Folder digests include child names**, so renaming a file changes its folder's
+- **Folder digests include child names and types**, so renaming a file changes its folder's
   digest even though no content changed. This is what makes a folder digest useful
   for change detection.
 - **Multipart composite checksums are ignored.** When S3 reports a composite value
@@ -63,6 +63,28 @@ Two deliberate exceptions:
 Stored values that are not well-formed digests for their algorithm — wrong width, or
 not hex — are ignored for the same reason, since they could not be combined into a
 folder digest.
+
+### Directory names in folder hashes
+
+Children are sorted by their original name. Each child contributes its UTF-8
+name followed by its raw content-digest bytes. Directory child names receive a
+trailing `/` in the hash input; file names do not. A file contributes `x` plus
+its digest, while a same-named directory contributes `x/` plus its digest.
+Nested directories use the same rule. The keys in `ChecksumResult.children`
+remain the original names.
+
+Empty directories hash empty bytes, just like empty files; the trailing slash
+distinguishes them when they contribute to a parent. File hashes and file chunk
+manifests are unchanged. Algorithm labels remain unchanged (for example,
+`blake3`); no format version is stored.
+
+**Compatibility:** folders containing subdirectories receive different hashes;
+empty folders and folders containing only files retain their previous hashes.
+Existing assets with checksums are passed through unchanged. Recompute older
+nested-folder checksums before comparing them with newly computed values;
+the algorithm label does not distinguish the old encoding from the new one.
+S3 folder markers continue to be ignored, so empty local subdirectories have
+no corresponding entry in an S3 prefix.
 
 ---
 
@@ -166,7 +188,8 @@ catalog checksum data/folder/ --children
 catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored checksum
 catalog checksum s3://my-bucket/data/file.h5ad --recompute
 catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
-catalog checksum data/folder/ --workers 1                  # serial, for comparison
+catalog checksum data/folder/ --hash-workers 1             # serial, for comparison
+catalog checksum data/folder/ --verbose                    # one stderr line per file
 ```
 
 Like `for_location`, omitting `--algorithm` lets a checksum already stored on the S3
@@ -176,6 +199,82 @@ adds the fields the Python API exposes as properties: `content_digest`, `s3_base
 and `s3_composite_base64` (files only). See the [CLI section of
 USAGE.md](../USAGE.md#checksums-from-the-command-line) for every flag and the exit
 codes.
+
+### Verbose logging from the SDK
+
+`--verbose` is only a handler and a level on a standard library logger, so Python
+callers get the same lines without the CLI. Nothing is emitted unless you opt in —
+the package adds no handler of its own:
+
+```python
+import logging
+
+handler = logging.StreamHandler()
+handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s.%(msecs)03d  %(threadName)s  %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+)
+logger = logging.getLogger("catalog_client.utils.checksum")
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+```
+
+Everything below is emitted at `DEBUG`. The level is set on this package's logger
+alone, never through `logging.basicConfig`, which would raise the root level and
+bring botocore's own per-request output with it. Scoping it this way is what makes
+`DEBUG` usable as the verbose level rather than a firehose.
+
+Three kinds of record appear.
+
+**Per-file records** carry `digest algorithm size source path`. Neither the timestamp
+nor the worker is in the message — they are the record's standard `asctime` and
+`threadName`, so include them via the formatter as above (the CLI's `--verbose` does
+exactly this, and a bare `StreamHandler` would show neither). `threadName` reads
+`checksum_N` for a pooled walk and `MainThread` for a serial one. Reach for
+`%(created)f` instead of `asctime` if you want an epoch float to do arithmetic on.
+
+One record per file, whether the digest was computed, read from S3 metadata, or
+served from `cached_results`. Each directory is reported too, once its children have
+been folded, so a walk also shows the digest of every subtree. Folder walks hash
+through a thread pool, so records arrive in completion order rather than walk order;
+sort by path if you need a stable listing. Neither the pool nor the ordering affects
+the digest.
+
+Two columns read differently on a directory record: `size` is the total over all
+descendants, so summing the column across a walk double-counts, and `source` reads
+`computed` because a folder digest is a fold over child digests and has no other
+source to report — no directory bytes are ever hashed. The log line does not mark
+which records are directories, and the path is not a reliable tell either: an S3
+prefix ends in `/` but a local directory path does not. Read `is_directory` off the
+`ChecksumResult` tree if you need to tell them apart programmatically.
+
+**One selection record per S3 location**, emitted before its files are, naming the
+algorithm the operation settled on and why:
+
+```
+Selected crc32 for s3://bucket/ds/: cheapest over 412 listed objects
+Selected blake3 for s3://bucket/ds/: requested explicitly
+Selected crc32 for s3://bucket/solo.h5ad
+```
+
+It starts with `Selected ` and has no digest, which is how it is told apart from a
+per-file record. For a folder the algorithm is chosen once and applies to every child
+(see [How an S3 folder is resolved](#how-an-s3-folder-is-resolved)); for a single
+object it is the effective algorithm, so it names `default_algorithm()` rather than
+nothing when the object carried no stored checksum. Local paths emit no selection
+record — the algorithm there is the caller's argument or the default, never inferred.
+
+**Diagnostics** explain a decision that would otherwise be invisible — a location
+skipped, a stored checksum rejected as composite or malformed, a worker count clamped
+to the client's connection pool. These are the reason to read the log when a digest
+was recomputed rather than reused, or when an asset came back without one:
+
+```
+Ignoring malformed x-checksum-blake3 metadata on s3://bucket/ds/sub/b.txt
+Skipping s3://bucket/ds/: not every child has a stored S3 checksum and compute_if_no_s3_checksum=False
+```
 
 ---
 
@@ -240,11 +339,12 @@ if you need the same algorithm regardless of what is installed.
 
 ### Algorithm auto-detection
 
-When `algorithm=None`, the library inspects both S3 native checksum fields (`crc32`,
-`crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
-`x-checksum-crc64`) in a single `HeadObject` call.
+When `algorithm=None`, the library picks the algorithm from what S3 already holds.
 
-**For a single file**, it picks the highest-priority algorithm present, ranked by
+**For a single file**, it inspects both S3 native checksum fields (`crc32`,
+`crc64nvme`) and user metadata (`x-checksum-blake3`, `x-checksum-blake2b`,
+`x-checksum-crc64`) in a single `HeadObject` call, then picks the highest-priority
+algorithm present, ranked by
 `ALGORITHM_PRIORITY` in `catalog_client/utils/checksum/s3.py`:
 
 `crc64nvme` > `crc32` > `blake3` > `blake2b` > `crc64`
@@ -262,13 +362,64 @@ breaks ties, which in practice means two algorithms that both need no downloads 
 
 Mixing stored and computed digests is safe: a child hashed locally produces the same
 value it would report as a stored checksum, so the folder digest is identical either
-way. If no child carries anything readable, the folder falls back to
-`default_algorithm()` and every object is downloaded.
+way. If the listing offers no usable native candidate, the folder falls back to
+`default_algorithm()`.
 
 > **Digest width.** Selection optimises for recompute cost and does not impose a minimum
 > digest strength, so a prefix where `crc32` has better coverage than the alternatives
 > will be registered with a 32-bit digest. Distinct 32-bit values collide at around 65k
 > objects by the birthday bound. Pass an explicit `algorithm=` where that matters.
+
+> **Only native algorithms influence folder auto-selection.** The ranking is done from
+> the `ListObjectsV2` listing, which reports `crc32` and `crc64nvme` but can never
+> mention a `blake3` written into user metadata — discovering those would cost a
+> `HeadObject` per object *before* anything could be chosen. So a folder may auto-select
+> an algorithm that requires downloads even when `x-checksum-blake3` is present on every
+> object. Pass `algorithm=Algorithm.blake3` to have the metadata reused; per-object
+> reuse of metadata algorithms works exactly as before once one is named, and if
+> `default_algorithm()` is itself metadata-backed, workers still try to reuse it.
+>
+> This changes which algorithm a *new* automatic run picks, and therefore can change a
+> folder's digest. It does not strand already-registered assets: the algorithm is
+> recorded next to the value in `checksum_alg`, so re-verifying an existing asset with
+> its recorded algorithm still reproduces its stored digest.
+
+### How an S3 folder is resolved
+
+A folder operation is four phases over **one** listing pass:
+
+1. **Discover.** One `ListObjectsV2` pagination over the prefix, collecting each
+   object's key, size, `ChecksumAlgorithm`, `ChecksumType` and `ETag`. Folder-marker
+   keys are skipped. Any field the listing does not supply stays `None` — which is not
+   the same as an empty value. An empty `ChecksumAlgorithm` list means "this object has
+   no native checksum"; an absent one means "this listing does not report checksum
+   algorithms", and only the first is evidence.
+2. **Select.** One algorithm for the whole folder, from the listing alone. No
+   `HeadObject` and no `GetObject` are issued. An explicitly named algorithm skips this
+   phase entirely, which also lets resolution start on the first page instead of waiting
+   out pagination.
+3. **Resolve.** Each object is resolved independently in a bounded worker pool, so one
+   object's download can be in flight while another's `HeadObject` is outstanding.
+4. **Fold.** The results are combined into the virtual directory tree on the calling
+   thread, in sorted child order. Worker completion order never reaches the digest: for
+   a fixed algorithm and unchanged content, serial and concurrent runs produce the same
+   value.
+
+Because the listing carries no digest *values*, a positive hint can never by itself
+yield a checksum — it can only cancel a `HeadObject` that could not have succeeded:
+
+| What the listing says about the object | What a worker does |
+|---|---|
+| Reports algorithms, and the selected native algorithm is not among them (including an empty list) | Download and hash — no HEAD |
+| Reports the selected native algorithm, with `ChecksumType: COMPOSITE` | Download and hash — no HEAD |
+| Reports the selected native algorithm, with `FULL_OBJECT` or no `ChecksumType` | HEAD for the digest; download only if it is unusable |
+| Reports no checksum algorithms at all | HEAD first; download only if unusable |
+| The selected algorithm is metadata-backed (e.g. `blake3`) | HEAD first — a listing cannot reveal user metadata |
+
+A multipart `ETag` suffix (`"abc123"-7`) marks a multipart *upload*, not a composite
+checksum: such an object may still carry a whole-object `crc64nvme`. The cost model in
+phase 2 prices it pessimistically as needing a download, but that estimate never becomes
+a decision — the worker still HEADs it and still reuses a valid whole-object digest.
 
 ### Controlling downloads
 
@@ -370,6 +521,10 @@ exceptions), so a single bad asset does not abort the whole batch. The asset is 
 an unsupported or missing `storage_platform`, and a missing `s3_client` for an S3 asset. So a
 single warnings filter catches all of them:
 
+`ChecksumPoolWarning` is deliberately **not** a `ChecksumWarning`: a clamped connection
+pool still produces a correct digest, only more slowly, so escalating `ChecksumWarning`
+to an error will not fail a walk over that.
+
 ```python
 import warnings
 from catalog_client.utils.checksum import ChecksumWarning
@@ -389,9 +544,20 @@ Only a genuinely missing object counts as "no stored checksum".
 
 ## Parallelism
 
-Folders are hashed concurrently by default. `max_workers` (`--workers` on the CLI)
-caps the threads; `None` picks a default from the available CPUs and `1` forces the
-serial path.
+Folders are hashed concurrently by default, under two independent budgets:
+
+| budget | parameter | CLI flag | `None` means |
+|---|---|---|---|
+| threads hashing file content | `hash_max_workers` | `--hash-workers` | chosen from the available CPUs, capped at 8 |
+| concurrent S3 requests | `s3_workers` | `--s3-workers` | 32 |
+
+They are separate because they are bound by different things: local hashing is
+CPU-bound and measured net-negative past a handful of threads, while S3 is
+latency-bound and wants far more. On an S3 folder `s3_workers` wins, falling back to
+`hash_max_workers` and then to 32; `s3_workers` is ignored for local paths, which
+issue no requests. `1` forces the serial path either way.
+
+`--workers` still works as a deprecated alias for `--hash-workers`.
 
 **It never changes a checksum.** A folder digest depends on the order children are
 *combined* in, which stays sorted by name regardless of the order they finish in. The
@@ -402,7 +568,7 @@ What it does and does not speed up:
 
 | workload | effect |
 |---|---|
-| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. |
+| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. At the default of 32 the in-flight read buffers total 32MB and the scheduling window holds 128 futures. |
 | Local folder of large files | 2–4.5x, measured. blake3 3.9x, blake2b 4.5x, crc32 2.3x, crc64nvme 2.1x on 8 × 8MB. |
 | Local folder of many small files | Unchanged. The pool only engages above a mean file size, because below it the cost is `open`/`close` in the kernel rather than hashing, and threads measured net-negative. |
 | Single file | Unchanged — there is nothing to parallelise across. |
@@ -413,33 +579,44 @@ per-asset loop in `for_assets` (so every `ChecksumWarning` is raised on the call
 thread, keeping the contract under `warnings.simplefilter("error", ChecksumWarning)`).
 
 ```python
-# Cap threads, or force the serial path.
-assets = for_assets(assets, s3_client=s3, max_workers=4)
-result = compute_checksum_localfs("/data/folder", Algorithm.blake3, max_workers=1)
+# Cap either budget, or force the serial path.
+assets = for_assets(assets, s3_client=s3, s3_workers=4)
+result = compute_checksum_localfs("/data/folder", Algorithm.blake3, hash_max_workers=1)
 ```
 
+**The default of 32 only applies where the SDK owns the client** — the CLI, and
+`for_assets`/`for_location` called without an `s3_client`. Those size their own
+connection pool to the budget plus headroom.
+
 If you pass your own `s3_client`, the S3 worker count is clamped to its
-`max_pool_connections` (10 on a stock client). Exceeding that pool does not queue —
-botocore discards and re-opens connections instead — so raise it on the client if you
-want more concurrency than that:
+`max_pool_connections`, which is 10 on a stock client — below the default, so it
+clamps by default. Exceeding a pool does not queue; botocore discards and re-opens
+connections instead, paying a TLS handshake per excess request. Clamping avoids that,
+and a clamp that costs more than half the requested budget emits a
+`ChecksumPoolWarning` (once per process, per distinct clamp) naming the remedy:
 
 ```python
 import boto3
 from botocore.config import Config
 
-s3 = boto3.client("s3", config=Config(max_pool_connections=32))
-assets = for_assets(assets, s3_client=s3, max_workers=32)
+# Without the Config, this walk runs 10 wide and warns, not 32.
+s3 = boto3.client("s3", config=Config(max_pool_connections=40))
+assets = for_assets(assets, s3_client=s3, s3_workers=32)
 ```
 
 ---
 
 ## Caching
 
-`for_assets` maintains an internal `cached_results` dict across assets in the same batch.
-If multiple assets share files (e.g. overlapping S3 prefixes), each file is only hashed once.
+`for_location` validates S3 metadata on each call. It does not use older entries from a
+caller-provided cache to override that: an entry an earlier asset left behind was
+validated against *that* object, not this one. Objects without a stored checksum may
+therefore be downloaded again on subsequent calls.
 
-You can also pass a pre-populated `cached_results` dict to `for_location` to share a cache across
-multiple calls:
+The optional `cached_results` dictionary receives the stored checksums that were
+validated during the call — including when a folder is then skipped for incomplete
+coverage, since those digests are real either way. Freshly computed digests are not
+added: they were never checked against anything S3 holds.
 
 ```python
 from catalog_client.models.asset import AssetType, StoragePlatform
@@ -456,3 +633,15 @@ for uri in uris:
         cached_results=cache,
     )
 ```
+
+For low-level `compute_checksum` and `compute_checksum_s3` calls, an explicitly
+supplied cache is a caller-managed snapshot: entries are reused only for the
+requested algorithm, and `s3://` and `s3a://` cache keys are equivalent. Clear the
+cache when objects change. Set `use_stored=False` to bypass both the cache and
+stored S3 metadata and hash the downloaded bytes, including every folder child.
+
+`for_assets` creates an S3 client only when it reaches a nonempty S3 location
+without an existing checksum. Local-only, unsupported, and already-checksummed
+batches do not trigger AWS credential discovery. The utility reuses its client
+within the batch and closes it when processing finishes or raises an error.
+A caller-provided client remains open and is owned by the caller.

@@ -491,26 +491,90 @@ def test_checksum_bad_s3_uri_exits_usage(aws_env, capsys):
     assert exc.value.code == 2
 
 
-def test_checksum_workers_does_not_change_the_digest(tmp_path, capsys):
-    """--workers is a throughput knob, never a digest one."""
+def _worker_tree(tmp_path):
     for index in range(6):
         target = tmp_path / f"sub{index % 2}" / f"f{index}.bin"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(bytes([index]) * (1000 + index))
 
+
+def test_checksum_workers_does_not_change_the_digest(tmp_path, capsys):
+    """--hash-workers is a throughput knob, never a digest one."""
+    _worker_tree(tmp_path)
+
     digests = []
-    for workers in ("1", "2", "8"):
+    for workers in ("1", "2", "8", "32"):
         main(
-            ["checksum", str(tmp_path), "--algorithm", "blake2b", "--workers", workers]
+            [
+                "checksum",
+                str(tmp_path),
+                "--algorithm",
+                "blake2b",
+                "--hash-workers",
+                workers,
+            ]
         )
         digests.append(_output(capsys)["content_digest"])
 
     assert len(set(digests)) == 1
 
 
-def test_checksum_rejects_a_non_numeric_worker_count(tmp_path, capsys):
+def test_checksum_workers_alias_matches_hash_workers(tmp_path, capsys):
+    """--workers is the name this flag shipped under and must keep working."""
+    _worker_tree(tmp_path)
+
+    digests = []
+    for flag in ("--workers", "--hash-workers"):
+        main(["checksum", str(tmp_path), "--algorithm", "blake2b", flag, "4"])
+        digests.append(_output(capsys)["content_digest"])
+
+    assert len(set(digests)) == 1
+
+
+@pytest.mark.parametrize("flag", ["--workers", "--hash-workers", "--s3-workers"])
+def test_checksum_rejects_a_non_numeric_worker_count(tmp_path, capsys, flag):
     target = tmp_path / "data.bin"
     target.write_bytes(b"x")
     with pytest.raises(SystemExit) as excinfo:
-        main(["checksum", str(target), "--workers", "lots"])
+        main(["checksum", str(target), flag, "lots"])
     assert excinfo.value.code == EXIT_USAGE
+
+
+def test_s3_workers_reaches_the_sdk_separately_from_hash_workers(aws_env, monkeypatch):
+    """The two flags must arrive as two arguments, not collapse into one."""
+    from unittest.mock import MagicMock, patch
+
+    from catalog_client.utils.checksum.models import ChecksumResult
+
+    result = ChecksumResult(
+        path="s3://b/p/",
+        algorithm=Algorithm.crc32,
+        file_hash="deadbeef",
+        merkle_root="deadbeef",
+        is_directory=True,
+    )
+    with (
+        patch("catalog_client.cli.owned_s3_client", return_value=MagicMock()) as owned,
+        patch("catalog_client.cli.compute_for_s3", return_value=result) as compute,
+    ):
+        main(["checksum", "s3://b/p/", "--s3-workers", "16", "--hash-workers", "3"])
+
+    assert owned.call_args.args == (16, 3)
+    assert compute.call_args.kwargs["s3_workers"] == 16
+    assert compute.call_args.kwargs["hash_max_workers"] == 3
+
+
+def test_s3_workers_is_not_passed_to_the_local_path(tmp_path):
+    """compute_checksum_localfs has no s3_workers; a local run must not pass one."""
+    from unittest.mock import patch
+
+    target = tmp_path / "data.bin"
+    target.write_bytes(b"x")
+    with patch(
+        "catalog_client.cli.compute_checksum_localfs",
+        return_value=compute_checksum_localfs(str(target), Algorithm.blake3),
+    ) as local:
+        main(["checksum", str(target), "--s3-workers", "16", "--hash-workers", "3"])
+
+    assert "s3_workers" not in local.call_args.kwargs
+    assert local.call_args.args[2] == 3

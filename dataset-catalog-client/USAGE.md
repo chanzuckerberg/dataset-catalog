@@ -734,6 +734,17 @@ Common warnings:
 Every skip and failure is reported this way, so `warnings.simplefilter("error", ChecksumWarning)`
 turns all of them into exceptions.
 
+`ChecksumPoolWarning` is a separate class and deliberately **not** a `ChecksumWarning`.
+It reports that a caller-supplied client's `max_pool_connections` held the S3 worker
+count below what was asked for — the digest is still correct, just slower to produce,
+so escalating `ChecksumWarning` must not turn it into a failure. Filter it on its own:
+
+```python
+from catalog_client.utils.checksum import ChecksumPoolWarning
+
+warnings.filterwarnings("ignore", category=ChecksumPoolWarning)
+```
+
 ### Checksums from the command line
 
 `catalog checksum PATH` hashes one local path or S3 URI. It contacts no catalog
@@ -759,7 +770,35 @@ catalog checksum s3://my-bucket/prefix/object.tif
 
 # Integrity audit: ignore what S3 stored and hash the bytes
 catalog checksum s3://my-bucket/prefix/object.tif --algorithm crc32 --recompute
+
+# Follow a large tree file by file; stderr, so `-o json` stays parseable
+catalog checksum data/run-01/ --verbose -o json > digests.json
 ```
+
+```
+$ catalog checksum data/run-01/ --verbose 2>&1 >/dev/null
+2026-09-18T16:27:06.956  checksum_4  fc01ee9d...  blake3  3000000  computed  data/run-01/f5.bin
+2026-09-18T16:27:06.956  checksum_1  e31d0917...  blake3  3000000  computed  data/run-01/f2.bin
+2026-09-18T16:27:06.957  checksum_0  d81b83aa...  blake3  3000000  computed  data/run-01/f1.bin
+```
+
+Each line is `timestamp worker digest algorithm size source path`, with columns
+separated by two spaces.
+
+`timestamp` is local time, ISO-8601 to the millisecond — one token, so it stays a
+single column. Milliseconds are kept because a small file hashes in less than one.
+It marks when the file *finished*, which is what makes it useful next to `worker`:
+the two together show where a slow walk actually spent its time.
+
+`source` is what makes the flag useful for an audit: it distinguishes bytes this run
+actually hashed (`computed`) from a digest taken from S3 metadata on trust.
+
+`worker` is the thread that hashed the file — `checksum_N` for a pooled walk, or
+`MainThread` when the walk ran serially. That is worth seeing, because a folder is
+only hashed through a pool when the scan measures it as worth one (mean file size at
+or above 1MB, more than four files); `--hash-workers N` raises the ceiling but does
+not force a pool. Lines therefore arrive in **completion order, not walk order** — sort
+by path if you need a stable listing. The digest never depends on either.
 
 ```
 DIGEST                            ALG     SIZE     SOURCE     KIND  PATH
@@ -779,8 +818,16 @@ Flags:
 - `--folder` / `--file` — treat an S3 key as a prefix or a single object instead of
   inferring from a trailing `/`. Local paths are always classified by `os.path.isdir`.
 - `--children` — list every descendant of a folder, not just its total.
-- `--workers N` — threads to use for a folder. Defaults to a value chosen from the
-  available CPUs; `1` forces serial. Never changes the checksum.
+- `--hash-workers N` — threads used to hash file content. Defaults to a value chosen
+  from the available CPUs; `1` forces serial. `--workers` is a deprecated alias.
+- `--s3-workers N` — concurrent S3 requests for a folder. Defaults to 32, takes
+  precedence over `--hash-workers` on S3, and is clamped to the client's connection
+  pool. Ignored for local paths.
+
+  Neither ever changes the checksum.
+- `-v` / `--verbose` — log one line per file to **stderr** as it is resolved, prefixed
+  with a timestamp and the worker that hashed it. Folders are not logged; their digest
+  is the fold over the lines already printed.
 - `-o json` — the full `ChecksumResult`: `chunks`, `children`, `merkle_root`,
   `content_digest`, and the base64 forms S3 headers expect (`s3_base64`, plus
   `s3_composite_base64` for files).

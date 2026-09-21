@@ -59,6 +59,7 @@ Usage
     assets = for_assets(assets, algorithm=Algorithm.blake3)
 """
 
+from catalog_client.utils.checksum._parallel import ChecksumPoolWarning
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.generate import (
     ChecksumWarning,
@@ -73,6 +74,7 @@ __all__ = [
     "ChecksumResult",
     "LocationChecksum",
     "ChecksumWarning",
+    "ChecksumPoolWarning",
     "compute_checksum",
     "default_algorithm",
     "for_location",

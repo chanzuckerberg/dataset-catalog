@@ -16,6 +16,7 @@ scheduling state before any work is reported.
 
 import logging
 import os
+import warnings
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -27,16 +28,34 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 R = TypeVar("R")
 
+
+class ChecksumPoolWarning(UserWarning):
+    """
+    A connection pool held the S3 worker count below what was asked for.
+
+    Deliberately not a ChecksumWarning. That class means no digest was
+    produced, and callers are documented to escalate it with
+    `warnings.simplefilter("error", ChecksumWarning)`. A clamped pool still
+    produces a correct digest — only more slowly — so escalating this one
+    would fail walks that in fact succeeded.
+    """
+
+
 # Local hashing is CPU-bound and measured scaling plateaus between 4 and 8
 # threads, then declines: past that point the GIL handoff and the filesystem's
 # own locking cost more than the extra parallelism returns.
 DEFAULT_LOCAL_WORKERS = 8
 
-# S3 is latency-bound, so more workers would help — but a stock boto3 client
-# caps its connection pool at 10, and botocore leaves urllib3 at block=False,
-# which means an over-subscribed pool silently closes and re-opens connections
-# rather than queueing. Staying under the default leaves room for the paginator.
-DEFAULT_S3_WORKERS = 8
+# S3 is latency-bound: a walk spends its time waiting on round trips, not on
+# CPU, so the budget should track the connection pool we control rather than
+# the one boto3 happens to ship. `owned_s3_client` sizes its pool to this
+# number plus headroom, which is why the two must move together.
+#
+# It is only honoured where we own both sides. A caller's own client still
+# clamps it down — a stock one to 10 — and `effective_s3_workers` warns when it
+# does, because at this default that clamp is the common case rather than the
+# exception.
+DEFAULT_S3_WORKERS = 32
 
 # Futures held in flight per worker. Enough that a worker never idles waiting
 # for the consumer to advance, small enough that the queue stays bounded.
@@ -45,6 +64,17 @@ _WINDOW_PER_WORKER = 4
 # Spare connections kept above the worker count on a client we build ourselves,
 # so the paginator driving a walk never contends with a full set of workers.
 _POOL_HEADROOM = 8
+
+# How far below the requested budget a clamp has to land before it is worth
+# interrupting the caller about. Losing a few workers to a slightly narrow pool
+# is noise; losing half of them is a mis-sized pool they can actually fix.
+_CLAMP_WARN_FRACTION = 0.5
+
+# Clamps already reported, keyed (effective, limit). Once per process, not once
+# per folder: for_assets over hundreds of prefixes would otherwise repeat the
+# same advice hundreds of times. Not left to Python's duplicate filter, which
+# simplefilter("always") and pytest.warns both bypass.
+_warned_pool_clamps: set[tuple[int, int]] = set()
 
 
 def ordered_map(
@@ -68,7 +98,10 @@ def ordered_map(
 
     remaining = iter(items)
     pending: deque[Future[R]] = deque()
-    pool = ThreadPoolExecutor(max_workers=max_workers)
+    # Named so the per-file log lines identify their worker as "checksum_3"
+    # rather than the default "ThreadPoolExecutor-0_3", which also renumbers its
+    # pool counter per executor and so repeats across successive walks.
+    pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="checksum")
     try:
         for item in islice(remaining, max_workers * _WINDOW_PER_WORKER):
             pending.append(pool.submit(fn, item))
@@ -97,7 +130,29 @@ def local_workers(requested: int | None) -> int:
     return max(1, min(DEFAULT_LOCAL_WORKERS, available))
 
 
-def s3_workers(s3, requested: int | None) -> int:
+def requested_s3_workers(s3_workers: int | None, hash_max_workers: int | None) -> int:
+    """
+    Resolve the two worker knobs into one S3 request budget.
+
+    `is not None` rather than `or`: a caller asking for 0 means "as few as
+    possible", and falsiness would silently hand them the hash budget instead
+    of the floor of 1.
+
+    Every consumer of the budget resolves it here. `effective_s3_workers` reads
+    it to size the pool of threads and `owned_s3_client` to size the pool of
+    connections, and the two disagreeing is the silent-slowdown failure
+    documented on `owned_s3_client`.
+    """
+    if s3_workers is not None:
+        return max(1, s3_workers)
+    if hash_max_workers is not None:
+        return max(1, hash_max_workers)
+    return DEFAULT_S3_WORKERS
+
+
+def effective_s3_workers(
+    s3, s3_workers: int | None = None, hash_max_workers: int | None = None
+) -> int:
     """
     Worker count for S3 requests, clamped to the client's own connection pool.
 
@@ -112,25 +167,34 @@ def s3_workers(s3, requested: int | None) -> int:
     # Test doubles report a Mock here rather than an int; fall back to the
     # default instead of comparing against something meaningless.
     limit = cap if isinstance(cap, int) and cap > 0 else DEFAULT_S3_WORKERS
-    wanted = DEFAULT_S3_WORKERS if requested is None else requested
+    wanted = requested_s3_workers(s3_workers, hash_max_workers)
     workers = max(1, min(wanted, limit))
     if workers < wanted:
-        logger.debug(
-            "Limiting S3 checksum workers to %d: the client's connection pool "
-            "allows %d. Raise max_pool_connections on the client to use more.",
-            workers,
-            limit,
+        message = (
+            f"Limiting S3 checksum workers to {workers}: the client's "
+            f"connection pool allows {limit}, but {wanted} were requested. "
+            f"Raise max_pool_connections on the client to use more."
         )
+        logger.debug(message)
+        # Called from the coordinator before ordered_map builds its pool, so
+        # this warning is always raised on the calling thread — the contract
+        # the checksum guide documents for every warning this package emits.
+        if (
+            workers < wanted * _CLAMP_WARN_FRACTION
+            and (workers, limit) not in _warned_pool_clamps
+        ):
+            _warned_pool_clamps.add((workers, limit))
+            warnings.warn(message, ChecksumPoolWarning, stacklevel=3)
     return workers
 
 
-def owned_s3_client(max_workers: int | None = None):
+def owned_s3_client(s3_workers: int | None = None, hash_max_workers: int | None = None):
     """
     A boto3 S3 client whose connection pool is sized for our own worker count.
 
     Only for clients we construct: a client passed in by a caller is used as-is
-    and `s3_workers` clamps to whatever pool they chose. Lives beside
-    `s3_workers` because it is the same policy from the other side — that
+    and `effective_s3_workers` clamps to whatever pool they chose. Lives beside
+    `effective_s3_workers` because it is the same policy from the other side — that
     function reads a pool limit, this one writes it, and when the two disagree
     the walk silently pays a TLS handshake per excess request.
 
@@ -141,5 +205,10 @@ def owned_s3_client(max_workers: int | None = None):
     import boto3
     from botocore.config import Config
 
-    pool = max(DEFAULT_S3_WORKERS, max_workers or 0) + _POOL_HEADROOM
+    # max(), because max_pool_connections is a cap rather than a
+    # preallocation: a floor of the default budget costs nothing and keeps a
+    # small explicit request from sizing the pool below what a later caller
+    # asks for on the same client.
+    budget = requested_s3_workers(s3_workers, hash_max_workers)
+    pool = max(DEFAULT_S3_WORKERS, budget) + _POOL_HEADROOM
     return boto3.client("s3", config=Config(max_pool_connections=pool))

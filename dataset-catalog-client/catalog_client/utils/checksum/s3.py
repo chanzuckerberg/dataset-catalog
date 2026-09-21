@@ -1,10 +1,10 @@
 import base64
 import binascii
 import logging
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from typing import NamedTuple
 
-from catalog_client.utils.checksum._parallel import ordered_map, s3_workers
 from catalog_client.utils.checksum.algorithm import (
     HASH_THROUGHPUT_MB_S,
     Algorithm,
@@ -21,10 +21,19 @@ logger = logging.getLogger(__name__)
 # expired credentials) must not be silently reported as "no checksum".
 _MISSING_OBJECT_ERROR_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 
+# The name S3 gives each natively-computed algorithm. One mapping, because the
+# same name appears in two shapes: ListObjectsV2 reports it verbatim in
+# Contents[].ChecksumAlgorithm, while HeadObject returns the value under
+# "Checksum" + name. Deriving the second from the first keeps a listing hint and
+# the HEAD that follows it from ever disagreeing about which field to read.
+_S3_NATIVE_NAME: dict[Algorithm, str] = {
+    Algorithm.crc32: "CRC32",
+    Algorithm.crc64nvme: "CRC64NVME",
+}
+
 # Maps our algorithm name to the HeadObject response field S3 uses
 _S3_NATIVE_RESPONSE_KEY: dict[Algorithm, str] = {
-    Algorithm.crc32: "ChecksumCRC32",
-    Algorithm.crc64nvme: "ChecksumCRC64NVME",
+    algo: f"Checksum{name}" for algo, name in _S3_NATIVE_NAME.items()
 }
 
 _NON_S3_NATIVE_ALGORITHMS: set[Algorithm] = {
@@ -63,32 +72,43 @@ _REQUEST_BYTE_EQUIVALENT = 4 * 1024 * 1024
 _NETWORK_MB_S = 100.0
 
 
+class _ListedObject(NamedTuple):
+    """
+    One object as ListObjectsV2 described it.
+
+    Every field except the key is `None` when the listing did not supply it,
+    which is not the same as supplying an empty or zero value. `algorithms` in
+    particular must keep `None` ("this listing does not report checksum
+    algorithms") distinct from `frozenset()` ("this object has none"): only the
+    second is evidence, and only evidence may cancel a HeadObject. A missing
+    size is likewise not 0.
+    """
+
+    key: str
+    size: int | None
+    algorithms: frozenset[str] | None
+    checksum_type: str | None
+    etag: str | None
+
+
 @dataclass(frozen=True)
 class _FolderSelection:
     """
-    The algorithm to hash a prefix with, and the children already carrying it.
+    The algorithm to hash a prefix with, and the objects it was chosen over.
 
-    total_children is the count the prefix listing found, so a caller can tell
-    complete coverage (assembling the folder digest needs no downloads) from
-    partial coverage (some children must be fetched), which is the distinction
-    compute_if_no_s3_checksum turns on.
+    `objects` is the single listing pass, handed on so resolution never lists
+    the prefix again. It is a materialised list when ranking had to see
+    folder-wide totals first, and a lazy iterator when the caller named the
+    algorithm — there is nothing to rank then, so resolution can start on the
+    first page rather than waiting out pagination.
+
+    Selection deliberately reports no coverage. The listing carries no digest
+    values, so how many children are actually reusable is not knowable until
+    the resolution phase has run.
     """
 
     algorithm: Algorithm | None = None
-    cached: dict[str, ChecksumResult] = field(default_factory=dict)
-    total_children: int = 0
-
-    @property
-    def covers_all_children(self) -> bool:
-        """
-        Whether the folder digest can be assembled without downloading anything.
-
-        Lives here, next to the two values it compares, so the rule is stated
-        once. Partial coverage is still useful — it saves a download per cached
-        child — but it is not the same as complete coverage, and only complete
-        coverage may proceed under compute_if_no_s3_checksum=False.
-        """
-        return self.total_children > 0 and len(self.cached) == self.total_children
+    objects: Iterable[_ListedObject] = ()
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -306,10 +326,84 @@ def _recompute_cost(
     return effective_mb * (1.0 / _NETWORK_MB_S + 1.0 / HASH_THROUGHPUT_MB_S[algorithm])
 
 
-def _cheapest_algorithm(
-    per_child: dict[str, dict[Algorithm, ChecksumResult]],
-    sizes: dict[str, int | None],
-) -> Algorithm:
+def _listing_excludes_native(listed: _ListedObject, algorithm: Algorithm) -> bool:
+    """
+    Whether the listing proves a HeadObject cannot yield `algorithm`.
+
+    Only a positive statement counts. A listing that reports algorithms and
+    omits this one — including an explicitly empty list — has ruled it out, and
+    so has one reporting it as a multipart COMPOSITE, which is not comparable
+    with a whole-object hash. Everything else (no algorithm field at all, or a
+    metadata-backed algorithm the listing could never mention) leaves the HEAD
+    in place: skipping it on an absent field would silently stop reusing stored
+    checksums on any store that does not populate it.
+
+    A multipart ETag is deliberately not consulted. It marks a multipart upload,
+    not a composite checksum, and a multipart object may well carry a
+    whole-object CRC64NVME. The cost model prices that case pessimistically
+    (_listing_suggests_reuse); this one must not act on the same guess.
+    """
+    name = _S3_NATIVE_NAME.get(algorithm)
+    if name is None or listed.algorithms is None:
+        return False
+    if name not in listed.algorithms:
+        return True
+    return listed.checksum_type == "COMPOSITE"
+
+
+def _listing_suggests_reuse(listed: _ListedObject, algorithm: Algorithm) -> bool:
+    """
+    Whether the listing gives reason to hope this object's `algorithm`
+    checksum is reusable — a cost estimate, never a decision.
+
+    Pessimistic where the listing is ambiguous: a reported algorithm with no
+    ChecksumType on an object whose ETag carries a multipart suffix is priced
+    as a download, because that is the shape a composite checksum takes on a
+    listing that omits the type. It may overcharge a multipart object that
+    really does hold a whole-object digest, which costs a worse ranking and
+    nothing else — the worker still HEADs it and still reuses what it finds.
+
+    The ETag is quoted in the listing ('"abc"-3'), and _has_multipart_suffix
+    requires the part count to be the last characters, so the quotes come off
+    before the test.
+    """
+    native_name = _S3_NATIVE_NAME.get(algorithm)
+    if (
+        native_name is None
+        or listed.algorithms is None
+        or native_name not in listed.algorithms
+    ):
+        return False
+    if listed.checksum_type is not None:
+        return listed.checksum_type != "COMPOSITE"
+    return not (
+        listed.etag is not None and _has_multipart_suffix(listed.etag.strip('"'))
+    )
+
+
+def _native_candidates(objects: list[_ListedObject]) -> set[Algorithm]:
+    """
+    The native algorithms worth ranking for a prefix, from the listing alone.
+
+    An algorithm only ever seen on COMPOSITE objects is no candidate: those
+    values cannot be compared with a whole-object hash, so reporting them
+    would price a folder as covered that in fact needs downloading throughout.
+
+    Intersected with what this install can compute, as before: an algorithm S3
+    stored but whose hasher is missing cannot combine children into a folder
+    digest, so choosing it would fail partway through the walk.
+    """
+    reported: set[str] = set()
+    for listed in objects:
+        if listed.algorithms is None or listed.checksum_type == "COMPOSITE":
+            continue
+        reported |= listed.algorithms
+    return {
+        algorithm for algorithm, name in _S3_NATIVE_NAME.items() if name in reported
+    } & available_algorithms()
+
+
+def _cheapest_algorithm(objects: list[_ListedObject]) -> Algorithm:
     """
     The algorithm requiring the least recompute across a prefix's children.
 
@@ -318,24 +412,26 @@ def _cheapest_algorithm(
     Mixing the two is sound because a stored digest and a computed one are the
     same value — see ChecksumResult.content_digest.
 
-    Candidates are intersected with what this install can compute: an algorithm
-    S3 stored but whose hasher is missing cannot combine children into a folder
-    digest, so choosing it would fail partway through the walk.
+    Ranked from the listing, which means only S3-native algorithms can be
+    discovered here: a blake3 written into user metadata is invisible until a
+    HeadObject reads it, and reading one per object before choosing is the
+    round trip this phase exists to avoid. Name such an algorithm explicitly to
+    have it reused. The default is the fallback when the listing offers no
+    native candidate, not a competitor to one that it does.
     """
-    candidates = {
-        algorithm for results in per_child.values() for algorithm in results
-    } & available_algorithms()
-    # Always an option, and the answer when nothing has a stored checksum:
-    # hash every child from scratch. blake2b is stdlib, so this is never empty.
-    candidates.add(default_algorithm())
+    candidates = _native_candidates(objects)
+    if not candidates:
+        # Nothing reusable in sight: hash every child from scratch. blake2b is
+        # stdlib, so default_algorithm() always resolves to something buildable.
+        return default_algorithm()
 
     def rank(algorithm: Algorithm) -> tuple[float, int]:
-        missing = [child for child, r in per_child.items() if algorithm not in r]
+        missing = [o for o in objects if not _listing_suggests_reuse(o, algorithm)]
         # `or 0`: an unreported size prices as free rather than aborting the
         # ranking. It only has to order the options, and a child whose size the
         # listing withheld still costs its round trip via missing_count.
         cost = _recompute_cost(
-            sum(sizes.get(child) or 0 for child in missing), len(missing), algorithm
+            sum(o.size or 0 for o in missing), len(missing), algorithm
         )
         # Priority breaks ties only. A tie means both need the same recompute
         # -- usually none at all -- so nothing is paid for preferring one.
@@ -344,106 +440,77 @@ def _cheapest_algorithm(
     return min(candidates, key=rank)
 
 
-def _iter_listing(
-    s3_client, bucket: str, prefix: str
-) -> Iterator[tuple[str, int | None]]:
+def _iter_listing(s3_client, bucket: str, prefix: str) -> Iterator[_ListedObject]:
     """
-    Yield (key, size) for every object under a prefix, skipping folder markers.
+    Yield a _ListedObject for every object under a prefix, skipping folder
+    markers.
 
-    The single place the listing rules live, so detection and hashing always see
-    the same set of objects. Size stays None when the listing does not report
-    one: a folder total must distinguish "unknown" from 0, and callers that only
-    need a number for arithmetic coerce it themselves.
+    The single place the listing rules live, so selection and hashing always see
+    the same set of objects. Everything the listing withholds stays None rather
+    than being defaulted — see _ListedObject.
+
+    ChecksumAlgorithm arrives as a list, so it becomes a frozenset; the
+    membership tests downstream are the only thing that reads it, and a
+    hashable value keeps a _ListedObject usable as a dict key.
     """
     paginator = s3_client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             if obj["Key"].endswith("/"):
                 continue
-            yield obj["Key"], obj.get("Size")
+            algorithms = obj.get("ChecksumAlgorithm")
+            yield _ListedObject(
+                key=obj["Key"],
+                size=obj.get("Size"),
+                algorithms=None if algorithms is None else frozenset(algorithms),
+                checksum_type=obj.get("ChecksumType"),
+                etag=obj.get("ETag"),
+            )
 
 
 def _select_folder_algorithm(
     path: str,
     s3_client,
     algorithm: Algorithm | None = None,
-    max_workers: int | None = None,
 ) -> _FolderSelection:
     """
-    Choose the algorithm to hash a prefix with, and collect reusable children.
+    Choose the algorithm to hash a prefix with, and hand on its listing.
 
-    Scans every child once. Unlike a "common algorithm" rule, a child with no
-    stored checksum does not discard the rest: it just becomes one object to
-    download, while every other child still contributes its stored digest.
-    Requiring universality meant a single checksumless object in a 100k-object
-    prefix forced 100k downloads.
+    Issues no HeadObject and no GetObject: the choice is made from what
+    ListObjectsV2 already reports about each object. Whether a given child's
+    checksum is genuinely reusable is settled per object during resolution,
+    which is where the digest values actually arrive.
 
-    `algorithm` names the algorithm outright and skips selection; the scan
-    still runs, because it is what finds the children that already carry it.
+    A child with no usable checksum does not discard the rest — it just becomes
+    one object to download, while every other child still contributes its
+    stored digest.
 
-    For a prefix whose children all carry a stored checksum this scan is the
-    entire operation — no object is ever read — so its HeadObjects are issued
-    concurrently. Results are consumed in listing order, which keeps an error
-    on one child reported the same way a serial loop reported it.
+    `algorithm` names the algorithm outright. Nothing then has to be ranked, so
+    the listing is passed on unconsumed and resolution overlaps its own
+    requests with pagination. Auto-selection cannot: it ranks over folder-wide
+    totals, so every page must be read before the first object is resolved.
     """
     if not path.startswith(("s3://", "s3a://")):
         return _FolderSelection()
 
     bucket, key = _parse_s3_uri(path)
-    # Same normalisation the compute phase applies, so detection and hashing
+    # Same normalisation the compute phase applies, so selection and hashing
     # always see the same set of objects.
-    prefix = _folder_prefix(key)
+    listing = _iter_listing(s3_client, bucket, _folder_prefix(key))
 
-    def head(
-        item: tuple[str, int | None],
-    ) -> tuple[str, int | None, dict[Algorithm, ChecksumResult]]:
-        child_key, size = item
-        return (
-            child_key,
-            size,
-            _fetch_all_s3_stored_checksums(bucket, child_key, s3_client),
-        )
+    if algorithm is not None:
+        # Logged before the listing is consumed, so this line appears even for
+        # a prefix whose pagination or resolution then fails — which is when
+        # knowing which algorithm was in play matters most.
+        logger.debug("Selected %s for %s: requested explicitly", algorithm, path)
+        return _FolderSelection(algorithm, listing)
 
-    # Both maps are keyed by S3 key, not by s3:// path: the full paths are only
-    # needed for the children that survive selection, so building them for every
-    # object would retain an N-entry string map to discard most of it.
-    #
-    # Size comes off the listing, which reports it for every object including the
-    # ones with no stored checksum at all -- those are exactly the ones the cost
-    # model needs to price.
-    sizes: dict[str, int | None] = {}
-    per_child: dict[str, dict[Algorithm, ChecksumResult]] = {}
-
-    # The listing is consumed lazily through ordered_map's window, so no matter
-    # how large the prefix is only a bounded number of futures exist at once.
-    # The accumulators below are still O(objects); it is the scheduling state,
-    # not the result set, that the window bounds.
-    for child_key, size, stored in ordered_map(
-        head,
-        _iter_listing(s3_client, bucket, prefix),
-        s3_workers(s3_client, max_workers),
-    ):
-        sizes[child_key] = size
-        per_child[child_key] = stored
-
-    if not per_child:
-        # An empty or non-existent prefix. Pass an explicitly named algorithm
-        # through unchanged; there is nothing to detect one from.
-        return _FolderSelection(algorithm=algorithm)
-
-    chosen = (
-        algorithm if algorithm is not None else _cheapest_algorithm(per_child, sizes)
-    )
-    cached = {
-        f"s3://{bucket}/{child}": r[chosen]
-        for child, r in per_child.items()
-        if chosen in r
-    }
+    objects = list(listing)
+    chosen = _cheapest_algorithm(objects)
     logger.debug(
-        "Selected %s for %s: %d of %d children already carry it",
+        "Selected %s for %s: cheapest over %d listed objects",
         chosen,
         path,
-        len(cached),
-        len(per_child),
+        len(objects),
     )
-    return _FolderSelection(chosen, cached, len(per_child))
+    return _FolderSelection(chosen, objects)
