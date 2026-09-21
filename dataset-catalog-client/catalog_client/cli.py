@@ -583,25 +583,11 @@ def _enable_verbose_logging() -> None:
 
     Configures that one logger rather than calling logging.basicConfig, which
     would raise the root level and pull in botocore's own output — tens of
-    lines per request, drowning the ones this flag is for. That containment is
-    what makes DEBUG affordable here: the level applies to this package only,
-    so --verbose reports everything the checksum walk decided (the algorithm it
-    chose, each resolved path, and why a location was skipped or a stored value
-    rejected) without the transport chatter underneath it.
+    lines per request, drowning the ones this flag is for.
 
     stderr, not stdout, so `-o json` stays parseable while --verbose is on.
 
-    asctime and threadName come from the record rather than the message: logging
-    already captures both, and they lead the line because a path may contain
-    spaces, so only a trailing path can be split off reliably. A serial walk
-    reports MainThread, which is worth seeing — the pool gate in _hash_files is
-    decided from measured file sizes, not from --hash-workers alone.
-
-    datefmt plus msecs rather than the default asctime, which renders as
-    "... 12:34:56,789" — two tokens where the rest of the line is one field per
-    token. Milliseconds are kept because a small file hashes in less than one,
-    and a second-resolution stamp would put a whole tree at the same instant.
-    Local time, matching every other timestamp this CLI prints.
+    See docs/checksum_guide.md for the line format and how to read it.
     """
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
@@ -611,7 +597,8 @@ def _enable_verbose_logging() -> None:
         )
     )
     checksum_logger = logging.getLogger("catalog_client.utils.checksum")
-    checksum_logger.addHandler(handler)
+    if not checksum_logger.handlers:
+        checksum_logger.addHandler(handler)
     checksum_logger.setLevel(logging.DEBUG)
 
 

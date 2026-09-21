@@ -19,7 +19,6 @@ from catalog_client.utils.checksum._parallel import DEFAULT_S3_WORKERS
 from catalog_client.utils.checksum.algorithm import (
     Algorithm,
     default_algorithm,
-    new_hasher,
 )
 from catalog_client.utils.checksum.generate import (
     UNSUPPORTED_PLATFORMS,
@@ -130,9 +129,7 @@ def test_missing_platform_warns_and_leaves_checksum_unset(mock_s3):
 )
 def test_s3_file_stored_checksum_returned_without_download(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=True)
     mock_compute.assert_not_called()
     assert result[0].checksum == HASH
@@ -144,7 +141,7 @@ def test_s3_file_stored_checksum_returned_without_download(mock_fetch, mock_s3):
     return_value={},
 )
 @patch(
-    "catalog_client.utils.checksum.generate._compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.blake3, HASH),
 )
 def test_s3_file_no_stored_checksum_falls_back_to_blake3(
@@ -163,9 +160,7 @@ def test_s3_file_no_stored_checksum_falls_back_to_blake3(
 )
 def test_s3_file_stored_checksum_returned_when_compute_flag_false(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
     mock_compute.assert_not_called()
     assert result[0].checksum == HASH
@@ -178,16 +173,14 @@ def test_s3_file_stored_checksum_returned_when_compute_flag_false(mock_fetch, mo
 )
 def test_s3_file_no_stored_no_compute_flag_leaves_checksum_unset(mock_fetch, mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets([asset], s3_client=mock_s3, compute_if_no_s3_checksum=False)
     mock_compute.assert_not_called()
     assert result[0].checksum is None
 
 
 @patch(
-    "catalog_client.utils.checksum.generate._compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.crc32, HASH),
 )
 def test_s3_file_explicit_algo_with_compute_flag_downloads_and_computes(
@@ -208,9 +201,7 @@ def test_s3_file_explicit_algo_with_compute_flag_downloads_and_computes(
 
 def test_s3_file_explicit_algo_no_compute_flag_skips_download(mock_s3):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -232,9 +223,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_true_uses_stored(
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -254,9 +243,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_false_uses_stored(
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -269,7 +256,7 @@ def test_s3_file_explicit_algo_matching_stored_compute_flag_false_uses_stored(
 
 
 @patch(
-    "catalog_client.utils.checksum.generate._compute_checksum_s3",
+    "catalog_client.utils.checksum.generate._hash_s3_file",
     return_value=make_result(S3_FILE, Algorithm.crc32, HASH),
 )
 @patch(
@@ -300,9 +287,7 @@ def test_s3_file_explicit_algo_mismatched_stored_compute_flag_false_leaves_check
     mock_fetch, mock_s3
 ):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3"
-    ) as mock_compute:
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file") as mock_compute:
         result = for_assets(
             [asset],
             algorithm=Algorithm.crc32,
@@ -329,16 +314,9 @@ def _folder_stub(*objects, page_size=1000):
 
 
 def _blake3_child(key, body=b"payload"):
-    """A child carrying a blake3 digest in user metadata, as our uploader writes it."""
-    obj = StubObject(key=f"data/folder/{key}", body=body)
-    obj.metadata = {"x-checksum-blake3": metadata_hex(body, Algorithm.blake3)}
-    return obj
-
-
-def metadata_hex(body: bytes, algorithm: Algorithm) -> str:
-    hasher = new_hasher(algorithm)
-    hasher.update(body)
-    return hasher.hexdigest()
+    return StubObject(key=f"data/folder/{key}", body=body).with_metadata(
+        Algorithm.blake3
+    )
 
 
 def _folder_asset():
@@ -636,9 +614,7 @@ def test_local_folder_explicit_algo_computes_merkle(mock_compute, mock_s3):
 )
 def test_compute_failure_warns_and_leaves_checksum_unset(mock_fetch, mock_s3, exc):
     asset = make_asset(S3_FILE, AssetType.file)
-    with patch(
-        "catalog_client.utils.checksum.generate._compute_checksum_s3", side_effect=exc
-    ):
+    with patch("catalog_client.utils.checksum.generate._hash_s3_file", side_effect=exc):
         with pytest.warns(ChecksumWarning, match="Failed to generate checksum"):
             result = for_assets(
                 [asset], s3_client=mock_s3, compute_if_no_s3_checksum=True
@@ -647,7 +623,7 @@ def test_compute_failure_warns_and_leaves_checksum_unset(mock_fetch, mock_s3, ex
 
 
 @patch("catalog_client.utils.checksum.generate._fetch_all_s3_stored_checksums")
-@patch("catalog_client.utils.checksum.generate._compute_checksum_s3")
+@patch("catalog_client.utils.checksum.generate._hash_s3_file")
 def test_partial_failure_all_assets_returned(mock_compute, mock_fetch, mock_s3):
     good_uri = S3_FILE
     bad_uri = "s3://bucket/data/bad.h5ad"

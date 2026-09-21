@@ -18,12 +18,12 @@ import time
 
 import pytest
 
-from catalog_client.utils.checksum.algorithm import Algorithm, new_hasher
+from catalog_client.utils.checksum.algorithm import Algorithm
 from catalog_client.utils.checksum.hashing import (
     _fold_s3_children,
     _resolve_s3_objects,
 )
-from tests.utils.checksum.stub_s3 import StubObject, StubS3, native_b64
+from tests.utils.checksum.stub_s3 import StubObject, StubS3, digest_hex, native_b64
 
 BUCKET = "test-bucket"
 PREFIX = "dataset/"
@@ -51,16 +51,6 @@ def resolve(
         hash_max_workers=None,
         s3_workers=workers,
     )
-
-
-def metadata_hex(body: bytes, algorithm: Algorithm) -> str:
-    hasher = new_hasher(algorithm)
-    hasher.update(body)
-    return hasher.hexdigest()
-
-
-def computed_hex(body: bytes, algorithm: Algorithm) -> str:
-    return metadata_hex(body, algorithm)
 
 
 # ── The worker decision table ─────────────────────────────────────────────────
@@ -115,7 +105,7 @@ def test_a_reported_algorithm_is_headed_and_its_digest_reused(checksum_type):
     assert s3.gets == []
     child = result.children[f"{PREFIX}a.bin"]
     assert child.source == "s3_native"
-    assert child.file_hash == computed_hex(BODY, Algorithm.crc32)
+    assert child.file_hash == digest_hex(BODY, Algorithm.crc32)
 
 
 def test_a_listing_without_checksum_algorithms_still_heads():
@@ -135,7 +125,7 @@ def test_a_metadata_backed_algorithm_always_heads():
     # The listing can never mention x-checksum-blake3, so a hint that omits
     # blake3 must not be read as ruling it out.
     obj = listed("a.bin", listing_algorithms=["CRC32"])
-    obj.metadata = {"x-checksum-blake3": metadata_hex(BODY, Algorithm.blake3)}
+    obj.metadata = {"x-checksum-blake3": digest_hex(BODY, Algorithm.blake3)}
     s3 = StubS3([obj])
 
     result = resolve(s3, Algorithm.blake3)
@@ -223,9 +213,9 @@ def test_complete_stored_coverage_succeeds_with_downloads_disabled():
 
     assert s3.gets == []
     assert result.complete
-    assert set(result.stored) == {
-        f"s3://{BUCKET}/{PREFIX}a.bin",
-        f"s3://{BUCKET}/{PREFIX}b.bin",
+    assert {k: r.source for k, r in result.children.items()} == {
+        f"{PREFIX}a.bin": "s3_native",
+        f"{PREFIX}b.bin": "s3_native",
     }
 
 
@@ -235,15 +225,18 @@ def test_an_empty_prefix_is_not_complete_coverage():
     assert not resolve(StubS3([]), download=False).complete
 
 
-def test_only_stored_digests_are_offered_for_caching():
-    # A freshly computed digest was never validated against anything S3 holds,
-    # so it must not enter a checksum cache.
+def test_source_distinguishes_stored_digests_from_computed_ones():
+    # A freshly computed digest was never validated against anything S3 holds.
+    # `source` is what _compute_folder_for_s3 filters on to keep those out of
+    # the caller's checksum cache.
     s3 = StubS3([listed("a.bin"), listed("b.bin").with_native(Algorithm.crc32)])
 
     result = resolve(s3)
 
-    assert set(result.stored) == {f"s3://{BUCKET}/{PREFIX}b.bin"}
-    assert set(result.children) == {f"{PREFIX}a.bin", f"{PREFIX}b.bin"}
+    assert {k: r.source for k, r in result.children.items()} == {
+        f"{PREFIX}a.bin": "computed",
+        f"{PREFIX}b.bin": "s3_native",
+    }
 
 
 def test_a_failing_object_raises_in_listing_order(monkeypatch):
@@ -372,6 +365,6 @@ def test_the_listing_size_backfills_a_stored_result_that_lacks_one():
 
 
 def test_native_b64_matches_the_hashers_own_digest():
-    assert base64.b64decode(native_b64(BODY, Algorithm.crc32)).hex() == metadata_hex(
+    assert base64.b64decode(native_b64(BODY, Algorithm.crc32)).hex() == digest_hex(
         BODY, Algorithm.crc32
     )

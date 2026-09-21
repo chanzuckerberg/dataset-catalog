@@ -1,14 +1,13 @@
 import logging
 import warnings
-from dataclasses import dataclass
 from typing import TypeVar
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
 from catalog_client.utils.checksum._parallel import owned_s3_client
 from catalog_client.utils.checksum.algorithm import Algorithm, default_algorithm
 from catalog_client.utils.checksum.hashing import (
-    _compute_checksum_s3,
     _fold_s3_children,
+    _hash_s3_file,
     _resolve_s3_objects,
     compute_checksum_localfs,
 )
@@ -55,36 +54,18 @@ def _skip(message: str) -> None:
     warnings.warn(message, ChecksumWarning, stacklevel=3)
 
 
-@dataclass
-class _S3Detection:
-    """
-    What the detect phase learned about a single S3 object.
-
-    Object-only: a folder is no longer detected ahead of being computed, so
-    there is nothing here about children. `covers_all_children` and the folder
-    branch that produced it are gone with it — coverage is now an outcome of
-    resolution (see `_compute_folder_for_s3`), not something a phase preceding
-    it can claim.
-
-    Still a dataclass rather than a bare Algorithm so that a second thing the
-    HEAD learned can be added without rewriting the call site.
-    """
-
-    algorithm: Algorithm | None
-
-
-def detect_and_cache_for_s3(
+def _detect_s3_object(
     location_uri: str,
     algorithm: Algorithm | None,
-    cached_results: dict[str, ChecksumResult],
     s3_client,
-) -> _S3Detection:
+) -> tuple[Algorithm | None, ChecksumResult | None]:
     """
-    HEAD one S3 object, choose an algorithm for it, and cache what it carries.
+    HEAD one S3 object and return the algorithm to use and any digest it
+    already carries.
 
-    Populates `cached_results` only when the chosen algorithm is actually
-    stored on the object; the caller reads that entry back to tell "already
-    covered" from "must be computed".
+    The second element is None when the chosen algorithm is not stored on the
+    object, which is how the caller tells "already covered" from "must be
+    computed".
     """
     bucket, key = _parse_s3_uri(location_uri)
     all_checksums = _fetch_all_s3_stored_checksums(bucket, key, s3_client)
@@ -97,9 +78,7 @@ def detect_and_cache_for_s3(
         if algorithm is not None
         else _select_best_algorithm(set(all_checksums))
     )
-    if chosen is not None and chosen in all_checksums:
-        cached_results[location_uri] = all_checksums[chosen]
-    return _S3Detection(chosen)
+    return chosen, all_checksums.get(chosen) if chosen is not None else None
 
 
 def _compute_folder_for_s3(
@@ -115,8 +94,7 @@ def _compute_folder_for_s3(
     Discover, select, resolve and fold a prefix in one pass.
 
     One ListObjectsV2 pagination, one algorithm, one resolution attempt per
-    object. The detect-then-compute pair this replaced listed the prefix twice
-    and HEADed every child before fetching any of them.
+    object.
 
     Coverage is read off the resolved children, never off the listing: the
     listing's checksum hints are a cost estimate and can be both optimistic
@@ -144,8 +122,16 @@ def _compute_folder_for_s3(
         s3_workers=s3_workers,
     )
     # Accumulated even when the folder is then skipped: the digests are real
-    # and the caller's cache is the only place they survive the call.
-    cached_results.update(resolution.stored)
+    # and the caller's cache is the only place they survive the call. Only
+    # digests that came off S3 qualify — a computed one was never validated
+    # against anything.
+    cached_results.update(
+        {
+            f"s3://{bucket}/{key}": r
+            for key, r in resolution.children.items()
+            if r.source != "computed"
+        }
+    )
 
     # With downloads allowed, resolution leaves nothing unresolved, so this is
     # reached only under compute_if_no_s3_checksum=False. Guarding on the flag
@@ -184,19 +170,17 @@ def compute_for_s3(
             s3_workers,
         )
 
-    fresh_results: dict[str, ChecksumResult] = {}
-    detection = detect_and_cache_for_s3(
-        location_uri, algorithm, fresh_results, s3_client
-    )
-    cached_results.update(fresh_results)
-    # The effective algorithm, not detection's: a HEAD that found nothing
+    detected, stored = _detect_s3_object(location_uri, algorithm, s3_client)
+    if stored is not None:
+        cached_results[location_uri] = stored
+    # The effective algorithm, not the detected one: a HEAD that found nothing
     # leaves that None and the default takes over below, so logging the raw
     # detection would name an algorithm no digest was ever produced under.
-    chosen = detection.algorithm or default_algorithm()
+    chosen = detected or default_algorithm()
     logger.debug("Selected %s for %s", chosen, location_uri)
 
-    if detection.algorithm and location_uri in fresh_results:
-        return fresh_results[location_uri]
+    if stored is not None:
+        return stored
 
     if not compute_if_no_s3_checksum:
         logger.debug(
@@ -205,15 +189,16 @@ def compute_for_s3(
         )
         return None
 
-    return _compute_checksum_s3(
-        location_uri,
+    # Detection already consulted both the stored metadata and the cache, so
+    # they are switched off here to avoid a second HeadObject for this object.
+    bucket, key = _parse_s3_uri(location_uri)
+    return _hash_s3_file(
+        bucket,
+        key,
         algorithm=chosen,
-        s3_client=s3_client,
+        s3=s3_client,
         use_stored=False,
-        cached_results=fresh_results,
-        is_folder=False,
-        hash_max_workers=hash_max_workers,
-        s3_workers=s3_workers,
+        cached_results=None,
     )
 
 

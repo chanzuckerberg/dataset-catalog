@@ -104,8 +104,7 @@ class _FolderSelection:
 
     Selection deliberately reports no coverage. The listing carries no digest
     values, so how many children are actually reusable is not knowable until
-    the resolution phase has run; claiming it here is what previously forced a
-    HeadObject per child before any object could be fetched.
+    the resolution phase has run.
     """
 
     algorithm: Algorithm | None = None
@@ -352,9 +351,9 @@ def _listing_excludes_native(listed: _ListedObject, algorithm: Algorithm) -> boo
     return listed.checksum_type == "COMPOSITE"
 
 
-def _listing_suggests_reuse(listed: _ListedObject, native_name: str) -> bool:
+def _listing_suggests_reuse(listed: _ListedObject, algorithm: Algorithm) -> bool:
     """
-    Whether the listing gives reason to hope this object's `native_name`
+    Whether the listing gives reason to hope this object's `algorithm`
     checksum is reusable — a cost estimate, never a decision.
 
     Pessimistic where the listing is ambiguous: a reported algorithm with no
@@ -368,7 +367,12 @@ def _listing_suggests_reuse(listed: _ListedObject, native_name: str) -> bool:
     requires the part count to be the last characters, so the quotes come off
     before the test.
     """
-    if listed.algorithms is None or native_name not in listed.algorithms:
+    native_name = _S3_NATIVE_NAME.get(algorithm)
+    if (
+        native_name is None
+        or listed.algorithms is None
+        or native_name not in listed.algorithms
+    ):
         return False
     if listed.checksum_type is not None:
         return listed.checksum_type != "COMPOSITE"
@@ -422,8 +426,7 @@ def _cheapest_algorithm(objects: list[_ListedObject]) -> Algorithm:
         return default_algorithm()
 
     def rank(algorithm: Algorithm) -> tuple[float, int]:
-        name = _S3_NATIVE_NAME[algorithm]
-        missing = [o for o in objects if not _listing_suggests_reuse(o, name)]
+        missing = [o for o in objects if not _listing_suggests_reuse(o, algorithm)]
         # `or 0`: an unreported size prices as free rather than aborting the
         # ranking. It only has to order the options, and a child whose size the
         # listing withheld still costs its round trip via missing_count.
@@ -480,8 +483,7 @@ def _select_folder_algorithm(
 
     A child with no usable checksum does not discard the rest — it just becomes
     one object to download, while every other child still contributes its
-    stored digest. Requiring an algorithm common to every child meant a single
-    checksumless object in a 100k-object prefix forced 100k downloads.
+    stored digest.
 
     `algorithm` names the algorithm outright. Nothing then has to be ranked, so
     the listing is passed on unconsumed and resolution overlaps its own

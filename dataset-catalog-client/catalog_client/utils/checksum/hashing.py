@@ -83,15 +83,8 @@ def _log_file(result: ChecksumResult) -> ChecksumResult:
     _hash_s3_file logged without restructuring its early returns into a chain.
 
     Directory nodes are logged too, from _directory_result, so a verbose run
-    reports the folded digest of every subtree and not only its leaves. Two
-    columns read differently on those lines and are worth knowing about:
-    `total_size` is the sum over descendants, so summing the column over a
-    whole walk double-counts, and `source` says "computed" because a folder
-    has no other source to report — no directory bytes were ever hashed.
-
-    `source` is included because on a file it is the difference between bytes
-    this process actually hashed and a digest taken from S3's metadata on
-    trust — the distinction an integrity audit is run to see.
+    reports the folded digest of every subtree and not only its leaves. See
+    docs/checksum_guide.md for how to read the columns.
 
     Called from pool workers in _hash_files; logging emits a record atomically,
     so lines from concurrent files do not interleave, though their order is not
@@ -556,17 +549,13 @@ class _PrefixResolution(NamedTuple):
     What resolving a prefix's objects produced.
 
     `children` maps S3 key to result and omits any object left unresolved
-    because downloading was disabled. `stored` is the subset whose digest came
-    off S3 rather than off the wire, keyed by s3:// URI — the only results a
-    caller may add to a checksum cache, since a freshly computed one was never
-    validated against anything. `complete` is the coverage answer: every listed
-    object resolved, and there was at least one. An empty prefix is not
+    because downloading was disabled. `complete` is the coverage answer: every
+    listed object resolved, and there was at least one. An empty prefix is not
     complete, which is what keeps compute_if_no_s3_checksum=False from
     reporting a digest for a prefix that does not exist.
     """
 
     children: dict[str, ChecksumResult]
-    stored: dict[str, ChecksumResult]
     complete: bool
 
 
@@ -585,9 +574,7 @@ def _resolve_s3_objects(
     Resolve one digest per listed object, concurrently and in bounded batches.
 
     Each worker decides for its own object and then acts, so a download can be
-    in flight while another object's HeadObject is still outstanding. The
-    previous design HEADed every child before fetching any, which made the
-    slowest HEAD a barrier in front of the first byte.
+    in flight while another object's HeadObject is still outstanding.
 
     The listing hint is only ever used to *cancel* a HeadObject that could not
     have succeeded (_listing_excludes_native). It never authorises reuse: the
@@ -628,19 +615,15 @@ def _resolve_s3_objects(
         )
 
     children: dict[str, ChecksumResult] = {}
-    stored: dict[str, ChecksumResult] = {}
     total = 0
     for key, result in ordered_map(
         resolve, objects, effective_s3_workers(s3, s3_workers, hash_max_workers)
     ):
         total += 1
-        if result is None:
-            continue
-        children[key] = result
-        if result.source != "computed":
-            stored[f"s3://{bucket}/{key}"] = result
+        if result is not None:
+            children[key] = result
 
-    return _PrefixResolution(children, stored, total > 0 and len(children) == total)
+    return _PrefixResolution(children, total > 0 and len(children) == total)
 
 
 def _fold_s3_children(
@@ -658,7 +641,7 @@ def _fold_s3_children(
     them.
     """
     tree: dict = {}
-    for key in sorted(children):
+    for key in children:
         _insert_key(tree, key[len(prefix) :].split("/"), key)
 
     def hash_tree(node: dict, virtual_path: str) -> ChecksumResult:
@@ -752,29 +735,8 @@ def compute_checksum_s3(
     s3_workers caps concurrent S3 requests and wins over hash_max_workers; when
     both are None the default S3 budget applies. Neither affects the digest.
     """
-    return _compute_checksum_s3(
-        path,
-        algorithm,
-        s3_client,
-        use_stored,
-        cached_results if use_stored else None,
-        is_folder,
-        hash_max_workers,
-        s3_workers,
-    )
-
-
-def _compute_checksum_s3(
-    path: str,
-    algorithm: Algorithm,
-    s3_client,
-    use_stored: bool,
-    cached_results: dict[str, ChecksumResult] | None,
-    is_folder: bool | None,
-    hash_max_workers: int | None,
-    s3_workers: int | None = None,
-) -> ChecksumResult:
-    # Detection supplies fresh results while disabling duplicate HEAD requests.
+    if not use_stored:
+        cached_results = None
     bucket, key = _parse_s3_uri(path)
     if is_folder is None:
         is_folder = _is_folder_key(key)

@@ -19,18 +19,26 @@ import threading
 from dataclasses import dataclass, field
 
 from catalog_client.utils.checksum.algorithm import Algorithm, new_hasher
-from catalog_client.utils.checksum.s3 import _S3_NATIVE_RESPONSE_KEY
+from catalog_client.utils.checksum.s3 import (
+    _S3_NATIVE_NAME,
+    _S3_NATIVE_RESPONSE_KEY,
+)
 
 # Sentinel distinguishing "the caller did not set this field" from "the caller
 # set it to None", which for ``size`` and ``etag`` are different listings.
 _UNSET = object()
 
 
-def native_b64(body: bytes, algorithm: Algorithm) -> str:
-    """The base64 whole-object checksum S3 would return for `body`."""
+def digest_hex(body: bytes, algorithm: Algorithm) -> str:
+    """The hex digest `algorithm` produces for `body`."""
     hasher = new_hasher(algorithm)
     hasher.update(body)
-    return base64.b64encode(bytes.fromhex(hasher.hexdigest())).decode()
+    return hasher.hexdigest()
+
+
+def native_b64(body: bytes, algorithm: Algorithm) -> str:
+    """The base64 whole-object checksum S3 would return for `body`."""
+    return base64.b64encode(bytes.fromhex(digest_hex(body, algorithm))).decode()
 
 
 @dataclass
@@ -79,11 +87,17 @@ class StubObject:
         # did not report a ContentLength" rather than "it reported nothing".
         return {k: v for k, v in response.items() if v is not None}
 
+    def with_metadata(self, algorithm: Algorithm):
+        """Attach a digest in user metadata, as our uploader writes it."""
+        self.metadata = {
+            **self.metadata,
+            f"x-checksum-{algorithm}": digest_hex(self.body, algorithm),
+        }
+        return self
+
     def with_native(self, algorithm: Algorithm, checksum_type: str = "FULL_OBJECT"):
         """Attach a real whole-object native checksum, in listing and HEAD."""
-        self.listing_algorithms = [
-            _S3_NATIVE_RESPONSE_KEY[algorithm][len("Checksum") :]
-        ]
+        self.listing_algorithms = [_S3_NATIVE_NAME[algorithm]]
         self.listing_checksum_type = checksum_type
         self.head = {
             **self.head,

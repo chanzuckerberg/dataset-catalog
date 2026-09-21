@@ -52,9 +52,9 @@ DEFAULT_LOCAL_WORKERS = 8
 # number plus headroom, which is why the two must move together.
 #
 # It is only honoured where we own both sides. A caller's own client still
-# clamps it down — a stock one to 10 — and `effective_s3_workers` now says so
-# out loud rather than only at DEBUG, because at this default that clamp is
-# the common case rather than the exception.
+# clamps it down — a stock one to 10 — and `effective_s3_workers` warns when it
+# does, because at this default that clamp is the common case rather than the
+# exception.
 DEFAULT_S3_WORKERS = 32
 
 # Futures held in flight per worker. Enough that a worker never idles waiting
