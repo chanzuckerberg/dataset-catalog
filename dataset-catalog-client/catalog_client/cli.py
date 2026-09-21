@@ -595,7 +595,7 @@ def _enable_verbose_logging() -> None:
     already captures both, and they lead the line because a path may contain
     spaces, so only a trailing path can be split off reliably. A serial walk
     reports MainThread, which is worth seeing — the pool gate in _hash_files is
-    decided from measured file sizes, not from --workers alone.
+    decided from measured file sizes, not from --hash-workers alone.
 
     datefmt plus msecs rather than the default asctime, which renders as
     "... 12:34:56,789" — two tokens where the rest of the line is one field per

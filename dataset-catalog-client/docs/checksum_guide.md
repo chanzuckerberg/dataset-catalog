@@ -188,7 +188,7 @@ catalog checksum data/folder/ --children
 catalog checksum s3://my-bucket/data/file.h5ad            # reuses a stored checksum
 catalog checksum s3://my-bucket/data/file.h5ad --recompute
 catalog checksum data/file.h5ad --algorithm crc32 -o json  # full ChecksumResult
-catalog checksum data/folder/ --workers 1                  # serial, for comparison
+catalog checksum data/folder/ --hash-workers 1             # serial, for comparison
 catalog checksum data/folder/ --verbose                    # one stderr line per file
 ```
 
@@ -521,6 +521,10 @@ exceptions), so a single bad asset does not abort the whole batch. The asset is 
 an unsupported or missing `storage_platform`, and a missing `s3_client` for an S3 asset. So a
 single warnings filter catches all of them:
 
+`ChecksumPoolWarning` is deliberately **not** a `ChecksumWarning`: a clamped connection
+pool still produces a correct digest, only more slowly, so escalating `ChecksumWarning`
+to an error will not fail a walk over that.
+
 ```python
 import warnings
 from catalog_client.utils.checksum import ChecksumWarning
@@ -540,9 +544,20 @@ Only a genuinely missing object counts as "no stored checksum".
 
 ## Parallelism
 
-Folders are hashed concurrently by default. `max_workers` (`--workers` on the CLI)
-caps the threads; `None` picks a default from the available CPUs and `1` forces the
-serial path.
+Folders are hashed concurrently by default, under two independent budgets:
+
+| budget | parameter | CLI flag | `None` means |
+|---|---|---|---|
+| threads hashing file content | `hash_max_workers` | `--hash-workers` | chosen from the available CPUs, capped at 8 |
+| concurrent S3 requests | `s3_workers` | `--s3-workers` | 32 |
+
+They are separate because they are bound by different things: local hashing is
+CPU-bound and measured net-negative past a handful of threads, while S3 is
+latency-bound and wants far more. On an S3 folder `s3_workers` wins, falling back to
+`hash_max_workers` and then to 32; `s3_workers` is ignored for local paths, which
+issue no requests. `1` forces the serial path either way.
+
+`--workers` still works as a deprecated alias for `--hash-workers`.
 
 **It never changes a checksum.** A folder digest depends on the order children are
 *combined* in, which stays sorted by name regardless of the order they finish in. The
@@ -553,7 +568,7 @@ What it does and does not speed up:
 
 | workload | effect |
 |---|---|
-| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. |
+| S3 folder | Large. Per-object `HeadObject` and `GetObject` calls are issued concurrently, so cost goes from one round trip per object to roughly one per worker's worth. At the default of 32 the in-flight read buffers total 32MB and the scheduling window holds 128 futures. |
 | Local folder of large files | 2–4.5x, measured. blake3 3.9x, blake2b 4.5x, crc32 2.3x, crc64nvme 2.1x on 8 × 8MB. |
 | Local folder of many small files | Unchanged. The pool only engages above a mean file size, because below it the cost is `open`/`close` in the kernel rather than hashing, and threads measured net-negative. |
 | Single file | Unchanged — there is nothing to parallelise across. |
@@ -564,22 +579,29 @@ per-asset loop in `for_assets` (so every `ChecksumWarning` is raised on the call
 thread, keeping the contract under `warnings.simplefilter("error", ChecksumWarning)`).
 
 ```python
-# Cap threads, or force the serial path.
-assets = for_assets(assets, s3_client=s3, max_workers=4)
-result = compute_checksum_localfs("/data/folder", Algorithm.blake3, max_workers=1)
+# Cap either budget, or force the serial path.
+assets = for_assets(assets, s3_client=s3, s3_workers=4)
+result = compute_checksum_localfs("/data/folder", Algorithm.blake3, hash_max_workers=1)
 ```
 
+**The default of 32 only applies where the SDK owns the client** — the CLI, and
+`for_assets`/`for_location` called without an `s3_client`. Those size their own
+connection pool to the budget plus headroom.
+
 If you pass your own `s3_client`, the S3 worker count is clamped to its
-`max_pool_connections` (10 on a stock client). Exceeding that pool does not queue —
-botocore discards and re-opens connections instead — so raise it on the client if you
-want more concurrency than that:
+`max_pool_connections`, which is 10 on a stock client — below the default, so it
+clamps by default. Exceeding a pool does not queue; botocore discards and re-opens
+connections instead, paying a TLS handshake per excess request. Clamping avoids that,
+and a clamp that costs more than half the requested budget emits a
+`ChecksumPoolWarning` (once per process, per distinct clamp) naming the remedy:
 
 ```python
 import boto3
 from botocore.config import Config
 
-s3 = boto3.client("s3", config=Config(max_pool_connections=32))
-assets = for_assets(assets, s3_client=s3, max_workers=32)
+# Without the Config, this walk runs 10 wide and warns, not 32.
+s3 = boto3.client("s3", config=Config(max_pool_connections=40))
+assets = for_assets(assets, s3_client=s3, s3_workers=32)
 ```
 
 ---

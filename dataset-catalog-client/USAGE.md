@@ -734,6 +734,17 @@ Common warnings:
 Every skip and failure is reported this way, so `warnings.simplefilter("error", ChecksumWarning)`
 turns all of them into exceptions.
 
+`ChecksumPoolWarning` is a separate class and deliberately **not** a `ChecksumWarning`.
+It reports that a caller-supplied client's `max_pool_connections` held the S3 worker
+count below what was asked for — the digest is still correct, just slower to produce,
+so escalating `ChecksumWarning` must not turn it into a failure. Filter it on its own:
+
+```python
+from catalog_client.utils.checksum import ChecksumPoolWarning
+
+warnings.filterwarnings("ignore", category=ChecksumPoolWarning)
+```
+
 ### Checksums from the command line
 
 `catalog checksum PATH` hashes one local path or S3 URI. It contacts no catalog
@@ -785,8 +796,8 @@ actually hashed (`computed`) from a digest taken from S3 metadata on trust.
 `worker` is the thread that hashed the file — `checksum_N` for a pooled walk, or
 `MainThread` when the walk ran serially. That is worth seeing, because a folder is
 only hashed through a pool when the scan measures it as worth one (mean file size at
-or above 1MB, more than four files); `--workers N` raises the ceiling but does not
-force a pool. Lines therefore arrive in **completion order, not walk order** — sort
+or above 1MB, more than four files); `--hash-workers N` raises the ceiling but does
+not force a pool. Lines therefore arrive in **completion order, not walk order** — sort
 by path if you need a stable listing. The digest never depends on either.
 
 ```
@@ -807,8 +818,13 @@ Flags:
 - `--folder` / `--file` — treat an S3 key as a prefix or a single object instead of
   inferring from a trailing `/`. Local paths are always classified by `os.path.isdir`.
 - `--children` — list every descendant of a folder, not just its total.
-- `--workers N` — threads to use for a folder. Defaults to a value chosen from the
-  available CPUs; `1` forces serial. Never changes the checksum.
+- `--hash-workers N` — threads used to hash file content. Defaults to a value chosen
+  from the available CPUs; `1` forces serial. `--workers` is a deprecated alias.
+- `--s3-workers N` — concurrent S3 requests for a folder. Defaults to 32, takes
+  precedence over `--hash-workers` on S3, and is clamped to the client's connection
+  pool. Ignored for local paths.
+
+  Neither ever changes the checksum.
 - `-v` / `--verbose` — log one line per file to **stderr** as it is resolved, prefixed
   with a timestamp and the worker that hashed it. Folders are not logged; their digest
   is the fold over the lines already printed.
