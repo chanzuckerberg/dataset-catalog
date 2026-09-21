@@ -188,10 +188,10 @@ def test_a_prefix_digest_is_the_same_at_any_worker_count(
         )
 
     serial = compute_checksum_s3(
-        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, max_workers=1
+        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, s3_workers=1
     )
     parallel = compute_checksum_s3(
-        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, max_workers=workers
+        f"s3://{BUCKET}/ds/", algorithm, s3, use_stored=False, s3_workers=workers
     )
 
     def digest_map(node, prefix=""):

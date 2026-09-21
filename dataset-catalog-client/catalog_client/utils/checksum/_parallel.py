@@ -100,7 +100,29 @@ def local_workers(requested: int | None) -> int:
     return max(1, min(DEFAULT_LOCAL_WORKERS, available))
 
 
-def effective_s3_workers(s3, requested: int | None) -> int:
+def requested_s3_workers(s3_workers: int | None, hash_max_workers: int | None) -> int:
+    """
+    Resolve the two worker knobs into one S3 request budget.
+
+    `is not None` rather than `or`: a caller asking for 0 means "as few as
+    possible", and falsiness would silently hand them the hash budget instead
+    of the floor of 1.
+
+    Every consumer of the budget resolves it here. `effective_s3_workers` reads
+    it to size the pool of threads and `owned_s3_client` to size the pool of
+    connections, and the two disagreeing is the silent-slowdown failure
+    documented on `owned_s3_client`.
+    """
+    if s3_workers is not None:
+        return max(1, s3_workers)
+    if hash_max_workers is not None:
+        return max(1, hash_max_workers)
+    return DEFAULT_S3_WORKERS
+
+
+def effective_s3_workers(
+    s3, s3_workers: int | None = None, hash_max_workers: int | None = None
+) -> int:
     """
     Worker count for S3 requests, clamped to the client's own connection pool.
 
@@ -115,7 +137,7 @@ def effective_s3_workers(s3, requested: int | None) -> int:
     # Test doubles report a Mock here rather than an int; fall back to the
     # default instead of comparing against something meaningless.
     limit = cap if isinstance(cap, int) and cap > 0 else DEFAULT_S3_WORKERS
-    wanted = DEFAULT_S3_WORKERS if requested is None else requested
+    wanted = requested_s3_workers(s3_workers, hash_max_workers)
     workers = max(1, min(wanted, limit))
     if workers < wanted:
         logger.debug(
@@ -127,7 +149,7 @@ def effective_s3_workers(s3, requested: int | None) -> int:
     return workers
 
 
-def owned_s3_client(max_workers: int | None = None):
+def owned_s3_client(s3_workers: int | None = None, hash_max_workers: int | None = None):
     """
     A boto3 S3 client whose connection pool is sized for our own worker count.
 
@@ -144,5 +166,10 @@ def owned_s3_client(max_workers: int | None = None):
     import boto3
     from botocore.config import Config
 
-    pool = max(DEFAULT_S3_WORKERS, max_workers or 0) + _POOL_HEADROOM
+    # max(), because max_pool_connections is a cap rather than a
+    # preallocation: a floor of the default budget costs nothing and keeps a
+    # small explicit request from sizing the pool below what a later caller
+    # asks for on the same client.
+    budget = requested_s3_workers(s3_workers, hash_max_workers)
+    pool = max(DEFAULT_S3_WORKERS, budget) + _POOL_HEADROOM
     return boto3.client("s3", config=Config(max_pool_connections=pool))

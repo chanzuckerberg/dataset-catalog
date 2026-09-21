@@ -785,10 +785,10 @@ def test_owned_client_is_created_lazily_reused_and_closed(mock_client):
             return_value={Algorithm.blake3: make_result(S3_FILE)},
         ) as fetch,
     ):
-        results = for_assets(assets, max_workers=3)
+        results = for_assets(assets, s3_workers=3)
 
     assert len(results) == 3
-    mock_client.assert_called_once_with(3)
+    mock_client.assert_called_once_with(3, None)
     assert fetch.call_count == 2
     assert all(call.args[2] is client for call in fetch.call_args_list)
     client.close.assert_called_once_with()

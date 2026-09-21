@@ -48,7 +48,8 @@ def resolve(
         use_stored,
         None,
         download,
-        workers,
+        hash_max_workers=None,
+        s3_workers=workers,
     )
 
 

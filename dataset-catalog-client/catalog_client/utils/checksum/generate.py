@@ -108,7 +108,8 @@ def _compute_folder_for_s3(
     cached_results: dict[str, ChecksumResult],
     s3_client,
     compute_if_no_s3_checksum: bool,
-    max_workers: int | None,
+    hash_max_workers: int | None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult | None:
     """
     Discover, select, resolve and fold a prefix in one pass.
@@ -139,7 +140,8 @@ def _compute_folder_for_s3(
         use_stored=True,
         cached_results=None,
         download=compute_if_no_s3_checksum,
-        max_workers=max_workers,
+        hash_max_workers=hash_max_workers,
+        s3_workers=s3_workers,
     )
     # Accumulated even when the folder is then skipped: the digests are real
     # and the caller's cache is the only place they survive the call.
@@ -168,7 +170,8 @@ def compute_for_s3(
     cached_results: dict[str, ChecksumResult],
     s3_client,
     compute_if_no_s3_checksum: bool,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult | None:
     if asset_type == AssetType.folder:
         return _compute_folder_for_s3(
@@ -177,7 +180,8 @@ def compute_for_s3(
             cached_results,
             s3_client,
             compute_if_no_s3_checksum,
-            max_workers,
+            hash_max_workers,
+            s3_workers,
         )
 
     fresh_results: dict[str, ChecksumResult] = {}
@@ -208,7 +212,8 @@ def compute_for_s3(
         use_stored=False,
         cached_results=fresh_results,
         is_folder=False,
-        max_workers=max_workers,
+        hash_max_workers=hash_max_workers,
+        s3_workers=s3_workers,
     )
 
 
@@ -220,7 +225,8 @@ def for_location(
     s3_client=None,
     cached_results: dict[str, ChecksumResult] | None = None,
     compute_if_no_s3_checksum: bool = True,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> LocationChecksum:
     """
     Compute the checksum for a single location.
@@ -230,9 +236,11 @@ def for_location(
     all of them into errors with
     `warnings.simplefilter("error", ChecksumWarning)`.
 
-    max_workers caps the threads used for a folder; None picks a default and 1
-    forces serial. It never affects the digest. Warnings are always raised on
-    the calling thread, so the ChecksumWarning contract above holds either way.
+    hash_max_workers caps the threads used to hash file content and s3_workers
+    the concurrent S3 requests, the latter winning on an S3 folder and ignored
+    for a local path. None picks a default and 1 forces serial; neither affects
+    the digest. Warnings are always raised on the calling thread, so the
+    ChecksumWarning contract above holds either way.
     """
     if not location_uri:
         _skip("Cannot generate a checksum for an empty location_uri")
@@ -259,13 +267,14 @@ def for_location(
                 cached_results,
                 s3_client,
                 compute_if_no_s3_checksum,
-                max_workers,
+                hash_max_workers,
+                s3_workers,
             )
         else:
             hash_result = compute_checksum_localfs(
                 location_uri,
                 algorithm=algorithm or default_algorithm(),
-                max_workers=max_workers,
+                hash_max_workers=hash_max_workers,
             )
 
         if hash_result is not None:
@@ -291,7 +300,8 @@ def for_assets(
     algorithm: Algorithm | None = None,
     compute_if_no_s3_checksum: bool = True,
     s3_client=None,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> list[AssetT]:
     """
     Return copies of the given assets with `checksum`, `checksum_alg` and
@@ -318,11 +328,13 @@ def for_assets(
     Unsupported platforms (external, other, None) are passed through with a
     ChecksumWarning. Failures also warn and pass the asset through unchanged.
 
-    max_workers caps the threads used within each folder; None picks a default
-    and 1 forces serial. Assets themselves are always processed one at a time,
-    so every ChecksumWarning is raised on the calling thread. It never affects
-    a digest. A client passed in here is used as-is, including its connection
-    pool limit, which the S3 worker count is clamped to.
+    hash_max_workers caps the threads used to hash file content within each
+    folder and s3_workers the concurrent S3 requests, the latter winning on an
+    S3 folder. None picks a default and 1 forces serial. Assets themselves are
+    always processed one at a time, so every ChecksumWarning is raised on the
+    calling thread. Neither affects a digest. A client passed in here is used
+    as-is, including its connection pool limit, which the S3 worker count is
+    clamped to.
     """
     if not assets:
         return []
@@ -343,7 +355,7 @@ def for_assets(
                 and asset_copy.storage_platform == StoragePlatform.s3
                 and asset_copy.location_uri
             ):
-                owned_client = s3_client = owned_s3_client(max_workers)
+                owned_client = s3_client = owned_s3_client(s3_workers, hash_max_workers)
 
             result_checksum = for_location(
                 asset_copy.location_uri,
@@ -353,7 +365,8 @@ def for_assets(
                 s3_client,
                 cached_results,
                 compute_if_no_s3_checksum=compute_if_no_s3_checksum,
-                max_workers=max_workers,
+                hash_max_workers=hash_max_workers,
+                s3_workers=s3_workers,
             )
 
             if result_checksum:

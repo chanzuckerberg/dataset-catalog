@@ -426,7 +426,7 @@ def _hash_files(
 
 
 def _hash_local_dir(
-    path: str, algorithm: Algorithm, max_workers: int | None = None
+    path: str, algorithm: Algorithm, hash_max_workers: int | None = None
 ) -> ChecksumResult:
     """
     Hash a local directory into a Merkle/composite tree.
@@ -437,7 +437,7 @@ def _hash_local_dir(
     directory in the same sorted order the old recursive walk inserted them,
     and _directory_result depends on nothing else.
     """
-    workers = local_workers(max_workers)
+    workers = local_workers(hash_max_workers)
     levels, rows = _scan_levels(path)
 
     # One traversal for both, rather than two identical comprehensions: they
@@ -578,7 +578,8 @@ def _resolve_s3_objects(
     use_stored: bool,
     cached_results: dict[str, ChecksumResult] | None,
     download: bool,
-    max_workers: int | None,
+    hash_max_workers: int | None,
+    s3_workers: int | None = None,
 ) -> _PrefixResolution:
     """
     Resolve one digest per listed object, concurrently and in bounded batches.
@@ -630,7 +631,7 @@ def _resolve_s3_objects(
     stored: dict[str, ChecksumResult] = {}
     total = 0
     for key, result in ordered_map(
-        resolve, objects, effective_s3_workers(s3, max_workers)
+        resolve, objects, effective_s3_workers(s3, s3_workers, hash_max_workers)
     ):
         total += 1
         if result is None:
@@ -680,7 +681,8 @@ def _hash_s3_prefix(
     s3,
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult:
     """
     Hash all objects under an S3 prefix as a virtual directory tree.
@@ -702,23 +704,25 @@ def _hash_s3_prefix(
         use_stored,
         cached_results,
         download=True,
-        max_workers=max_workers,
+        hash_max_workers=hash_max_workers,
+        s3_workers=s3_workers,
     )
     return _fold_s3_children(bucket, prefix, resolution.children, algorithm)
 
 
 def compute_checksum_localfs(
-    path: str, algorithm: Algorithm, max_workers: int | None = None
+    path: str, algorithm: Algorithm, hash_max_workers: int | None = None
 ) -> ChecksumResult:
     """
     Compute a checksum for a local path (file or directory). Defaults to blake3.
 
-    max_workers caps the threads used to walk a directory; None picks a default
-    from the available CPUs and 1 forces the serial path. It has no effect on a
-    single file, and never affects the digest.
+    hash_max_workers caps the threads used to walk a directory; None picks a
+    default from the available CPUs and 1 forces the serial path. It has no
+    effect on a single file, and never affects the digest. There is no
+    s3_workers here: local hashing issues no requests.
     """
     if os.path.isdir(path):
-        return _hash_local_dir(path, algorithm, max_workers)
+        return _hash_local_dir(path, algorithm, hash_max_workers)
     return _hash_local_file(path, algorithm)
 
 
@@ -729,7 +733,8 @@ def compute_checksum_s3(
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
     is_folder: bool | None = None,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for an S3 URI (s3:// or s3a://).
@@ -743,6 +748,9 @@ def compute_checksum_s3(
     use_stored=True (default) returns any checksum already on the S3 object
     without downloading. Set False to bypass both stored and cached checksums
     and always recompute (e.g. integrity audits).
+
+    s3_workers caps concurrent S3 requests and wins over hash_max_workers; when
+    both are None the default S3 budget applies. Neither affects the digest.
     """
     return _compute_checksum_s3(
         path,
@@ -751,7 +759,8 @@ def compute_checksum_s3(
         use_stored,
         cached_results if use_stored else None,
         is_folder,
-        max_workers,
+        hash_max_workers,
+        s3_workers,
     )
 
 
@@ -762,7 +771,8 @@ def _compute_checksum_s3(
     use_stored: bool,
     cached_results: dict[str, ChecksumResult] | None,
     is_folder: bool | None,
-    max_workers: int | None,
+    hash_max_workers: int | None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult:
     # Detection supplies fresh results while disabling duplicate HEAD requests.
     bucket, key = _parse_s3_uri(path)
@@ -776,7 +786,8 @@ def _compute_checksum_s3(
             s3_client,
             use_stored,
             cached_results,
-            max_workers,
+            hash_max_workers,
+            s3_workers,
         )
     return _hash_s3_file(bucket, key, algorithm, s3_client, use_stored, cached_results)
 
@@ -788,7 +799,8 @@ def compute_checksum(
     use_stored: bool = True,
     cached_results: dict[str, ChecksumResult] | None = None,
     is_folder: bool | None = None,
-    max_workers: int | None = None,
+    hash_max_workers: int | None = None,
+    s3_workers: int | None = None,
 ) -> ChecksumResult:
     """
     Compute a checksum for a local path or S3 URI (s3:// or s3a://).
@@ -797,8 +809,11 @@ def compute_checksum(
     is_folder is only consulted for S3 URIs; local paths are classified by
     os.path.isdir.
 
-    max_workers caps the threads used for a folder; None picks a default and 1
-    forces serial. It never affects the digest.
+    hash_max_workers caps the threads used to hash file content; None picks a
+    default and 1 forces serial. s3_workers caps concurrent S3 requests and is
+    ignored for local paths, which issue none. On an S3 folder s3_workers wins,
+    falling back to hash_max_workers and then the default S3 budget. Neither
+    ever affects the digest.
     """
     if path.startswith(("s3://", "s3a://")):
         return compute_checksum_s3(
@@ -808,6 +823,7 @@ def compute_checksum(
             use_stored,
             cached_results,
             is_folder,
-            max_workers,
+            hash_max_workers,
+            s3_workers,
         )
-    return compute_checksum_localfs(path, algorithm, max_workers)
+    return compute_checksum_localfs(path, algorithm, hash_max_workers)

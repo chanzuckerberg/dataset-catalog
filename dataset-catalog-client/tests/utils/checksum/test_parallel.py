@@ -20,6 +20,7 @@ from catalog_client.utils.checksum._parallel import (
     effective_s3_workers,
     local_workers,
     ordered_map,
+    requested_s3_workers,
 )
 
 # ── Ordering ──────────────────────────────────────────────────────────────────
@@ -172,3 +173,38 @@ def test_effective_s3_workers_falls_back_when_the_client_reports_no_usable_pool(
     assert effective_s3_workers(MagicMock(), None) == DEFAULT_S3_WORKERS
     assert effective_s3_workers(MagicMock(), 3) == 3
     assert effective_s3_workers(object(), None) == DEFAULT_S3_WORKERS
+
+
+# ── Precedence between the two worker knobs ──────────────────────────────────
+
+
+_PRECEDENCE = [
+    # (s3_workers, hash_max_workers, budget)
+    (None, None, DEFAULT_S3_WORKERS),
+    (None, 16, 16),
+    (4, 16, 4),
+    (4, None, 4),
+    # 0 is falsy but not absent: `or` would hand this caller the hash budget
+    # of 16 instead of the floor of 1.
+    (0, 16, 1),
+    (-4, None, 1),
+]
+
+
+@pytest.mark.parametrize("s3, hash_max, expected", _PRECEDENCE)
+def test_requested_s3_workers_prefers_the_s3_knob(s3, hash_max, expected):
+    assert requested_s3_workers(s3, hash_max) == expected
+
+
+@pytest.mark.parametrize("s3, hash_max, expected", _PRECEDENCE)
+def test_effective_s3_workers_applies_the_same_precedence(s3, hash_max, expected):
+    boto3 = pytest.importorskip("boto3")
+    botocore_config = pytest.importorskip("botocore.config")
+    # A pool wide enough that nothing here is clamped, so the assertion is
+    # about precedence alone.
+    client = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        config=botocore_config.Config(max_pool_connections=100),
+    )
+    assert effective_s3_workers(client, s3, hash_max) == expected
