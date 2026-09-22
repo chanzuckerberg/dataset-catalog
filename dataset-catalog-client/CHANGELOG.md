@@ -28,6 +28,19 @@
   algorithm labels, file hashes, and existing checksummed assets remain unchanged.
   Recompute older nested-folder checksums before comparing them with new values.
 
+## [1.0.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.7.0...catalog-client-v1.0.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** `datasets.search()` no longer accepts `offset` — page with `cursor` or use `iter_search()`. `datasets.list()` returns `CursorPaginatedResponse` rather than `PaginatedResponse`, whose `total` and `offset` are now optional. `DatasetSearchResponse.offset` is gone. The `catalog search --offset` flag is replaced by `--cursor`.
+
+### Features
+
+* adopt dataset schema v1.5.0 in schema docs, client, and plugin ([#81](https://github.com/chanzuckerberg/dataset-catalog/issues/81)) ([27362d1](https://github.com/chanzuckerberg/dataset-catalog/commit/27362d168b3c9899e0e58ea3fb0c56f4c30f3a27))
+* **checksum:** resolve S3 folders in one pass with split worker budgets ([#84](https://github.com/chanzuckerberg/dataset-catalog/issues/84)) ([f6cab46](https://github.com/chanzuckerberg/dataset-catalog/commit/f6cab46683eac136406195600848b08536d2f072))
+* **client:** cursor pagination for dataset list and search ([#75](https://github.com/chanzuckerberg/dataset-catalog/issues/75)) ([7abef97](https://github.com/chanzuckerberg/dataset-catalog/commit/7abef9791546b40d03e0a317f865618a0de73225))
+
 ## [0.7.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v0.6.0...catalog-client-v0.7.0) (2026-08-17)
 
 
