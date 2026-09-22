@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from catalog_client import limits
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
     ChildCollectionEntryResponse,
@@ -91,7 +92,10 @@ class CollectionClient(_SyncBase):
         Returns the raw mixed response. Callers that need only datasets should
         filter results by ``entry_type == "dataset"`` or pass ``entry_type``.
         """
-        params: dict = {"offset": offset, "limit": min(limit, 100)}
+        params: dict = {
+            "offset": offset,
+            "limit": min(limit, limits.COLLECTION_MAX_LIMIT),
+        }
         if entry_type is not None:
             params["entry_type"] = entry_type.value
         response = self._get(f"{_PREFIX}/{collection_id}/entries", params=params)
@@ -113,7 +117,7 @@ class CollectionClient(_SyncBase):
     ) -> PaginatedResponse[CollectionResponse]:
         response = self._get(
             f"{_PREFIX}/{collection_id}/parents",
-            params={"offset": offset, "limit": min(limit, 100)},
+            params={"offset": offset, "limit": min(limit, limits.COLLECTION_MAX_LIMIT)},
         )
         return PaginatedResponse[CollectionResponse].model_validate(response.json())
 
@@ -194,7 +198,10 @@ class AsyncCollectionClient(_AsyncBase):
         Returns the raw mixed response. Callers that need only datasets should
         filter results by ``entry_type == "dataset"`` or pass ``entry_type``.
         """
-        params: dict = {"offset": offset, "limit": min(limit, 100)}
+        params: dict = {
+            "offset": offset,
+            "limit": min(limit, limits.COLLECTION_MAX_LIMIT),
+        }
         if entry_type is not None:
             params["entry_type"] = entry_type.value
         response = await self._get(f"{_PREFIX}/{collection_id}/entries", params=params)
@@ -216,6 +223,6 @@ class AsyncCollectionClient(_AsyncBase):
     ) -> PaginatedResponse[CollectionResponse]:
         response = await self._get(
             f"{_PREFIX}/{collection_id}/parents",
-            params={"offset": offset, "limit": min(limit, 100)},
+            params={"offset": offset, "limit": min(limit, limits.COLLECTION_MAX_LIMIT)},
         )
         return PaginatedResponse[CollectionResponse].model_validate(response.json())

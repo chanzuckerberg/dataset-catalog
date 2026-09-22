@@ -93,6 +93,15 @@ def _extract(path, metadata):
             [None, None],
         ),  # scalar items → None each
         ("sample.organism[].label", {"sample": {"organism": [{"label": "A"}]}}, ["A"]),
+        # --- Positional indexing into a list ---
+        # Shared with the dataframe utility, which needs to reach one element
+        # of a list rather than expanding all of them. The manifest-only
+        # version of this extractor returned None for every case below.
+        ("dimension.0", {"dimension": [512, 256, 40]}, 512),
+        ("dimension.2", {"dimension": [512, 256, 40]}, 40),
+        ("sample.organism.0.label", {"sample": {"organism": [{"label": "A"}]}}, "A"),
+        ("dimension.5", {"dimension": [512]}, None),
+        ("dimension.label", {"dimension": [512]}, None),
     ],
     ids=[
         "flat",
@@ -113,6 +122,11 @@ def _extract(path, metadata):
         "list-key-absent",
         "list-scalar-items",
         "list-nested-prefix",
+        "index-first",
+        "index-last",
+        "index-then-key",
+        "index-out-of-range",
+        "index-key-on-list",
     ],
 )
 def test_metadata_extraction(path, metadata, expected):

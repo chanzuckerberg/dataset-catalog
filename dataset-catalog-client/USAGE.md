@@ -350,6 +350,26 @@ back a cursor it already issued, or promises another page while returning an
 empty one. Either would otherwise be an unbounded request loop; both raise
 `CatalogError`, since they are server faults rather than caller mistakes.
 
+#### Page-size ceilings
+
+The ceilings the client enforces are named in `catalog_client.limits`, so your
+own paging code can reference them instead of hardcoding a number:
+
+```python
+from catalog_client import limits
+
+limits.DATASET_LIST_MAX_LIMIT              # 500  — GET /api/datasets/
+limits.DATASET_SEARCH_MAX_LIMIT            # 1000 — GET /api/datasets/search/
+limits.DATASET_SEARCH_HYDRATED_MAX_LIMIT   # 100  — search(hydrate=True)
+limits.COLLECTION_MAX_LIMIT                # 100  — the collection routes
+limits.DATASET_MAX_OFFSET                  # 10000 — client policy, not a server cap
+```
+
+Exceeding one raises `CatalogUsageError` before the request is sent. The
+`to_dataframe` and `generate_manifest` utilities derive their `page_size`
+defaults from these rather than restating them, so a ceiling that moves
+server-side is changed in one place.
+
 ### Search datasets
 
 Full-text and faceted search over the active index. Returns lightweight hits;
@@ -463,6 +483,104 @@ print(updated.id)  # may differ if signature fields changed
 ```python
 client.datasets.delete("dataset-uuid")  # returns None, status 204
 ```
+
+---
+
+## DataFrames
+
+`to_dataframe` pulls matching datasets into a pandas DataFrame, one row per dataset. It handles the paging walk, picks the route, and flattens the nested record for you.
+
+Requires the `dataframe` extra:
+
+```bash
+uv pip install 'catalog-client[dataframe]'
+```
+
+### Route selection
+
+You never choose the route — it follows from the filters:
+
+| Filters | Route |
+|---|---|
+| `project`, `modality`, `version`, `access_scope`, `is_latest`, or none | `datasets.list()`, cursor-walked |
+| any of `q`, `organism`, `tissue`, `sub_modality`, `assay`, `disease`, `development_stage`, `cohort`, `file_format`, `storage_platform` | `datasets.search(hydrate=True)` |
+
+Both return full dataset records, so the same columns are available either way. Hydrated search costs an extra query per page. `page_size` caps at 100 on both routes and defaults to it — the list route would accept 500, but a single cap means adding a search filter cannot silently change how your query pages.
+
+```python
+from catalog_client import CatalogClient, ColumnSpec, to_dataframe
+
+client = CatalogClient(base_url="https://your-catalog.example.com", api_token="your-token")
+
+# list route — every dataset in a project, default columns
+df = to_dataframe(client, project="my-project")
+
+# search route — organism is a search-index filter
+df = to_dataframe(client, organism="Homo sapiens", limit=100)
+```
+
+Two things to know: `version` is not supported by the search index, so combining it with a search filter fetches the extra rows and drops them client-side; and `sort=relevance` / `sort=alphabetical` exist only on the search route, so asking for one on the list route raises `CatalogUsageError`.
+
+`sort` defaults to `None`, leaving the choice to the server, exactly as `datasets.iter_all()` does. For a walk spanning more than one page that has consequences — see [Sort order and walk stability](catalog_client/utils/dataframe/README.md#sort-order-and-walk-stability), which is the same caveat as under [Paginating datasets](#paginating-datasets) above.
+
+`canonical_id` is not a filter here — use `client.datasets.list(canonical_id=...)` for that lookup, or filter the frame on the `canonical_id` column.
+
+### Choosing columns
+
+Defaults cover identity, modality, the common ontology labels, and governance. Pass `columns` to override, as dot-paths or `ColumnSpec` when you want to name the output:
+
+```python
+df = to_dataframe(
+    client,
+    project="my-project",
+    columns=[
+        "canonical_id",
+        "name",
+        ColumnSpec("metadata.sample.organism[].label", alias="organism"),
+        ColumnSpec("metadata.data_summary.cell_count", alias="cells"),
+    ],
+    rename={"canonical_id": "dataset"},
+)
+```
+
+Paths are rooted at the dataset record: `[]` expands a list, an integer segment indexes one, and a missing key yields `None` rather than raising. List values are joined with `list_sep` (default `"; "`); pass `list_sep=None` to keep Python lists. A column that is `None` in every row raises a `UserWarning`, which usually means a typo in the path.
+
+`asset_count` and `total_size_bytes` are available but not on by default:
+
+```python
+from catalog_client import DEFAULT_COLUMNS
+
+df = to_dataframe(client, columns=[*DEFAULT_COLUMNS, "asset_count"])
+```
+
+### Custom mappers
+
+For anything the path syntax cannot express, pass a callable that receives the Pydantic model and returns a dict. Its output is merged over the declarative columns, and returning `None` drops the row:
+
+```python
+def enrich(ds):
+    if ds.tombstoned:
+        return None
+    summary = ds.metadata.data_summary
+    return {"n_channels": len(summary.channels or []) if summary else 0}
+
+df = to_dataframe(client, project="my-project", mapper=enrich)
+```
+
+Mapper values are passed through unchanged — no list joining, no enum unwrapping. Every metadata submodel is optional, so guard against `None`; if the mapper raises, the error comes back as a `CatalogUsageError` naming the dataset.
+
+### Without pandas
+
+`iter_records` takes the same arguments and yields plain dicts, streaming page by page:
+
+```python
+from catalog_client import iter_records
+
+for row in iter_records(client, project="my-project", limit=1000):
+    print(row["canonical_id"], row["organism"])
+```
+
+See [catalog_client/utils/dataframe/README.md](catalog_client/utils/dataframe/README.md) for the full reference. For one row per *asset* rather than per dataset, use [manifest generation](catalog_client/utils/manifest/README.md).
 
 ---
 

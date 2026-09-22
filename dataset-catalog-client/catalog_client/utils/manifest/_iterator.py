@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator
 if TYPE_CHECKING:
     from catalog_client.client.catalog import CatalogClient
 
-from catalog_client.utils.manifest._extractor import _extract_metadata_field
+from catalog_client.utils.commons import extract_field
 from catalog_client.utils.manifest._filter import FilterCondition, _asset_matches
 from catalog_client.utils.manifest._types import ManifestStats
 
@@ -83,7 +83,7 @@ def _iter_entries(
             }
 
             extracted = {
-                alias: _extract_metadata_field(metadata_dict, path)
+                alias: extract_field(metadata_dict, path)
                 for path, alias in parsed_fields
             }
 

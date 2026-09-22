@@ -213,20 +213,46 @@ from search. Facet semantics:
 
 ## Data cautions
 
-* Aggregate fields like `data_summary.cell_count` may be collection-level values repeated on every constituent dataset. Do not sum them blindly. Report per-dataset values or deduplicate canonical datasets first.
+* Maximum page size is route-dependent: `GET /api/datasets/` allows 500 and
+  `GET /api/datasets/search/` allows 1000 — but only 100 with `hydrate=true`,
+  which re-reads every hit. The collection and lineage routes allow 100.
+* The dataset routes page by keyset cursor. Pass the previous response's
+  `next_cursor` and stop once it comes back null. `search` does not accept
+  `offset` at all; `list` still does, but only for shallow paging.
+* An oversized `limit` is refused by the SDK and the CLI before the request is
+  sent, so you get a client-side error rather than an HTTP 422.
+* `list` refuses `offset` above 10000 in favour of a cursor. The server accepts
+  deeper, but it walks and discards every skipped row, and a concurrent write
+  shifts the window — so rows get skipped or repeated.
+* A cursor is only valid for the `sort` and filters it was issued with;
+  changing either mid-walk returns HTTP 422.
+* `/docs` and `/openapi.json` may require SSO; the API token may not be sufficient.
+* Aggregate fields like `data_summary.cell_count` may be collection-level values repeated on every constituent datasets. Do not sum them blindly. Report per-dataset values or deduplicate canonical datasets first.
 * Tombstoned records are excluded by default; only surface them when the user is explicitly auditing deletions.
 
-SDK pagination example (list routes):
+SDK pagination example. The SDK walks the cursor for you:
 
 ```python
-def iter_datasets(catalog, **filters):
-    offset = 0
-    while True:
-        page = catalog.datasets.list(offset=offset, limit=100, **filters).results
-        if not page:
-            return
-        yield from page
-        offset += len(page)
+from catalog_client import DatasetListSortOption
+
+# newest/oldest sort on the immutable created_at. The server default sorts on
+# a mutable key, so a record edited mid-walk can be skipped or repeated.
+for ds in catalog.datasets.iter_all(
+    sort=DatasetListSortOption.newest, limit=500, **filters
+):
+    ...
+```
+
+Drive the cursor yourself only if you need per-page control:
+
+```python
+cursor = None
+while True:
+    page = catalog.datasets.list(cursor=cursor, limit=500, **filters)
+    yield from page.results
+    if page.next_cursor is None:
+        return
+    cursor = page.next_cursor
 ```
 
 ## Dataset record shape
