@@ -66,7 +66,7 @@ is never checked.
 
 ## v1.5.0
 
-**Status:** Supported for read. New registrations should use v1.6.0. See
+**Status:** Supported for read. New registrations should use current version. See
 [`v1.5.0/schema.md`](v1.5.0/schema.md).
 
 ### Added
@@ -126,7 +126,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.4.0
 
-**Status:** Supported for read. New registrations should use v1.6.0. See
+**Status:** Supported for read. New registrations should use current version. See
 [`v1.4.0/schema.md`](v1.4.0/schema.md).
 
 ### Added
@@ -160,7 +160,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.3.0
 
-**Status:** Supported for read. New registrations should use v1.6.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
@@ -186,7 +186,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.2.0
 
-**Status:** Supported for read. New registrations should use v1.6.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
@@ -210,7 +210,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.1.0
 
-**Status:** Supported for read. New registrations should use v1.6.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
