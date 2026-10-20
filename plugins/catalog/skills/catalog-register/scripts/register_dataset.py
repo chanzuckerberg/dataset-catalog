@@ -83,6 +83,8 @@ SOURCE = {
     "visibility": "public",
     "steward": "imaging-platform-team",
     "owner_email": "imaging-team@example.org",
+    "produced_by": "imaging-platform-team",
+    "has_pii": False,
     "has_phi": False,
     # experiment
     "sub_modality": "brightfield",
@@ -201,10 +203,13 @@ def build_request(client: CatalogClient, src: Source):
             # one from an owner or contact field.
             data_steward=src["steward"],
             data_owner=src.get("owner_email"),
-            # Never assume PII/PHI status. Leave None (unknown) when the source
-            # is silent — do NOT default to False. Confirm both with the user.
-            is_pii=src.get("has_pii"),
-            is_phi=src.get("has_phi"),
+            data_generator=src.get("produced_by"),
+            # Required since schema v1.6.0, and None no longer satisfies them. The
+            # flags decide whether a consumer may open the data at all, so subscript
+            # rather than .get(): an unmapped source fails here instead of reaching
+            # the API. Confirm both with the user — never default to False.
+            is_pii=src["has_pii"],
+            is_phi=src["has_phi"],
         )
         # metadata.experiment --------------------------------------------
         .with_experiment(

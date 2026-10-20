@@ -50,7 +50,11 @@ def test_dataset_metadata_nests_sub_models():
 
 def test_governance_metadata_extra_fields_allowed():
     g = GovernanceMetadata(
-        data_steward="team-data", data_owner="team-x", custom_field="value"
+        data_steward="team-data",
+        is_pii=False,
+        is_phi=False,
+        data_owner="team-x",
+        custom_field="value",
     )
     assert g.data_owner == "team-x"
     assert g.model_extra["custom_field"] == "value"
@@ -58,13 +62,55 @@ def test_governance_metadata_extra_fields_allowed():
 
 def test_governance_requires_data_steward_on_write():
     with pytest.raises(ValidationError, match="data_steward"):
-        GovernanceMetadata(data_owner="team-x")
+        GovernanceMetadata(data_owner="team-x", is_pii=False, is_phi=False)
 
 
-def test_governance_response_tolerates_missing_data_steward():
-    """Records written before schema v1.5.0 have no steward and must still parse."""
-    g = GovernanceMetadataResponse.model_validate({"data_owner": "team-x"})
+@pytest.mark.parametrize("omitted", ["is_pii", "is_phi"])
+def test_governance_requires_sensitivity_flags_on_write(omitted):
+    """Required since schema v1.6.0, and null does not satisfy them."""
+    kwargs = {"data_steward": "team-data", "is_pii": False, "is_phi": False}
+    del kwargs[omitted]
+    with pytest.raises(ValidationError, match=omitted):
+        GovernanceMetadata(**kwargs)
+
+    with pytest.raises(ValidationError, match=omitted):
+        GovernanceMetadata(**{**kwargs, omitted: None})
+
+
+@pytest.mark.parametrize("value", [{}, {"data_steward": None}])
+def test_governance_response_tolerates_missing_data_steward(value):
+    """Records written before schema v1.5.0 have no steward and must still parse,
+    whether the key is absent or explicitly null."""
+    g = GovernanceMetadataResponse.model_validate(
+        {"data_owner": "team-x", "is_pii": False, "is_phi": False, **value}
+    )
     assert g.data_steward is None
+
+
+@pytest.mark.parametrize("omitted", ["is_pii", "is_phi"])
+def test_governance_response_still_requires_sensitivity_flags(omitted):
+    """Unlike `data_steward`, the flags are not widened on read: no stored record is
+    missing one, so a response that lacks it is a defect and must not parse."""
+    payload = {"data_steward": "team-data", "is_pii": False, "is_phi": False}
+    del payload[omitted]
+    with pytest.raises(ValidationError, match=omitted):
+        GovernanceMetadataResponse.model_validate(payload)
+
+    with pytest.raises(ValidationError, match=omitted):
+        GovernanceMetadataResponse.model_validate({**payload, omitted: None})
+
+
+def test_governance_data_generator_accepts_str_or_list():
+    """Added in v1.6.0. Neither shape is coerced to the other — a record reads
+    back the way it was written."""
+    base = {"data_steward": "team-data", "is_pii": False, "is_phi": False}
+    assert GovernanceMetadata(
+        **base, data_generator="imaging-platform"
+    ).data_generator == ("imaging-platform")
+    assert GovernanceMetadata(
+        **base, data_generator=["imaging-platform", "seq-core"]
+    ).data_generator == ["imaging-platform", "seq-core"]
+    assert GovernanceMetadata(**base).data_generator is None
 
 
 def test_data_quality_checks():

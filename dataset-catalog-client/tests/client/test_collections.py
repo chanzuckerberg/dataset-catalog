@@ -8,6 +8,7 @@ from catalog_client.models.collection import (
     ChildCollectionEntryResponse,
     CollectionChildType,
     CollectionRequest,
+    CollectionType,
     DatasetEntryResponse,
 )
 from catalog_client.models.pagination import PaginatedResponse
@@ -44,7 +45,7 @@ DATASET_RESPONSE = {
     "name": "Test Dataset",
     "modality": "imaging",
     "dataset_type": "raw",
-    "governance": {},
+    "governance": {"data_steward": "team-data", "is_pii": False, "is_phi": False},
     "data_quality": None,
     "metadata": {},
     "record_version": 1,
@@ -72,6 +73,14 @@ def _sync_client():
 
 def _async_client():
     return AsyncCollectionClient(httpx.AsyncClient(base_url=BASE))
+
+
+def test_collection_type_enum():
+    assert CollectionType.publication == "publication"
+    assert CollectionType.training == "training"
+    # Added in schema v1.6.0, giving the Study > Experiment hierarchy real values.
+    assert CollectionType.study == "study"
+    assert CollectionType.experiment == "experiment"
 
 
 def test_list_collections(httpx_mock: HTTPXMock):

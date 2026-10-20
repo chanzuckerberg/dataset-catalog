@@ -267,8 +267,10 @@ locations: [
 governance: {
   license,
   access_scope,
-  is_pii,
-  is_phi,
+  is_pii,          # required
+  is_phi,          # required
+  data_steward,    # required
+  data_generator,
   data_owner,
   embargoed_until,
   ...

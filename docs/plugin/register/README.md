@@ -93,7 +93,7 @@ What happens in order:
 3. **Dry-run, and iterate until coverage is clean.** This is the step that catches mistakes:
 
    ```text
-   [mapping valid] schema=v1.5.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [mapping valid] schema=v1.6.0  canonical_id=evican-brightfield-batch-01  locations=1
    [coverage] 24 mapped + 2 dropped of 26 source fields
      ✓ every source field is mapped or explicitly dropped
      metadata blocks populated: experiment, sample, data_summary
@@ -152,7 +152,7 @@ than it is right when inferred, and wrong here means a data-quality bug in a sha
 | It asks about | Why it will not guess |
 | --- | --- |
 | `license` | Not derivable from the data. Only a value you confirm gets written. |
-| `is_pii` / `is_phi` | Both default to unknown. `False` is a claim, not a default. |
+| `is_pii` / `is_phi` | Both are required since schema v1.6.0, with no "unknown" to fall back to. `False` is a claim, not a default. |
 | `storage_platform` | A `/hpc/...` path does not identify which of `sf_hpc` / `chi_hpc` / `ny_hpc`; an `https://` URI is not necessarily `external`. |
 | `.zarr` granularity | One record per screen, plate, well or FOV is your modelling decision, and it also decides what each `location` points at. |
 | Derived `organism` / `tissue` / `disease` | Only filled when *formally entailed* via the OLS hierarchy (e.g. a cell line pinning its species), never by intuition — and the rule is shown to you before it is coded. |

@@ -39,7 +39,7 @@ DATASET_RESPONSE = {
     "name": "Test",
     "modality": "sequencing",
     "dataset_type": "raw",
-    "governance": {},
+    "governance": {"data_steward": "team-data", "is_pii": False, "is_phi": False},
     "data_quality": None,
     "metadata": {},
     "record_version": 1,
