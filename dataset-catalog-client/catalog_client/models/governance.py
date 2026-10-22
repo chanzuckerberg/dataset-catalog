@@ -56,12 +56,10 @@ class GovernanceMetadataResponse(GovernanceMetadata):
     still returned, and they were never counted, so a read must not fail on them.
     The API widens exactly this field on its own `GovernanceResponse`.
 
-    `is_pii` / `is_phi` are *not* widened, though they are not inherently always
-    present either: v1.6.0 requires them on registration, and every record in prod
-    carries a non-null value for both (nulls counted, not just absent keys). A response
-    without them therefore signals a defect and should fail here rather than read back
-    as a record whose sensitivity the caller cannot determine. Reading a non-prod
-    instance that holds older records is the case this will raise on.
+    `is_pii` / `is_phi` are *not* widened. No stored record is missing either — the
+    count covered nulls, not just absent keys — so a response without them signals a
+    defect and should fail here rather than read back as a record whose sensitivity
+    the caller cannot determine.
     """
 
     data_steward: str | None = Field(  # type: ignore[assignment]

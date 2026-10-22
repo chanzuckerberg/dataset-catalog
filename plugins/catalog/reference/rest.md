@@ -267,9 +267,9 @@ locations: [
 governance: {
   license,
   access_scope,
-  is_pii,          # required on registration; set on all prod records
-  is_phi,          # required on registration; set on all prod records
-  data_steward,    # required on registration; null on pre-v1.5.0 records
+  is_pii,          # required
+  is_phi,          # required
+  data_steward,    # required
   data_generator,
   data_owner,
   embargoed_until,

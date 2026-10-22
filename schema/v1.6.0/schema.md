@@ -350,10 +350,9 @@ are permitted.
 The table above is the **request** shape. On read the block differs in exactly one
 field: `data_steward` is nullable, because it became required in v1.5.0 and records
 written earlier were never counted, so a missing one must not turn a read into a `500`.
-`is_pii` and `is_phi` stay required in both directions. They are not inherently always
-present, but every record in prod carries a non-null value for both — nulls included in
-that count — so a read that finds one missing is a defect and fails loudly rather than
-serving a record whose sensitivity the caller cannot determine.
+`is_pii` and `is_phi` stay required in both directions — no stored record is missing
+either, so a read that finds one is a defect and fails loudly rather than serving a
+record whose sensitivity the caller cannot determine.
 
 ### Data quality
 
