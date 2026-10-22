@@ -31,7 +31,9 @@ def test_builder_build_returns_registration_request():
             asset_type=AssetType.file,
             storage_platform=StoragePlatform.s3,
         )
-        .with_governance(data_steward="team-data", data_owner="team-x", is_phi=False)
+        .with_governance(
+            data_steward="team-data", data_owner="team-x", is_pii=False, is_phi=False
+        )
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )

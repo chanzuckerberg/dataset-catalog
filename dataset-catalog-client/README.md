@@ -129,7 +129,7 @@ Output is a human-readable table on a terminal and JSON when piped (override wit
 | Document | Description |
 |----------|-------------|
 | [USAGE.md](USAGE.md) | Full usage guide — datasets, collections, lineage, async, error handling |
-| [schema/v1.4.0/schema.md](../schema/v1.4.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) |
+| [schema/v1.6.0/schema.md](../schema/v1.6.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) |
 | [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
 

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class CollectionType(str, enum.Enum):
     publication = "publication"
     training = "training"
+    study = "study"
+    experiment = "experiment"
 
 
 class CollectionChildType(str, enum.Enum):
@@ -42,7 +44,8 @@ class CollectionRequest(BaseModel):
         default=None, description="External URL or reference link for the collection"
     )
     collection_type: CollectionType | None = Field(
-        default=None, description="Type of collection (publication or training)"
+        default=None,
+        description="Type of collection (publication, training, study or experiment)",
     )
     metadata: dict[str, Any] | None = Field(
         default=None, description="Additional metadata as key-value pairs"

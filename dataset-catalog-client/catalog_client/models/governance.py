@@ -22,16 +22,18 @@ class GovernanceMetadata(BaseModel):
         default=None,
         description="Gates record visibility: exactly 'internal' (the server default) or 'public'",
     )
-    is_pii: bool | None = Field(
-        default=None,
-        description="Whether the dataset contains Personally Identifiable Information",
+    is_pii: bool = Field(
+        description="Required. Whether the dataset contains Personally Identifiable Information. 'I am not sure' is not False — ask your data steward before you write",
     )
-    is_phi: bool | None = Field(
-        default=None,
-        description="Whether the dataset contains Protected Health Information",
+    is_phi: bool = Field(
+        description="Required. Whether the dataset contains Protected Health Information",
     )
     data_steward: str = Field(
         description="Required. Person or org that defines the standards and best practices for the data's accuracy, quality and completeness, and ingests and formats datasets to meet them",
+    )
+    data_generator: str | list[str] | None = Field(
+        default=None,
+        description="Person, lab or org that produced the data. Pass a list when more than one party generated it",
     )
     data_owner: str | None = Field(
         default=None, description="Person or organization that owns the data"
@@ -47,11 +49,19 @@ class GovernanceMetadata(BaseModel):
 
 
 class GovernanceMetadataResponse(GovernanceMetadata):
-    # Lenient on parse: `data_steward` became required in schema v1.5.0, but records
-    # written under earlier versions were stored without one and are still returned.
-    # The API makes the same allowance — its response model types governance as a bare
-    # dict. Intentionally widens a required request field; responses are never
-    # submitted back as create requests.
+    """Response-side governance, as `DatasetResponse.governance`.
+
+    `data_steward` is required on write but tolerated as `None` on read: records
+    written before schema v1.5.0 made it required were stored without one and are
+    still returned, and they were never counted, so a read must not fail on them.
+    The API widens exactly this field on its own `GovernanceResponse`.
+
+    `is_pii` / `is_phi` are *not* widened. No stored record is missing either — the
+    count covered nulls, not just absent keys — so a response without them signals a
+    defect and should fail here rather than read back as a record whose sensitivity
+    the caller cannot determine.
+    """
+
     data_steward: str | None = Field(  # type: ignore[assignment]
         default=None,
         description="Person or org responsible for the data's accuracy, quality and completeness",

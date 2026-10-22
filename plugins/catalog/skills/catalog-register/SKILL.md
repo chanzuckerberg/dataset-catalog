@@ -87,8 +87,8 @@ Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the
    Validates with the API's own Pydantic rules, prints the JSON payload,
    mock-submits, and reports **coverage** — every source field mapped, dropped, or *silently lost*. Iterate until clean:
    ```
-   [mapping valid] schema=v1.5.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 2 dropped of 26 source fields
+   [mapping valid] schema=v1.6.0  canonical_id=evican-brightfield-batch-01  locations=1
+   [coverage] 26 mapped + 2 dropped of 28 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
 5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser). Run the
@@ -114,7 +114,7 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 | modality                                          | `modality` | `modality=DatasetModality(...)` — `imaging` / `sequencing` / `mass spec` / `text` / `unknown`                     |
 | raw vs processed                                  | `dataset_type` | `.of_type(DatasetType.raw)` (`raw` or `processed`)                                                       |
 | file/folder URI + checksum /  size                | `locations[]` (signature fields) | `.with_location(uri, asset_type=..., storage_platform=..., checksum=..., checksum_alg=..., size_bytes=)` |
-| license / access / owner / PHI / PII              | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., is_phi=..., is_pii=...)`         |
+| license / access / owner / generator / PHI / PII   | `governance` | `.with_governance(license=..., access_scope="internal", data_owner=..., data_generator=..., is_phi=..., is_pii=...)` |
 | assay / instrument / sub-modality                 | `metadata.experiment` | `.with_experiment(sub_modality=..., assay=[OntologyEntry(...)])`                                         |
 | organism / tissue / disease / developmental_stage | `metadata.sample` | `.with_sample(organism=[OntologyEntry(...)], tissue=[TissueEntry(...)])`                                 |
 | cell/read counts, channels, dims                  | `metadata.data_summary` | `.with_data_summary(cell_count=..., channels=[ChannelMetadata(...)], ...)`                               |
@@ -147,9 +147,9 @@ blocks: `canonical_id`, `name`, `modality`, `locations` (≥1), `governance`,
 ### Exception
 1. `governance` is fixed-shape. Never route extras into `.with_governance(...)`.
    - Map only the schema's named fields (`license`, `access_scope`, `is_pii`, `is_phi`,
-      `data_steward`, `data_owner`, `is_external_reference`, `embargoed_until`);
-      `data_steward` is **required** since schema v1.5.0 — the block will not
-      validate without it.
+      `data_steward`, `data_generator`, `data_owner`, `is_external_reference`,
+      `embargoed_until`); `data_steward` is **required** since schema v1.5.0 and
+      `is_pii` / `is_phi` since v1.6.0 — the block will not validate without all three.
    - **Skip `data_sensitivity`.** It is a named governance field, but leave it unset — do not map a source value onto it, and do not route it to `.with_custom_metadata(...)` either.
    - A source field about access, licensing, ownership, compliance, or data
      sensitivity (e.g. `confidentiality`, `usage_restrictions`, `data_use_agreement`,
@@ -177,9 +177,11 @@ unset — empty is honest; a fabricated value is a data-quality bug.
   source, check with the user what it should be rather than leaving it blank or
   fabricating one. Only set `license` to a value the user confirms.
 6. **`access_scope` is always `"internal"`.** Hard-code it in `.with_governance(...)`; never map it from a source.
-7. **Never assume `is_pii` / `is_phi`.** Both default to `None` (unknown) — do
-  **not** default them to `False` when the source is silent. Always confirm the
-  PII and PHI status with the user before setting either.
+7. **Never assume `is_pii` / `is_phi`.** Both are **required** since schema v1.6.0
+  and `None` does not satisfy them, so there is no "unknown" to fall back to — and
+  that is the point: the flags decide whether a consumer may open the data at all.
+  Always confirm both with the user before setting either; do **not** default them
+  to `False` when the source is silent.
 8. **Confirm `storage_platform` when it isn't obvious.** Don't infer it from the path alone.
    - A `/hpc/...` path is **not** always `sf_hpc` — there are three HPC
         backends (`sf_hpc`, `chi_hpc`, `ny_hpc`); ask which site.

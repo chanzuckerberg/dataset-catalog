@@ -35,7 +35,9 @@ def _minimal_create(**kwargs: Any) -> DatasetRequest:
                 storage_platform=StoragePlatform.s3,
             )
         ],
-        governance=GovernanceMetadata(data_steward="team-data"),
+        governance=GovernanceMetadata(
+            data_steward="team-data", is_pii=False, is_phi=False
+        ),
         metadata=DatasetMetadata(),
     )
     defaults.update(kwargs)
@@ -72,7 +74,9 @@ def test_dataset_create_requires_canonical_id():
                     storage_platform=StoragePlatform.s3,
                 )
             ],
-            governance=GovernanceMetadata(data_steward="team-data"),
+            governance=GovernanceMetadata(
+                data_steward="team-data", is_pii=False, is_phi=False
+            ),
             metadata=DatasetMetadata(),
         )
 
@@ -118,7 +122,9 @@ def test_dataset_create_project_required():
                     storage_platform=StoragePlatform.s3,
                 )
             ],
-            governance=GovernanceMetadata(data_steward="team-data"),
+            governance=GovernanceMetadata(
+                data_steward="team-data", is_pii=False, is_phi=False
+            ),
             metadata=DatasetMetadata(),
         )
 
@@ -126,6 +132,10 @@ def test_dataset_create_project_required():
 def test_dataset_create_is_latest_defaults_false():
     ds = _minimal_create()
     assert ds.is_latest is True
+
+
+def test_dataset_defaults_to_current_schema_version():
+    assert _minimal_create().record_schema_version == "v1.6.0"
 
 
 def test_dataset_modality_enum():
@@ -153,7 +163,7 @@ def test_dataset_response_parses_json():
         "name": "Test",
         "modality": "sequencing",
         "dataset_type": "raw",
-        "governance": {},
+        "governance": {"data_steward": "team-data", "is_pii": False, "is_phi": False},
         "data_quality": None,
         "metadata": {},
         "record_version": 1,
@@ -167,3 +177,26 @@ def test_dataset_response_parses_json():
     ds = DatasetResponse.model_validate(data)
     assert ds.id == "uuid-1"
     assert ds.canonical_id == "ds-001"
+
+
+def test_dataset_response_tolerates_missing_data_steward():
+    """A record written before schema v1.5.0 made `data_steward` required still parses
+    end to end, not just at the governance model."""
+    data = {
+        "id": "uuid-1",
+        "tombstoned": False,
+        "created_at": "2024-01-01T00:00:00Z",
+        "last_modified_at": "2024-01-01T00:00:00Z",
+        "canonical_id": "ds-001",
+        "version": "1.0.0",
+        "project": "atlas",
+        "locations": [],
+        "name": "Test",
+        "modality": "sequencing",
+        "governance": {"is_pii": False, "is_phi": False},
+        "metadata": {},
+        "record_version": 1,
+        "record_schema_version": "v1.4.0",
+    }
+    ds = DatasetResponse.model_validate(data)
+    assert ds.governance.data_steward is None

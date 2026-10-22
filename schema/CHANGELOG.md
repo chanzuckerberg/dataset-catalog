@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.5.0](#v150--current) | **Current** — active, default for new registrations |
+| [v1.6.0](#v160--current) | **Current** — active, default for new registrations |
+| [v1.5.0](#v150) | Supported for read |
 | [v1.4.0](#v140) | Supported for read |
 | [v1.3.0](#v130) | Supported for read |
 | [v1.2.0](#v120) | Supported for read |
@@ -18,9 +19,54 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.5.0 — Current
+## v1.6.0 — Current
 
 **Status:** Active. All new registrations default to this version. See
+[`v1.6.0/schema.md`](v1.6.0/schema.md).
+
+### Added
+
+- **Governance:** `data_generator` — who produced the data (the lab, team or pipeline
+  behind it), so a consumer with a question about how it was generated knows who to ask.
+  Accepts a single name or a list when several parties generated it; the shape it was
+  written in is the shape it reads back in, never coerced to the other. Indexed as an
+  analyzed text field, so free-text search matches a word inside it rather than only the
+  whole value.
+- **Collection:** `collection_type` now accepts `study` and `experiment`, alongside
+  `publication` and `training`. The first two levels of the recommended
+  Study > Experiment > Run hierarchy can now be recorded on the record instead of being
+  inferred from its `name`. There is no `run` value — that level stays a name-only label.
+
+### Changed
+
+**Both sensitivity flags are now required on create and update.** A request whose
+`governance` omits either is rejected with a `422`, and `null` no longer satisfies them.
+
+- **Governance:** `is_pii` and `is_phi` are now required. A writer that previously left
+  them unset must declare a boolean. "I am not sure" is not `false`: the flags decide
+  whether a consumer is permitted to open the data at all, so an unknown case belongs
+  with the data steward before the record is written.
+- **Dataset:** `project` is now non-null on responses too. It has been required on write
+  since v1.5.0 and no record predating that remains, so a read no longer has to tolerate
+  a missing one. The database column stays nullable; tightening it is a separate change.
+- **Dataset:** `record_schema_version` now defaults to `v1.6.0`.
+
+Unlike the v1.5.0 additions, the sensitivity flags are required **on read as well** —
+no stored record is missing either, so a response that lacks one is a defect and fails
+loudly rather than being served as a record whose sensitivity cannot be determined. The
+one governance field that stays nullable on read is `data_steward` — it became required
+in v1.5.0 and earlier records were never counted.
+
+Clarified, with no behaviour change: `access_scope` is not validated against
+`internal` / `public`. A typo is stored as written and silently drops the record out of
+the filter — the v1.5.0 document said it was "accepted and lowercased" without saying it
+is never checked.
+
+---
+
+## v1.5.0
+
+**Status:** Supported for read. New registrations should use current version. See
 [`v1.5.0/schema.md`](v1.5.0/schema.md).
 
 ### Added
@@ -80,7 +126,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.4.0
 
-**Status:** Supported for read. New registrations should use v1.5.0. See
+**Status:** Supported for read. New registrations should use current version. See
 [`v1.4.0/schema.md`](v1.4.0/schema.md).
 
 ### Added
@@ -114,7 +160,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.3.0
 
-**Status:** Supported for read. New registrations should use v1.5.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
@@ -140,7 +186,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.2.0
 
-**Status:** Supported for read. New registrations should use v1.5.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
@@ -164,7 +210,7 @@ These were already true in v1.4.0; the v1.4.0 document described them imprecisel
 
 ## v1.1.0
 
-**Status:** Supported for read. New registrations should use v1.5.0.
+**Status:** Supported for read. New registrations should use current version.
 
 ### Added
 
@@ -273,3 +319,29 @@ Optional work:
 Nothing else changed. If you are comparing the v1.4.0 and v1.5.0 documents directly, see
 [Clarified (no behaviour change)](#clarified-no-behaviour-change) — some rows differ
 because the v1.4.0 document was imprecise, not because the schema moved.
+
+### v1.5.0 → v1.6.0
+
+**`governance.is_pii` and `governance.is_phi` are now required.** A payload omitting
+either is rejected with a `422`, and passing `null` does not satisfy them. Any writer
+that left them unset must now declare a boolean for both. Do not reach for `false` to
+get past the validator — confirm the real answer with the data steward first.
+
+Reads tighten rather than loosen, which is the reverse of v1.5.0: both flags are
+required on responses too, so a record that somehow lacks one raises instead of parsing.
+No stored record is missing either, so this surfaces defects, not legacy rows.
+`governance.data_steward` is still nullable on read.
+
+`project` is now non-null on responses. Code that defensively handled a missing
+`project` on a read can drop that branch; nothing needs backfilling, since the records
+that could carry none predate v1.5.0 and no longer exist.
+
+Optional work:
+
+- Populate `governance.data_generator` where the producing lab, team or pipeline is
+  known. It is free-text searchable, so it is worth filling in even when it duplicates
+  `data_steward`.
+- Set `collection_type` to `study` or `experiment` on collections that sit at those
+  levels of the hierarchy, instead of encoding the level only in `name`.
+
+Nothing else changed.

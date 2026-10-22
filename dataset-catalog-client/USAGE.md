@@ -148,9 +148,11 @@ with CatalogClient(base_url="...", api_token="...") as client:
         ],
         governance=GovernanceMetadata(
             data_steward="genomics-team",   # required
+            is_pii=False,                   # required
+            is_phi=False,                   # required
             data_owner="genomics-team",
+            data_generator="genomics-core",
             access_scope="internal",
-            is_pii=False,
         ),
         metadata=DatasetMetadata(),
     ))
@@ -175,7 +177,7 @@ with CatalogClient(base_url="...", api_token="...") as client:
         )
         .described("Bulk RNA-seq from PBMC donors, batch 42.")
         .with_location("s3://my-bucket/rna-seq/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False, is_phi=False)
         .with_sample(
             organism=[OntologyEntry(label="Homo sapiens", ontology_id="NCBITaxon:9606")]
         )
@@ -203,7 +205,7 @@ To record lineage at registration time:
             modality=DatasetModality.sequencing,
         )
         .with_location("s3://my-bucket/processed/batch42/", asset_type=AssetType.folder, storage_platform=StoragePlatform.s3)
-        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
+        .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False, is_phi=False)
         .with_lineage("<raw-dataset-uuid>", lineage_type=LineageType.transformed_from)
         .submit()
     )
@@ -217,7 +219,7 @@ from catalog_client import DatasetRef
 dataset_id = (
     client.new_registration(...)
     .with_location(...)
-    .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False)
+    .with_governance(data_steward="genomics-team", data_owner="genomics-team", is_pii=False, is_phi=False)
     .with_lineage(
         DatasetRef(canonical_id="raw-rna-seq", version="1.0.0", project="atlas"),
         lineage_type=LineageType.transformed_from,
@@ -906,6 +908,16 @@ except LineageResolutionError as e:
     print(f"Could not resolve source dataset ref: {e}")
 ```
 
+`ValidationError` above is the catalog's `422` wrapper, raised when the API rejects a
+write. A *response* that does not satisfy the client's models raises pydantic's
+`ValidationError` instead, which is not part of the `CatalogError` hierarchy and is not
+caught by any branch above. Read models are lenient where a legacy record could
+legitimately lack a value — `governance.data_steward` and `locations[].storage_platform`
+both come back as `None` for records written before v1.5.0 required them. They are not
+lenient about `governance.is_pii` / `is_phi`: no stored record is missing either, so a
+response without them is a defect and raises rather than being handed back with its
+sensitivity unknown.
+
 ---
 
 ## Key models reference
@@ -918,8 +930,8 @@ except LineageResolutionError as e:
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
 | `DataAssetRequest`             | Asset entry inside `DatasetRequest.locations`                          |
 | `DataAssetResponse`            | Asset entry inside response `locations`                                |
-| `GovernanceMetadata`           | Access control and ownership info; `data_steward` is required          |
-| `GovernanceMetadataResponse`   | Response-side governance — `data_steward` optional for pre-v1.5.0 records |
+| `GovernanceMetadata`           | Access control and ownership info; `data_steward`, `is_pii` and `is_phi` are required |
+| `GovernanceMetadataResponse`   | Response-side governance — `data_steward` may be `None` for pre-v1.5.0 records; the sensitivity flags stay required |
 | `DatasetMetadata`              | Top-level metadata envelope (`experiment`, `sample`, `data_summary`)   |
 | `SampleMetadata`               | Biological sample information                                          |
 | `ExperimentMetadata`           | Experimental setup and instrument info                                 |
@@ -942,11 +954,11 @@ except LineageResolutionError as e:
 
 | Enum | Values |
 |---|---|
-| `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `unknown` |
+| `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `text`, `unknown` |
 | `DatasetType` | `raw`, `processed` |
 | `AssetType` | `file`, `folder` |
-| `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `external`, `other` |
+| `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
-| `CollectionType` | `publication`, `training` |
+| `CollectionType` | `publication`, `training`, `study`, `experiment` |
 | `DatasetSortOption` | `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest` — `datasets.search()`; unset omits the param |
 | `DatasetListSortOption` | `last_modified`, `newest`, `oldest` — `datasets.list()`; unset omits the param |
