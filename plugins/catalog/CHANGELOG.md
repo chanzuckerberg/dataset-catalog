@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v1.0.0...catalog-plugin-v1.1.0) (2026-10-22)
+
+
+### Features
+
+* adopt dataset schema v1.6.0 in schema docs, client, and plugin ([#89](https://github.com/chanzuckerberg/dataset-catalog/issues/89)) ([1bdd22f](https://github.com/chanzuckerberg/dataset-catalog/commit/1bdd22f5df34922b620d54035c710979f10aa221))
+
 ## [1.0.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v0.6.0...catalog-plugin-v1.0.0) (2026-09-21)
 
 
