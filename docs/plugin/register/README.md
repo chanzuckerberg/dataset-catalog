@@ -94,7 +94,7 @@ What happens in order:
 
    ```text
    [mapping valid] schema=v1.6.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 2 dropped of 26 source fields
+   [coverage] 26 mapped + 2 dropped of 28 source fields
      ✓ every source field is mapped or explicitly dropped
      metadata blocks populated: experiment, sample, data_summary
    ```

@@ -51,11 +51,12 @@ The active schema version is recorded on each dataset record as `record_schema_v
   a missing one. The database column stays nullable; tightening it is a separate change.
 - **Dataset:** `record_schema_version` now defaults to `v1.6.0`.
 
-Unlike the v1.5.0 additions, the sensitivity flags are required **on read as well**. No
-stored record is missing either, so a response that lacks one is a defect and fails
-loudly rather than being served as a record whose sensitivity cannot be determined. The
-one governance field that stays nullable on read is `data_steward` — it became required
-in v1.5.0 and earlier records were never counted.
+Unlike the v1.5.0 additions, the sensitivity flags are required **on read as well**.
+The fields are not inherently always present; every record in prod carries a non-null
+value for both, nulls included in that count. So a response that lacks one is a defect
+and fails loudly rather than being served as a record whose sensitivity cannot be
+determined. The one governance field that stays nullable on read is `data_steward` — it
+became required in v1.5.0 and earlier records were never counted.
 
 Clarified, with no behaviour change: `access_scope` is not validated against
 `internal` / `public`. A typo is stored as written and silently drops the record out of
@@ -329,7 +330,8 @@ get past the validator — confirm the real answer with the data steward first.
 
 Reads tighten rather than loosen, which is the reverse of v1.5.0: both flags are
 required on responses too, so a record that somehow lacks one raises instead of parsing.
-No stored record is missing either, so this surfaces defects, not legacy rows.
+Every record in prod carries a non-null value for both, nulls included in that count,
+so this surfaces defects rather than legacy rows.
 `governance.data_steward` is still nullable on read.
 
 `project` is now non-null on responses. Code that defensively handled a missing

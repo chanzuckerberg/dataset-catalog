@@ -89,8 +89,9 @@ def test_governance_response_tolerates_missing_data_steward(value):
 
 @pytest.mark.parametrize("omitted", ["is_pii", "is_phi"])
 def test_governance_response_still_requires_sensitivity_flags(omitted):
-    """Unlike `data_steward`, the flags are not widened on read: no stored record is
-    missing one, so a response that lacks it is a defect and must not parse."""
+    """Unlike `data_steward`, the flags are not widened on read: every record in prod
+    carries a non-null value for both, so a response that lacks one is a defect and
+    must not parse."""
     payload = {"data_steward": "team-data", "is_pii": False, "is_phi": False}
     del payload[omitted]
     with pytest.raises(ValidationError, match=omitted):

@@ -914,9 +914,10 @@ write. A *response* that does not satisfy the client's models raises pydantic's
 caught by any branch above. Read models are lenient where a legacy record could
 legitimately lack a value — `governance.data_steward` and `locations[].storage_platform`
 both come back as `None` for records written before v1.5.0 required them. They are not
-lenient about `governance.is_pii` / `is_phi`: no stored record is missing either, so a
-response without them is a defect and raises rather than being handed back with its
-sensitivity unknown.
+lenient about `governance.is_pii` / `is_phi`: every record in prod carries a non-null
+value for both, so a response without them is a defect and raises rather than being
+handed back with its sensitivity unknown. Point the client at a non-prod instance
+holding older records and that strictness is what will raise first.
 
 ---
 

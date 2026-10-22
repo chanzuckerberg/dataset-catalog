@@ -88,7 +88,7 @@ Paths below use `$P=${CLAUDE_PLUGIN_ROOT}/skills/catalog-register` (set when the
    mock-submits, and reports **coverage** — every source field mapped, dropped, or *silently lost*. Iterate until clean:
    ```
    [mapping valid] schema=v1.6.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 24 mapped + 2 dropped of 26 source fields
+   [coverage] 26 mapped + 2 dropped of 28 source fields
      ✓ every source field is mapped or explicitly dropped
    ```
 5. **Submit** once the user has a token (issue at `<catalog>/tokens` in a logged-in browser). Run the

@@ -112,7 +112,7 @@ tombstone, since that is just adding previously missing information.
 
 | Field | Type | Required | Description |
 |---|---|----------|---|
-| `storage_platform` | string | Yes      | Storage backend holding the bytes. See [Storage platforms](#storage-platforms). Required on every asset and never derived from `location_uri`. |
+| `storage_platform` | string | Yes      | Storage backend holding the bytes. See [Storage platforms](#storage-platforms). Required on every asset and never derived from `location_uri`; nullable when read back, since assets written before v1.5.0 may carry none. |
 | `location_uri` | string | Yes      | Full URI with storage scheme (e.g. `s3://`, `gs://`, `https://`, `globus://`). |
 | `asset_type` | string | Yes      | `file` or `folder`. |
 | `size_bytes` | integer | No       | Total size in bytes. For folder assets, the sum of all included files. |
@@ -350,9 +350,10 @@ are permitted.
 The table above is the **request** shape. On read the block differs in exactly one
 field: `data_steward` is nullable, because it became required in v1.5.0 and records
 written earlier were never counted, so a missing one must not turn a read into a `500`.
-`is_pii` and `is_phi` stay required in both directions — no stored record is missing
-either, so a read that finds one is a defect and fails loudly rather than serving a
-record whose sensitivity the caller cannot determine.
+`is_pii` and `is_phi` stay required in both directions. They are not inherently always
+present, but every record in prod carries a non-null value for both — nulls included in
+that count — so a read that finds one missing is a defect and fails loudly rather than
+serving a record whose sensitivity the caller cannot determine.
 
 ### Data quality
 
