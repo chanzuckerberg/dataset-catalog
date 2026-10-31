@@ -7,6 +7,12 @@ from collections.abc import AsyncIterator, Iterator
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
+from catalog_client.models.asset import LocationScope, StoragePlatform
+from catalog_client.models.copy import (
+    CopyType,
+    DatasetCopyRequest,
+    DatasetCopyResponse,
+)
 from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
@@ -33,6 +39,10 @@ _LIST_MAX_LIMIT = 500
 # `hydrate=True` re-reads every hit from the database, so the server caps the
 # page size lower than the 1000 an unhydrated search allows.
 _HYDRATED_MAX_LIMIT = 100
+
+# Every resolve hit is a full dataset record, which is what holds its page
+# size below the ceiling an unhydrated search allows.
+_RESOLVE_MAX_LIMIT = 100
 
 # Depth past which offset paging is refused in favour of a keyset cursor. The
 # server accepts deeper offsets, but it walks and discards every skipped row,
@@ -213,6 +223,22 @@ def _build_search_params(
         params["fields"] = fields
     if hydrate:
         params["hydrate"] = True
+    return params
+
+
+def _build_resolve_params(
+    uri: str,
+    scope: LocationScope,
+    storage_platform: StoragePlatform | None,
+    cursor: str | None,
+    limit: int,
+) -> dict:
+    _check_limit(limit, _RESOLVE_MAX_LIMIT, "datasets.resolve()")
+    params: dict = {"uri": uri, "scope": scope.value, "limit": limit}
+    if storage_platform is not None:
+        params["storage_platform"] = storage_platform.value
+    if cursor is not None:
+        params["cursor"] = cursor
     return params
 
 
@@ -416,6 +442,87 @@ class DatasetClient(_SyncBase):
             if following is None:
                 return
             cursor = following
+
+    def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> DatasetSearchResponse[DatasetResponse]:
+        """Resolve a file or directory URI to the dataset(s) registered at it.
+
+        By default the match is the URI itself. `scope=ancestor` walks *up*,
+        so a deep object key finds the dataset registered on a parent
+        directory, closest match first; `scope=descendant` walks *down* and
+        comes back in `id` order, since no match there outranks another.
+
+        Pass `storage_platform` whenever the URI is a bare POSIX path: every
+        HPC cluster mounts its own `/hpc/projects/x`, so without it the path
+        resolves across all of them.
+
+        Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
+        identical for the whole walk, or use `iter_resolve()`, which manages
+        the cursor for you.
+        """
+        params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        response = self._get(f"{_PREFIX}/resolve", params=params)
+        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        limit: int = 50,
+    ) -> Iterator[DatasetResponse]:
+        """Walk every dataset the URI resolves to, following cursors until exhausted."""
+        cursor: str | None = None
+        while True:
+            page = self.resolve(
+                uri,
+                scope=scope,
+                storage_platform=storage_platform,
+                cursor=cursor,
+                limit=limit,
+            )
+            yield from page.results
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
+                return
+            cursor = following
+
+    def copy(
+        self,
+        dataset_id: str,
+        request: DatasetCopyRequest,
+        *,
+        copy_type: CopyType,
+    ) -> DatasetCopyResponse:
+        """Register the catalog side of a completed transfer of `dataset_id`.
+
+        Writes the destination and the `copy_of` edge tying it to the source
+        in one transaction, so a copy and the record of whose copy it is are
+        never written apart. `copy_type` is required — the catalog never
+        infers it from the destination or the body.
+
+        Replaying is safe: the destination identity is the idempotency key,
+        so a replay returns the same ids and writes nothing, whatever its
+        entries now say. Correct a registered copy with `update()`, not by
+        replaying with changed entries.
+
+        A refusal raises `CopyError`, whose `code` says why and whose
+        `retryable` says whether retrying the same request can help.
+        """
+        response = self._post(
+            f"{_PREFIX}/{dataset_id}/copy",
+            params={"copy_type": copy_type.value},
+            json=request.model_dump(mode="json"),
+        )
+        return DatasetCopyResponse.model_validate(response.json())
 
     def history(
         self,
@@ -668,6 +775,88 @@ class AsyncDatasetClient(_AsyncBase):
             if following is None:
                 return
             cursor = following
+
+    async def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> DatasetSearchResponse[DatasetResponse]:
+        """Resolve a file or directory URI to the dataset(s) registered at it.
+
+        By default the match is the URI itself. `scope=ancestor` walks *up*,
+        so a deep object key finds the dataset registered on a parent
+        directory, closest match first; `scope=descendant` walks *down* and
+        comes back in `id` order, since no match there outranks another.
+
+        Pass `storage_platform` whenever the URI is a bare POSIX path: every
+        HPC cluster mounts its own `/hpc/projects/x`, so without it the path
+        resolves across all of them.
+
+        Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
+        identical for the whole walk, or use `iter_resolve()`, which manages
+        the cursor for you.
+        """
+        params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        response = await self._get(f"{_PREFIX}/resolve", params=params)
+        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+
+    async def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        limit: int = 50,
+    ) -> AsyncIterator[DatasetResponse]:
+        """Walk every dataset the URI resolves to, following cursors until exhausted."""
+        cursor: str | None = None
+        while True:
+            page = await self.resolve(
+                uri,
+                scope=scope,
+                storage_platform=storage_platform,
+                cursor=cursor,
+                limit=limit,
+            )
+            for result in page.results:
+                yield result
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
+                return
+            cursor = following
+
+    async def copy(
+        self,
+        dataset_id: str,
+        request: DatasetCopyRequest,
+        *,
+        copy_type: CopyType,
+    ) -> DatasetCopyResponse:
+        """Register the catalog side of a completed transfer of `dataset_id`.
+
+        Writes the destination and the `copy_of` edge tying it to the source
+        in one transaction, so a copy and the record of whose copy it is are
+        never written apart. `copy_type` is required — the catalog never
+        infers it from the destination or the body.
+
+        Replaying is safe: the destination identity is the idempotency key,
+        so a replay returns the same ids and writes nothing, whatever its
+        entries now say. Correct a registered copy with `update()`, not by
+        replaying with changed entries.
+
+        A refusal raises `CopyError`, whose `code` says why and whose
+        `retryable` says whether retrying the same request can help.
+        """
+        response = await self._post(
+            f"{_PREFIX}/{dataset_id}/copy",
+            params={"copy_type": copy_type.value},
+            json=request.model_dump(mode="json"),
+        )
+        return DatasetCopyResponse.model_validate(response.json())
 
     async def history(
         self,

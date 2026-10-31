@@ -13,6 +13,7 @@ Subcommands:
     search       full-text + faceted search over datasets
     facets       discover the catalog's actual filter vocabulary (value + count)
     get          fetch one full dataset record by UUID or coordinates
+    resolve      find the dataset(s) registered at a file or directory URI
     list         exact-coordinate dataset listing
     lineage      walk provenance edges up/down from a dataset
     collections  browse collections and their entries
@@ -44,7 +45,7 @@ from catalog_client.exceptions import (
     CatalogUsageError,
     NotFoundError,
 )
-from catalog_client.models.asset import AssetType
+from catalog_client.models.asset import AssetType, LocationScope, StoragePlatform
 from catalog_client.models.dataset import (
     DatasetListSortOption,
     DatasetModality,
@@ -277,6 +278,27 @@ def cmd_get(args: argparse.Namespace) -> None:
     )
     print(f"Locations   {len(record.get('locations') or [])}")
     print("(use -o json for the full record)")
+
+
+def cmd_resolve(args: argparse.Namespace) -> None:
+    with _client() as client:
+        response = client.datasets.resolve(
+            args.uri,
+            scope=LocationScope(args.scope),
+            storage_platform=(
+                StoragePlatform(args.storage_platform)
+                if args.storage_platform
+                else None
+            ),
+            cursor=args.cursor,
+            limit=args.limit,
+        )
+    if args.output == "json":
+        _dump(_model(response))
+        return
+    _print_table(
+        [_dataset_summary(record) for record in response.results], _DATASET_COLUMNS
+    )
 
 
 def cmd_list(args: argparse.Namespace) -> None:
@@ -722,6 +744,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lineage", action="store_true", help="embed lineage edges")
     p.add_argument("--collections", action="store_true", help="embed collections")
     p.set_defaults(func=cmd_get)
+
+    p = sub.add_parser(
+        "resolve",
+        parents=[common],
+        help="find the dataset(s) registered at a file or directory URI",
+    )
+    p.add_argument(
+        "uri",
+        help="file or directory URI, e.g. s3://bucket/proj/raw/f.h5ad. An "
+        "absolute POSIX path works the same as its file:/// form",
+    )
+    p.add_argument(
+        "--scope",
+        choices=[scope.value for scope in LocationScope],
+        default=LocationScope.exact.value,
+        help="exact = the location is this URI (default); ancestor = walk up "
+        "to a registered parent directory, closest first; descendant = "
+        "everything registered under it",
+    )
+    p.add_argument(
+        "--storage-platform",
+        choices=[platform.value for platform in StoragePlatform],
+        help="required to disambiguate a bare POSIX path: every HPC cluster "
+        "mounts its own /hpc/projects/x",
+    )
+    _add_cursor_paging(p, limit=50, offset=False)
+    p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser(
         "list", parents=[common], help="exact-coordinate dataset listing"

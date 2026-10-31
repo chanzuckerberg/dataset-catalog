@@ -1,3 +1,4 @@
+import json
 import re
 
 import httpx
@@ -6,7 +7,21 @@ from pydantic import ValidationError as PydanticValidationError
 from pytest_httpx import HTTPXMock
 
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
-from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
+from catalog_client.exceptions import (
+    CatalogError,
+    CatalogUsageError,
+    CopyError,
+    NotFoundError,
+)
+from catalog_client.models.asset import AssetType, LocationScope, StoragePlatform
+from catalog_client.models.copy import (
+    CopyEntry,
+    CopyErrorCode,
+    CopyProvenance,
+    CopyType,
+    DatasetCopyRequest,
+    DatasetCopyResponse,
+)
 from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
@@ -505,3 +520,204 @@ def test_history_parses_and_sends_skip(httpx_mock: HTTPXMock):
     params = httpx_mock.get_request().url.params
     assert params["skip"] == "5"
     assert params["event_type"] == "created"
+
+
+# --- Resolve ---
+
+RESOLVE_URL = re.compile(rf"{re.escape(BASE)}datasets/resolve\?.*")
+
+
+def test_resolve_sends_uri_scope_and_platform(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=RESOLVE_URL,
+        json={"total": 1, "limit": 50, "results": [DATASET_RESPONSE]},
+    )
+    page = _sync_client().resolve(
+        "s3://bucket/proj/raw/f.h5ad",
+        scope=LocationScope.ancestor,
+        storage_platform=StoragePlatform.s3,
+    )
+    assert isinstance(page.results[0], DatasetResponse)
+    params = httpx_mock.get_request().url.params
+    assert params["uri"] == "s3://bucket/proj/raw/f.h5ad"
+    assert params["scope"] == "ancestor"
+    assert params["storage_platform"] == "s3"
+    assert params["limit"] == "50"
+
+
+def test_resolve_defaults_to_exact_and_omits_platform(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=RESOLVE_URL, json={"total": 0, "limit": 50, "results": []}
+    )
+    _sync_client().resolve("/hpc/projects/x/f.h5ad")
+    params = httpx_mock.get_request().url.params
+    assert params["scope"] == "exact"
+    assert "storage_platform" not in params
+
+
+def test_resolve_rejects_limit_above_route_ceiling():
+    with pytest.raises(CatalogUsageError, match="<= 100"):
+        _sync_client().resolve("s3://bucket/k", limit=101)
+
+
+def test_iter_resolve_follows_cursor(httpx_mock: HTTPXMock):
+    second = {**DATASET_RESPONSE, "id": "uuid-2"}
+    httpx_mock.add_response(
+        url=RESOLVE_URL,
+        json={
+            "total": 2,
+            "limit": 1,
+            "results": [DATASET_RESPONSE],
+            "next_cursor": "cur-1",
+        },
+    )
+    httpx_mock.add_response(
+        url=RESOLVE_URL,
+        json={"total": 2, "limit": 1, "results": [second], "next_cursor": None},
+    )
+    found = list(_sync_client().iter_resolve("s3://bucket/proj", limit=1))
+    assert [record.id for record in found] == ["uuid-1", "uuid-2"]
+    assert httpx_mock.get_requests()[1].url.params["cursor"] == "cur-1"
+
+
+def test_iter_resolve_aborts_on_repeating_cursor(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=RESOLVE_URL,
+        json={
+            "total": 1,
+            "limit": 1,
+            "results": [DATASET_RESPONSE],
+            "next_cursor": "cur-stuck",
+        },
+        is_reusable=True,
+    )
+    with pytest.raises(CatalogError, match="same cursor"):
+        list(_sync_client().iter_resolve("s3://bucket/proj", limit=1))
+
+
+async def test_async_resolve(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=RESOLVE_URL,
+        json={"total": 1, "limit": 50, "results": [DATASET_RESPONSE]},
+    )
+    async with _async_client() as client:
+        page = await client.resolve("s3://bucket/k", scope=LocationScope.descendant)
+    assert page.results[0].id == "uuid-1"
+    assert httpx_mock.get_request().url.params["scope"] == "descendant"
+
+
+# --- Copy ---
+
+COPY_URL = re.compile(rf"{re.escape(BASE)}datasets/uuid-1/copy\?.*")
+
+COPY_REQUEST = DatasetCopyRequest(
+    project="CryoET Data Portal",
+    canonical_id="DS-10053",
+    version="2.0.0",
+    storage_platform=StoragePlatform.s3,
+    root_uri="s3://czi-public/10053/",
+    entries=[
+        CopyEntry(
+            location_uri="s3://czi-public/10053/tomogram.zarr",
+            asset_type=AssetType.folder,
+            storage_platform=StoragePlatform.s3,
+            relative_path="tomogram.zarr",
+            source_relative_path="tomogram.zarr",
+        )
+    ],
+    lineage_metadata=CopyProvenance(hermes_job="job-8f21"),
+)
+
+COPY_RESPONSE = {
+    "copy_type": "fork",
+    "dataset_id": "uuid-copy",
+    "project": "CryoET Data Portal",
+    "canonical_id": "DS-10053",
+    "version": "2.0.0",
+    "lineage_edge_id": "edge-1",
+}
+
+
+def test_copy_sends_copy_type_as_query_param(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=COPY_URL, status_code=201, json=COPY_RESPONSE)
+    result = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert isinstance(result, DatasetCopyResponse)
+    assert result.dataset_id == "uuid-copy"
+    request = httpx_mock.get_request()
+    assert request.url.params["copy_type"] == "fork"
+    body = json.loads(request.content)
+    assert body["root_uri"] == "s3://czi-public/10053/"
+    assert body["entries"][0]["source_relative_path"] == "tomogram.zarr"
+    assert body["lineage_metadata"]["hermes_job"] == "job-8f21"
+
+
+def test_copy_replay_returns_the_same_record(httpx_mock: HTTPXMock):
+    """A replay answers 200 rather than 201 and writes nothing."""
+    httpx_mock.add_response(url=COPY_URL, status_code=200, json=COPY_RESPONSE)
+    result = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert result.lineage_edge_id == "edge-1"
+
+
+def test_copy_refusal_raises_copy_error_with_code(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=409,
+        json={
+            "detail": {
+                "code": "IDENTITY_TAKEN",
+                "message": "already held by another dataset",
+                "retryable": False,
+            }
+        },
+    )
+    with pytest.raises(CopyError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert excinfo.value.code is CopyErrorCode.IDENTITY_TAKEN
+    assert excinfo.value.retryable is False
+    assert excinfo.value.status_code == 409
+
+
+def test_copy_retryable_refusal_is_flagged(httpx_mock: HTTPXMock):
+    """503 LINEAGE_WRITE_FAILED is the one refusal worth retrying."""
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=503,
+        json={
+            "detail": {
+                "code": "LINEAGE_WRITE_FAILED",
+                "message": "nothing was written",
+                "retryable": True,
+            }
+        },
+    )
+    with pytest.raises(CopyError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert excinfo.value.retryable is True
+
+
+def test_copy_error_keeps_an_unknown_code_as_a_string(httpx_mock: HTTPXMock):
+    """A code this client predates still reaches the caller."""
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=400,
+        json={"detail": {"code": "FUTURE_CODE", "message": "x", "retryable": False}},
+    )
+    with pytest.raises(CopyError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert excinfo.value.code == "FUTURE_CODE"
+
+
+def test_copy_request_forbids_unknown_fields():
+    """extra='forbid' mirrors the server, so a stray key fails before the round trip."""
+    with pytest.raises(PydanticValidationError):
+        DatasetCopyRequest(
+            **{**COPY_REQUEST.model_dump(), "governance": {"is_pii": False}}
+        )
+
+
+async def test_async_copy(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=COPY_URL, status_code=201, json=COPY_RESPONSE)
+    async with _async_client() as client:
+        result = await client.copy("uuid-1", COPY_REQUEST, copy_type=CopyType.mirror)
+    assert result.dataset_id == "uuid-copy"
+    assert httpx_mock.get_request().url.params["copy_type"] == "mirror"

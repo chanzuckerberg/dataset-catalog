@@ -63,14 +63,42 @@ class CollectionResponse(CollectionRequest):
     )
 
 
-class DatasetEntryResponse(BaseModel):
+class CollectionEntryRequest(BaseModel):
+    """Optional body for entry membership PUTs; carries entry-level metadata."""
+
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Arbitrary key-value metadata for this entry"
+    )
+
+
+class _CollectionEntryBase(BaseModel):
+    """Membership facts shared by both kinds of collection entry.
+
+    The three fields describe the membership, not the member: when the entry
+    was added to the collection and any metadata attached to it there. They
+    are left optional because a deployment predating them omits them, and a
+    client pinned ahead of the API still has to read its collections.
+    """
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Entry-level metadata for this membership"
+    )
+    created_at: datetime.datetime | None = Field(
+        default=None, description="Timestamp when the entry was added to the collection"
+    )
+    last_modified_at: datetime.datetime | None = Field(
+        default=None, description="Timestamp when the entry was last updated"
+    )
+
+
+class DatasetEntryResponse(_CollectionEntryBase):
     """A dataset child entry within a collection."""
 
     entry_type: Literal["dataset"] = "dataset"
     entry: DatasetResponse = Field(description="The dataset record")
 
 
-class ChildCollectionEntryResponse(BaseModel):
+class ChildCollectionEntryResponse(_CollectionEntryBase):
     """A sub-collection child entry within a collection."""
 
     entry_type: Literal["collection"] = "collection"

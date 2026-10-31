@@ -33,6 +33,7 @@ class DatasetModality(str, enum.Enum):
 class DatasetType(str, enum.Enum):
     raw = "raw"
     processed = "processed"
+    analysis = "analysis"
 
 
 class AuditLogEventType(str, enum.Enum):
@@ -117,7 +118,7 @@ class _DatasetBase(BaseModel):
         default=True, description="Whether this is the latest version of the dataset"
     )
     record_schema_version: str | None = Field(
-        default="v1.6.0",
+        default="v1.7.0",
         description="Version of the record schema used for this dataset",
     )
     metadata_schema: list[str] | None = Field(
@@ -308,6 +309,15 @@ class DatasetAuditLogResponse(BaseModel):
     event_type: AuditLogEventType = Field(description="Type of audit event")
     actor: str | None = Field(
         default=None, description="Token ID of the actor that triggered the event"
+    )
+    actor_name: str | None = Field(
+        default=None, description="Name of the user who owns the acting token"
+    )
+    actor_email: str | None = Field(
+        default=None, description="Email of the user who owns the acting token"
+    )
+    actor_team: str | None = Field(
+        default=None, description="Team of the user who owns the acting token"
     )
     timestamp: datetime.datetime = Field(
         description="Logical timestamp when the event occurred"

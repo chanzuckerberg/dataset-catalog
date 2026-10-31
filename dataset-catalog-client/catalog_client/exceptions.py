@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from catalog_client.models.copy import CopyErrorCode
+
 if TYPE_CHECKING:
     from catalog_client.models.dataset import DatasetRef
 
@@ -52,6 +54,28 @@ class CatalogServerError(CatalogHTTPError):
     """5xx — unexpected server error."""
 
 
+class CopyError(CatalogHTTPError):
+    """A copy was refused, with the machine-readable reason the route returns.
+
+    The copy route answers a refusal with an object `detail` rather than the
+    string every other route uses, because the caller is expected to branch
+    on `code` and to retry only when `retryable` says a retry can help. The
+    code is kept as the raw string when the server sends one this client
+    does not know, so an unrecognised reason still reaches the caller
+    instead of failing to parse.
+    """
+
+    def __init__(self, status_code: int, detail: dict) -> None:
+        raw_code = detail.get("code")
+        try:
+            self.code: CopyErrorCode | str | None = CopyErrorCode(raw_code)
+        except ValueError:
+            self.code = raw_code
+        self.message: str = detail.get("message", "")
+        self.retryable: bool = bool(detail.get("retryable"))
+        super().__init__(status_code, detail)
+
+
 class CatalogConnectionError(CatalogError):
     """Network-level failure (wraps httpx transport errors)."""
 
@@ -78,8 +102,25 @@ class DuplicateDatasetError(CatalogError):
         )
 
 
+def _structured_detail(response: httpx.Response) -> dict | None:
+    """Return the `detail` object of a refusal that carries one, else None."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict) and "code" in detail and "retryable" in detail:
+        return detail
+    return None
+
+
 def raise_for_status(response: httpx.Response) -> None:
     """Raise an appropriate CatalogError for non-2xx responses."""
+    if response.is_success:
+        return
+    structured = _structured_detail(response)
+    if structured is not None:
+        raise CopyError(response.status_code, structured)
     if response.status_code == 401:
         raise AuthenticationError(401, response.json().get("detail", "Unauthorized"))
     if response.status_code == 404:

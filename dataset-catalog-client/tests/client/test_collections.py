@@ -1,3 +1,4 @@
+import json
 import re
 
 import httpx
@@ -268,3 +269,75 @@ async def test_async_add_and_remove_collection(httpx_mock: HTTPXMock):
         added = await client.add_collection("col-1", "col-2")
         assert added.id == "col-1"
         await client.remove_collection("col-1", "col-2")
+
+
+# --- Entry-level metadata ---
+
+
+def test_add_dataset_sends_no_body_without_metadata(httpx_mock: HTTPXMock):
+    """An omitted body is not an empty one: {} would clear existing metadata."""
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/datasets/ds-1", json=COLLECTION_RESPONSE
+    )
+    _sync_client().add_dataset("col-1", "ds-1")
+    assert httpx_mock.get_request().content == b""
+
+
+def test_add_dataset_sends_entry_metadata(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/datasets/ds-1", json=COLLECTION_RESPONSE
+    )
+    _sync_client().add_dataset("col-1", "ds-1", metadata={"role": "train"})
+    assert json.loads(httpx_mock.get_request().content) == {
+        "metadata": {"role": "train"}
+    }
+
+
+def test_add_collection_sends_entry_metadata(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/collections/col-2", json=COLLECTION_RESPONSE
+    )
+    _sync_client().add_collection("col-1", "col-2", metadata={"order": 2})
+    assert json.loads(httpx_mock.get_request().content) == {"metadata": {"order": 2}}
+
+
+def test_entries_parse_membership_fields(httpx_mock: HTTPXMock):
+    entry = {
+        **DATASET_ENTRY,
+        "metadata": {"role": "train"},
+        "created_at": "2024-02-01T00:00:00Z",
+        "last_modified_at": "2024-02-02T00:00:00Z",
+    }
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}collections/col-1/entries\?.*"),
+        json={"total": 1, "limit": 100, "offset": 0, "results": [entry]},
+    )
+    page = _sync_client().list_entries("col-1")
+    parsed = page.results[0]
+    assert parsed.metadata == {"role": "train"}
+    assert parsed.created_at.year == 2024
+    assert parsed.last_modified_at.day == 2
+
+
+def test_entries_tolerate_a_deployment_without_membership_fields(
+    httpx_mock: HTTPXMock,
+):
+    """A client pinned ahead of the API still reads its collections."""
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}collections/col-1/entries\?.*"),
+        json={"total": 1, "limit": 100, "offset": 0, "results": [DATASET_ENTRY]},
+    )
+    parsed = _sync_client().list_entries("col-1").results[0]
+    assert parsed.metadata == {}
+    assert parsed.created_at is None
+
+
+async def test_async_add_dataset_sends_entry_metadata(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}collections/col-1/datasets/ds-1", json=COLLECTION_RESPONSE
+    )
+    async with _async_client() as client:
+        await client.add_dataset("col-1", "ds-1", metadata={"role": "eval"})
+    assert json.loads(httpx_mock.get_request().content) == {
+        "metadata": {"role": "eval"}
+    }

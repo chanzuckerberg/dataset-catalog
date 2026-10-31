@@ -13,6 +13,18 @@ class AssetType(str, enum.Enum):
     folder = "folder"
 
 
+class LocationScope(str, enum.Enum):
+    """How a registered location counts as a match when resolving a URI.
+
+    Matching is on whole path segments and is case-sensitive, so
+    `s3://bkt/proj` never matches `s3://bkt/project-2`.
+    """
+
+    exact = "exact"
+    ancestor = "ancestor"
+    descendant = "descendant"
+
+
 class StoragePlatform(str, enum.Enum):
     s3 = "s3"
     sf_hpc = "sf_hpc"
