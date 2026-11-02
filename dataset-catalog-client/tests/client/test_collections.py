@@ -332,6 +332,20 @@ def test_entries_tolerate_a_deployment_without_membership_fields(
     assert parsed.created_at is None
 
 
+def test_entries_tolerate_a_null_metadata_column(httpx_mock: HTTPXMock):
+    """A NULL JSONB column arrives as an explicit null, not an absent key."""
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}collections/col-1/entries\?.*"),
+        json={
+            "total": 1,
+            "limit": 100,
+            "offset": 0,
+            "results": [{**DATASET_ENTRY, "metadata": None}],
+        },
+    )
+    assert _sync_client().list_entries("col-1").results[0].metadata == {}
+
+
 async def test_async_add_dataset_sends_entry_metadata(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         url=f"{BASE}collections/col-1/datasets/ds-1", json=COLLECTION_RESPONSE
