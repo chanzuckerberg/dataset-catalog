@@ -7,7 +7,7 @@ import enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from catalog_client.models.asset import AssetType, StoragePlatform
+from catalog_client.models.asset import StoragePlatform, _DataAssetBase
 
 
 class CopyType(str, enum.Enum):
@@ -60,13 +60,15 @@ class CopyProvenance(BaseModel):
     )
 
 
-class CopyEntry(BaseModel):
-    """One asset at the destination, and the source asset it is a copy of."""
+class CopyEntry(_DataAssetBase):
+    """One asset at the destination, and the source asset it is a copy of.
 
-    location_uri: str = Field(
-        description="Full URI of the asset at the destination, including scheme and path"
-    )
-    asset_type: AssetType = Field(description="Whether the asset is a file or folder")
+    A destination asset is a data asset, so it carries the same fields as
+    one, plus the two paths that tie it to the transfer. It does not take
+    the glob patterns on `DataAssetRequest`: the copy route does not define
+    them.
+    """
+
     storage_platform: StoragePlatform = Field(
         description="Storage backend holding the bytes; must be the platform the request names"
     )
@@ -76,28 +78,6 @@ class CopyEntry(BaseModel):
     source_relative_path: str | None = Field(
         default=None,
         description="The asset's path within the source dataset, below the source's common root. Checked against the source, not stored; omit it for an asset the destination holds and the source never did",
-    )
-    encoding: str | None = Field(
-        default=None, description="Content encoding of the asset (e.g. 'gzip')"
-    )
-    size_bytes: int | None = Field(
-        default=None, description="Size of the asset in bytes"
-    )
-    checksum: str | None = Field(
-        default=None, description="Hash digest of the asset contents"
-    )
-    checksum_alg: str | None = Field(
-        default=None,
-        description="Algorithm used to compute the checksum (e.g. 'crc32', 'blake3')",
-    )
-    file_format: str | None = Field(
-        default=None, description="File format, lowercase (e.g. 'parquet', 'fasta')"
-    )
-    description: str | None = Field(
-        default=None, description="Human-readable description of the asset"
-    )
-    file_count: int | None = Field(
-        default=None, description="Number of files in the folder (folder assets only)"
     )
 
 

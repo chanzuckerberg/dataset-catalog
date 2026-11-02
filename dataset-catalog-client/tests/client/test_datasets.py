@@ -815,3 +815,17 @@ def test_response_does_not_invent_a_schema_version(httpx_mock: HTTPXMock):
     body = {k: v for k, v in DATASET_RESPONSE.items() if k != "record_schema_version"}
     httpx_mock.add_response(url=DATASETS_URL, json=body)
     assert _sync_client().get("uuid-1").record_schema_version is None
+
+
+def test_copy_entry_is_a_data_asset_without_the_glob_fields():
+    """CopyEntry shares DataAssetRequest's fields, but the copy route defines
+    no include/exclude globs — inheriting them would send dead keys."""
+    from catalog_client.models.asset import DataAssetRequest, _DataAssetBase
+
+    assert issubclass(CopyEntry, _DataAssetBase)
+    assert issubclass(DataAssetRequest, _DataAssetBase)
+    shared = set(_DataAssetBase.model_fields)
+    assert shared <= set(CopyEntry.model_fields)
+    assert not shared & {"includes_pattern", "excludes_pattern"}
+    assert "includes_pattern" not in CopyEntry.model_fields
+    assert "excludes_pattern" not in CopyEntry.model_fields

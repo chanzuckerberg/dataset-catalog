@@ -37,8 +37,13 @@ class StoragePlatform(str, enum.Enum):
     other = "other"
 
 
-class DataAssetRequest(BaseModel):
-    """Asset fields supplied when creating or updating a dataset."""
+class _DataAssetBase(BaseModel):
+    """The fields the API carries wherever it describes a stored asset.
+
+    Shared by `DataAssetRequest` and the copy route's `CopyEntry`: the API
+    models those separately, but they describe the same thing and agree
+    field for field, so the definitions live here rather than twice.
+    """
 
     location_uri: str = Field(
         description="URI or path to the data asset (file or directory)"
@@ -71,6 +76,11 @@ class DataAssetRequest(BaseModel):
         default=None,
         description="Number of files in the asset (applicable for folders)",
     )
+
+
+class DataAssetRequest(_DataAssetBase):
+    """Asset fields supplied when creating or updating a dataset."""
+
     includes_pattern: str | None = Field(
         default=None,
         description="Glob pattern for files to include (applicable for folders)",
