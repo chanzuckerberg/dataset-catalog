@@ -65,7 +65,13 @@ class CopyEntry(_DataAssetBase):
     one, plus the two paths that tie it to the transfer. It does not take
     the glob patterns on `DataAssetRequest`: the copy route does not define
     them.
+
+    Extras are forbidden as they are on the request. The request is dumped
+    with `exclude_none=True`, so a misspelled `source_relative_path` would
+    otherwise be dropped and read as an asset the source never held.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     storage_platform: StoragePlatform = Field(
         description="Storage backend holding the bytes; must be the platform the request names"

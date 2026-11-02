@@ -715,6 +715,18 @@ def test_copy_error_keeps_an_unknown_code_as_a_string(httpx_mock: HTTPXMock):
     assert excinfo.value.code == "FUTURE_CODE"
 
 
+def test_copy_entry_forbids_unknown_fields():
+    """A typo must fail here: exclude_none would drop it into a valid request."""
+    with pytest.raises(PydanticValidationError):
+        CopyEntry(
+            location_uri="s3://czi-public/10053/tomogram.zarr",
+            asset_type=AssetType.folder,
+            storage_platform=StoragePlatform.s3,
+            relative_path="tomogram.zarr",
+            source_relative_pth="tomogram.zarr",
+        )
+
+
 def test_copy_request_forbids_unknown_fields():
     """extra='forbid' mirrors the server, so a stray key fails before the round trip."""
     with pytest.raises(PydanticValidationError):
