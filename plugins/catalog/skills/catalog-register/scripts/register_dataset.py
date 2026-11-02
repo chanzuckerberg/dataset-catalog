@@ -33,8 +33,6 @@ catalog, and reports mapping COVERAGE (which source fields were used, dropped,
 or silently left behind).
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sys

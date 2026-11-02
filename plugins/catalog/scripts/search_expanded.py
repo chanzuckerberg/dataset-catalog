@@ -49,8 +49,6 @@ Configuration comes from the environment (same as the ``catalog`` CLI):
     CATALOG_API_TOKEN  API token (issue at <catalog>/tokens in a logged-in browser)
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

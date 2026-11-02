@@ -1,7 +1,5 @@
 """Asset-level filter evaluation against :class:`FilterCondition` operator dicts."""
 
-from __future__ import annotations
-
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator

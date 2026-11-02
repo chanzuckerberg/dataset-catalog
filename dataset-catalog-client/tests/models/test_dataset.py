@@ -11,6 +11,8 @@ from catalog_client.models.asset import (
     StoragePlatform,
 )
 from catalog_client.models.dataset import (
+    AuditLogEventType,
+    DatasetAuditLogResponse,
     DatasetModality,
     DatasetRef,
     DatasetRequest,
@@ -135,7 +137,7 @@ def test_dataset_create_is_latest_defaults_false():
 
 
 def test_dataset_defaults_to_current_schema_version():
-    assert _minimal_create().record_schema_version == "v1.6.0"
+    assert _minimal_create().record_schema_version == "v1.7.0"
 
 
 def test_dataset_modality_enum():
@@ -200,3 +202,26 @@ def test_dataset_response_tolerates_missing_data_steward():
     }
     ds = DatasetResponse.model_validate(data)
     assert ds.governance.data_steward is None
+
+
+def test_dataset_type_accepts_analysis():
+    """Added in v1.7.0, alongside raw and processed."""
+    assert DatasetType("analysis") is DatasetType.analysis
+
+
+def test_audit_log_carries_resolved_actor_identity():
+    """actor is the token id; the actor_* fields name the human behind it."""
+    entry = DatasetAuditLogResponse(
+        id="audit-1",
+        dataset_id="ds-1",
+        event_type=AuditLogEventType.created,
+        actor="tok-1",
+        actor_name="A Person",
+        actor_email="person@example.com",
+        actor_team="data",
+        timestamp="2024-01-01T00:00:00Z",
+        db_created_at="2024-01-01T00:00:00Z",
+        snapshot={},
+    )
+    assert entry.actor_email == "person@example.com"
+    assert entry.actor_team == "data"

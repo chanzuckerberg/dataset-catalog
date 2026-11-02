@@ -1,7 +1,5 @@
 """RegistrationRequest dataclass and LineageSpec."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from catalog_client.models.asset import DataAssetRequest

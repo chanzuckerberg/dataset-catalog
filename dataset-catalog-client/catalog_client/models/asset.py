@@ -1,7 +1,5 @@
 """Data asset models."""
 
-from __future__ import annotations
-
 import datetime
 import enum
 
@@ -11,6 +9,18 @@ from pydantic import BaseModel, Field
 class AssetType(str, enum.Enum):
     file = "file"
     folder = "folder"
+
+
+class LocationScope(str, enum.Enum):
+    """How a registered location counts as a match when resolving a URI.
+
+    Matching is on whole path segments and is case-sensitive, so
+    `s3://bkt/proj` never matches `s3://bkt/project-2`.
+    """
+
+    exact = "exact"
+    ancestor = "ancestor"
+    descendant = "descendant"
 
 
 class StoragePlatform(str, enum.Enum):
@@ -25,8 +35,13 @@ class StoragePlatform(str, enum.Enum):
     other = "other"
 
 
-class DataAssetRequest(BaseModel):
-    """Asset fields supplied when creating or updating a dataset."""
+class _DataAssetBase(BaseModel):
+    """The fields the API carries wherever it describes a stored asset.
+
+    Shared by `DataAssetRequest` and the copy route's `CopyEntry`: the API
+    models those separately, but they describe the same thing and agree
+    field for field, so the definitions live here rather than twice.
+    """
 
     location_uri: str = Field(
         description="URI or path to the data asset (file or directory)"
@@ -59,6 +74,11 @@ class DataAssetRequest(BaseModel):
         default=None,
         description="Number of files in the asset (applicable for folders)",
     )
+
+
+class DataAssetRequest(_DataAssetBase):
+    """Asset fields supplied when creating or updating a dataset."""
+
     includes_pattern: str | None = Field(
         default=None,
         description="Glob pattern for files to include (applicable for folders)",

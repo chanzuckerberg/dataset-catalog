@@ -7,7 +7,9 @@ from catalog_client.models.governance import (
 )
 from catalog_client.models.metadata import (
     DatasetMetadata,
+    DataSummaryMetadata,
     ExperimentMetadata,
+    ObservationUnit,
     OntologyEntry,
     SampleMetadata,
 )
@@ -129,3 +131,15 @@ def test_data_quality_carries_report_and_metric_assets():
     assert q.metrics_assets[0]["name"] == "multiqc"
     assert q.metrics[0]["value"] == 0.12
     assert q.checks_skipped is None
+
+
+def test_data_summary_observation_unit_is_separate_from_sub_modality():
+    """Added in v1.7.0. A pseudobulk RNA-seq dataset is both at once."""
+    summary = DataSummaryMetadata(observation_unit="pseudobulk")
+    assert summary.observation_unit is ObservationUnit.pseudobulk
+
+
+def test_data_summary_is_combined_distinguishes_unset_from_false():
+    """Unset means unknown, so a search for False excludes it."""
+    assert DataSummaryMetadata().is_combined is None
+    assert DataSummaryMetadata(is_combined=False).is_combined is False

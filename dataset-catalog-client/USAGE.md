@@ -59,6 +59,10 @@ catalog facets --fields organism,tissue,assay,project
 catalog get 6f9d1c2e-...-uuid --lineage --collections
 catalog get my-dataset --version 1.0.0 --project atlas
 
+# Which dataset is registered at this path?
+catalog resolve s3://bucket/proj/raw/sample.h5ad
+catalog resolve /hpc/projects/x/run-01 --scope ancestor --storage-platform sf_hpc
+
 # Exact-coordinate listing (compact summaries; --full for complete records)
 catalog list --project atlas --canonical-id my-dataset --all-versions
 
@@ -236,7 +240,7 @@ The builder exposes further optional methods:
 |--------|-------------|
 | `.described(text)` | Set a free-text description |
 | `.as_latest(bool)` | Mark as the latest version (default `True`) |
-| `.of_type(DatasetType)` | Set `dataset_type` to `raw` or `processed` |
+| `.of_type(DatasetType)` | Set `dataset_type` to `raw`, `processed` or `analysis` |
 | `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
 | `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
 | `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
@@ -365,6 +369,10 @@ results = client.datasets.search(
     cohort="cohort-a",                         # from metadata.experiment.cohort
     file_format="fastq",                       # matches a dataset location
     storage_platform="s3",                     # matches a dataset location
+    dataset_type=DatasetType.analysis,         # raw, processed or analysis
+    observation_unit=ObservationUnit.bulk,     # from metadata.data_summary
+    is_combined=False,                         # see note below
+    uri_prefix="s3://bucket/project",          # datasets with a file under this prefix
     facets=["modality", "project"],            # repeatable; returns bucket counts
     fields=["license", "cell_count"],          # extra fields on each hit
     sort=DatasetSortOption.relevance,          # optional; omit to use the server default
@@ -386,6 +394,12 @@ results = client.datasets.search(q="rna-seq liver", hydrate=True, limit=100)
 for record in results.results:
     print(record.id, record.metadata)
 ```
+
+`is_combined` is producer-set, so `False` returns only datasets explicitly marked
+single-acquisition — never those that left the flag unset. `uri_prefix` matches on
+whole path segments (`s3://bucket/proj` does not match `s3://bucket/project-2`); it
+is the lightweight counterpart to `resolve(scope=LocationScope.descendant)`, which
+returns full records instead of hits.
 
 **Search pages by cursor only** — it has no `offset` parameter. Follow
 `next_cursor` until it comes back `None`, or let `iter_search()` walk it:
@@ -434,6 +448,141 @@ from catalog_client import DatasetRef
 
 ref = DatasetRef(canonical_id="my-rna-seq-dataset", version="1.0.0", project="atlas")
 dataset = client.datasets.get(ref)
+```
+
+### Resolve a URI to its datasets
+
+Answers "which dataset is this file part of?" — the reverse of reading `locations`
+off a record. Every hit is a full `DatasetResponse`.
+
+```python
+from catalog_client import LocationScope, StoragePlatform
+
+# The dataset registered at exactly this URI
+page = client.datasets.resolve("s3://bucket/proj/raw/sample.h5ad")
+
+# Walk up: a deep object key finds the dataset registered on a parent
+# directory, closest match first
+page = client.datasets.resolve(
+    "s3://bucket/proj/raw/sample.h5ad", scope=LocationScope.ancestor
+)
+
+# Walk down: everything registered beneath a prefix, in id order
+page = client.datasets.resolve(
+    "s3://bucket/proj", scope=LocationScope.descendant, limit=100
+)
+for dataset in page.results:
+    print(dataset.id, dataset.canonical_id)
+```
+
+Pass `storage_platform` whenever the URI is a bare POSIX path — every HPC cluster
+mounts its own `/hpc/projects/x`, so without it the path resolves across all of them:
+
+```python
+page = client.datasets.resolve(
+    "/hpc/projects/x/run-01", storage_platform=StoragePlatform.sf_hpc
+)
+```
+
+Paging is by cursor only, capped at 100 per page. `iter_resolve()` walks the whole
+result set for you:
+
+```python
+for dataset in client.datasets.iter_resolve("s3://bucket/proj", scope=LocationScope.descendant):
+    print(dataset.id)
+```
+
+### Register a copy of a dataset
+
+Records the catalog side of a transfer that has *already happened* — the catalog
+never moves bytes. The destination record and the `copy_of` lineage edge tying it
+to the source are written in one transaction, so a copy and the record of whose
+copy it is are never stored apart.
+
+`copy_type` is required and never inferred. `fork` gives the copy an identity of
+its own; `mirror` (another location of the same dataset) is not enabled yet and
+returns `COPY_TYPE_NOT_ENABLED`.
+
+```python
+from catalog_client import (
+    AssetType, CopyEntry, CopyProvenance, CopyType,
+    DatasetCopyRequest, StoragePlatform,
+)
+
+result = client.datasets.copy(
+    "source-dataset-uuid",
+    DatasetCopyRequest(
+        project="CryoET Data Portal",
+        canonical_id="DS-10053/dga2017-01-14-3/CZCDP-10045",
+        version="2.0.0",
+        storage_platform=StoragePlatform.s3,
+        root_uri="s3://czi-public/10053/dga2017-01-14-3/",
+        entries=[
+            CopyEntry(
+                location_uri="s3://czi-public/10053/dga2017-01-14-3/tomogram.zarr",
+                relative_path="tomogram.zarr",
+                source_relative_path="tomogram.zarr",
+                asset_type=AssetType.folder,
+                storage_platform=StoragePlatform.s3,
+                file_format="ome-zarr v0.4",
+                size_bytes=4294967296,
+                checksum_alg="crc32",
+                checksum="9f2a1c04",
+            )
+        ],
+        lineage_metadata=CopyProvenance(
+            hermes_job="job-8f21",
+            requested_by="someone@chanzuckerberg.com",
+        ),
+    ),
+    copy_type=CopyType.fork,
+)
+print(result.dataset_id, result.lineage_edge_id)
+```
+
+There is no `governance` field: a copy inherits the source's, because a transfer
+does not widen access. Sending one is a `422`.
+
+**Entries need not cover the whole source.** `source_relative_path` names a source
+asset by its path below the source's common root; it is checked, not stored. Omit it
+for an asset the destination holds and the source never did, such as a manifest the
+transfer wrote. Naming a path the source lacks is an error, so a typo does not
+quietly become destination-only content.
+
+**Replaying is safe.** The destination identity is the idempotency key, so a replay
+returns the same ids and writes nothing. Correct a registered copy with
+`datasets.update()`, not by replaying with changed entries.
+
+A refusal raises `CopyError`, which carries the code to branch on and says whether
+retrying can help:
+
+```python
+from catalog_client import CopyError, CopyErrorCode
+
+try:
+    client.datasets.copy(source_id, request, copy_type=CopyType.fork)
+except CopyError as exc:
+    if exc.code is CopyErrorCode.IDENTITY_TAKEN:
+        ...          # pick a different version
+    elif exc.retryable:
+        ...          # only LINEAGE_WRITE_FAILED; everything else needs a change
+```
+
+A refusal is still the status code it arrived as. `CopyAuthenticationError` (401) is
+also an `AuthenticationError`, `CopyNotFoundError` (404) a `NotFoundError`,
+`CopyValidationError` (422) a `ValidationError`, and `CopyServerError` (5xx, including
+the retryable `LINEAGE_WRITE_FAILED` and the `501` mirror refusal) a
+`CatalogServerError` — so existing handlers and retry wrappers built on those keep
+working, and `CopyError` is there when you want the code:
+
+```python
+try:
+    client.datasets.copy(source_id, request, copy_type=CopyType.fork)
+except NotFoundError:
+    ...              # the source was tombstoned out from under us
+except CatalogServerError as exc:
+    if getattr(exc, "retryable", False):
+        ...          # LINEAGE_WRITE_FAILED — nothing was written, retry as-is
 ```
 
 ### Update a dataset
@@ -515,6 +664,14 @@ col = client.collections.add_dataset(collection_id, dataset_id)
 client.collections.remove_dataset(collection_id, dataset_id)  # returns None
 ```
 
+Pass `metadata=` to attach key-value metadata to the *membership* — facts about the
+dataset's role in this collection, not about the dataset itself. Omitting it leaves
+any existing entry metadata untouched; passing `{}` clears it.
+
+```python
+client.collections.add_dataset(collection_id, dataset_id, metadata={"split": "train"})
+```
+
 ### Child collections
 
 Collections can nest. `add_collection` returns the updated parent; `remove_collection`
@@ -522,6 +679,7 @@ returns `None`.
 
 ```python
 client.collections.add_collection(parent_id, child_id)
+client.collections.add_collection(parent_id, child_id, metadata={"order": 2})
 client.collections.remove_collection(parent_id, child_id)  # returns None
 ```
 
@@ -535,7 +693,8 @@ entries = client.collections.list_entries(
     collection_id, entry_type=CollectionChildType.dataset, offset=0, limit=100
 )
 for e in entries.results:
-    print(e.entry_type, e.entry.id)
+    # entry_* fields describe the membership; e.entry is the member record
+    print(e.entry_type, e.entry.id, e.metadata, e.created_at)
 
 # Parent collections
 parents = client.collections.list_parents(collection_id, offset=0, limit=100)
@@ -955,10 +1114,14 @@ sensitivity unknown.
 | Enum | Values |
 |---|---|
 | `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `text`, `unknown` |
-| `DatasetType` | `raw`, `processed` |
+| `DatasetType` | `raw`, `processed`, `analysis` |
 | `AssetType` | `file`, `folder` |
 | `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
+| `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |
+| `LocationScope` | `exact`, `ancestor`, `descendant` — `datasets.resolve()` |
+| `CopyType` | `fork`, `mirror` — `datasets.copy()`; `mirror` is not enabled yet |
+| `CopyErrorCode` | the nine refusal codes on `CopyError.code` |
 | `DatasetSortOption` | `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest` — `datasets.search()`; unset omits the param |
 | `DatasetListSortOption` | `last_modified`, `newest`, `oldest` — `datasets.list()`; unset omits the param |

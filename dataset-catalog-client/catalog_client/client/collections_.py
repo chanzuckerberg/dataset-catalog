@@ -1,11 +1,10 @@
 """Collection sub-client (sync and async)."""
 
-from __future__ import annotations
-
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
     ChildCollectionEntryResponse,
     CollectionChildType,
+    CollectionEntryRequest,
     CollectionRequest,
     CollectionResponse,
     DatasetEntryResponse,
@@ -13,6 +12,18 @@ from catalog_client.models.collection import (
 from catalog_client.models.pagination import PaginatedResponse
 
 _PREFIX = "collections"
+
+
+def _entry_body(metadata: dict | None) -> dict | None:
+    """Membership metadata as a request body, or None to send no body at all.
+
+    The route's body is optional, and an omitted one is not the same as an
+    empty object: sending `{"metadata": {}}` would clear metadata already on
+    the membership.
+    """
+    if metadata is None:
+        return None
+    return CollectionEntryRequest(metadata=metadata).model_dump(mode="json")
 
 
 def _parse_entry(
@@ -60,18 +71,32 @@ class CollectionClient(_SyncBase):
     def delete(self, collection_id: str) -> None:
         self._delete(f"{_PREFIX}/{collection_id}")
 
-    def add_dataset(self, collection_id: str, dataset_id: str) -> CollectionResponse:
-        response = self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
+    def add_dataset(
+        self,
+        collection_id: str,
+        dataset_id: str,
+        *,
+        metadata: dict | None = None,
+    ) -> CollectionResponse:
+        response = self._put(
+            f"{_PREFIX}/{collection_id}/datasets/{dataset_id}",
+            json=_entry_body(metadata),
+        )
         return CollectionResponse.model_validate(response.json())
 
     def remove_dataset(self, collection_id: str, dataset_id: str) -> None:
         self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
 
     def add_collection(
-        self, collection_id: str, child_collection_id: str
+        self,
+        collection_id: str,
+        child_collection_id: str,
+        *,
+        metadata: dict | None = None,
     ) -> CollectionResponse:
         response = self._put(
-            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}",
+            json=_entry_body(metadata),
         )
         return CollectionResponse.model_validate(response.json())
 
@@ -158,19 +183,31 @@ class AsyncCollectionClient(_AsyncBase):
         await self._delete(f"{_PREFIX}/{collection_id}")
 
     async def add_dataset(
-        self, collection_id: str, dataset_id: str
+        self,
+        collection_id: str,
+        dataset_id: str,
+        *,
+        metadata: dict | None = None,
     ) -> CollectionResponse:
-        response = await self._put(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
+        response = await self._put(
+            f"{_PREFIX}/{collection_id}/datasets/{dataset_id}",
+            json=_entry_body(metadata),
+        )
         return CollectionResponse.model_validate(response.json())
 
     async def remove_dataset(self, collection_id: str, dataset_id: str) -> None:
         await self._delete(f"{_PREFIX}/{collection_id}/datasets/{dataset_id}")
 
     async def add_collection(
-        self, collection_id: str, child_collection_id: str
+        self,
+        collection_id: str,
+        child_collection_id: str,
+        *,
+        metadata: dict | None = None,
     ) -> CollectionResponse:
         response = await self._put(
-            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}"
+            f"{_PREFIX}/{collection_id}/collections/{child_collection_id}",
+            json=_entry_body(metadata),
         )
         return CollectionResponse.model_validate(response.json())
 

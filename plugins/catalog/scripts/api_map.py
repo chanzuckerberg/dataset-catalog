@@ -17,8 +17,6 @@ header (never on a command line). Config comes from CATALOG_API_URL /
 CATALOG_API_TOKEN, same as every bundled script.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

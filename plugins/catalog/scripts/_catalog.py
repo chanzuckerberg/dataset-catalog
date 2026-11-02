@@ -12,8 +12,6 @@ the process list or shell history.
                        <catalog>/tokens in a logged-in browser (SSO-gated).
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re

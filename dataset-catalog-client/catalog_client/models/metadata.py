@@ -1,10 +1,22 @@
 """Biological metadata models: sample, experiment, data summary."""
 
-from __future__ import annotations
-
+import enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ObservationUnit(str, enum.Enum):
+    """What one observation in a dataset represents.
+
+    Orthogonal to `sub_modality`, which names the assay: a pseudobulk
+    RNA-seq dataset carries sub_modality "RNA-seq" and observation_unit
+    "pseudobulk".
+    """
+
+    single_cell = "single_cell"
+    pseudobulk = "pseudobulk"
+    bulk = "bulk"
 
 
 class OntologyEntry(BaseModel):
@@ -209,6 +221,14 @@ class DataSummaryMetadata(BaseModel):
     )
     read_confidence: float | None = Field(
         default=None, description="Quality score or confidence measure for reads"
+    )
+    observation_unit: ObservationUnit | None = Field(
+        default=None,
+        description="Sequencing and imaging. What one observation represents. Leave unset where observations are not the unit, such as FASTQs",
+    )
+    is_combined: bool | None = Field(
+        default=None,
+        description="All modalities. True when the data combines more than one data acquisition; combining files from a single acquisition does not count. Unset means unknown, so a search for False returns only datasets explicitly marked single-acquisition",
     )
 
     # Imaging

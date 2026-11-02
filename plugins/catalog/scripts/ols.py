@@ -28,8 +28,6 @@ live in exactly one place.
     python ols.py children UBERON:0002107 --ontology uberon --hierarchical
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

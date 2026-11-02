@@ -1,7 +1,5 @@
 """Public types for the manifest package."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Iterator, overload
 

@@ -1,12 +1,16 @@
 """Dataset sub-client (sync and async)."""
 
-from __future__ import annotations
-
 import datetime
 from collections.abc import AsyncIterator, Iterator
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
+from catalog_client.models.asset import LocationScope, StoragePlatform
+from catalog_client.models.copy import (
+    CopyType,
+    DatasetCopyRequest,
+    DatasetCopyResponse,
+)
 from catalog_client.models.dataset import (
     AuditLogEventType,
     DatasetAuditLogResponse,
@@ -19,8 +23,10 @@ from catalog_client.models.dataset import (
     DatasetSearchPage,
     DatasetSearchResponse,
     DatasetSortOption,
+    DatasetType,
     DatasetWithRelationsResponse,
 )
+from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedResponse
 
 _PREFIX = "datasets"
@@ -33,6 +39,10 @@ _LIST_MAX_LIMIT = 500
 # `hydrate=True` re-reads every hit from the database, so the server caps the
 # page size lower than the 1000 an unhydrated search allows.
 _HYDRATED_MAX_LIMIT = 100
+
+# Every resolve hit is a full dataset record, which is what holds its page
+# size below the ceiling an unhydrated search allows.
+_RESOLVE_MAX_LIMIT = 100
 
 # Depth past which offset paging is refused in favour of a keyset cursor. The
 # server accepts deeper offsets, but it walks and discards every skipped row,
@@ -170,6 +180,10 @@ def _build_search_params(
     cohort: str | None,
     file_format: str | None,
     storage_platform: str | None,
+    dataset_type: DatasetType | None,
+    observation_unit: ObservationUnit | None,
+    is_combined: bool | None,
+    uri_prefix: str | None,
     facets: list[str] | None,
     fields: list[str] | None,
     sort: DatasetSortOption | None,
@@ -198,6 +212,7 @@ def _build_search_params(
         "cohort": cohort,
         "file_format": file_format,
         "storage_platform": storage_platform,
+        "uri_prefix": uri_prefix,
         "cursor": cursor,
     }
     for key, value in optional.items():
@@ -205,14 +220,36 @@ def _build_search_params(
             params[key] = value
     if modality is not None:
         params["modality"] = modality.value
+    if dataset_type is not None:
+        params["dataset_type"] = dataset_type.value
+    if observation_unit is not None:
+        params["observation_unit"] = observation_unit.value
     if is_latest is not None:
         params["is_latest"] = is_latest
+    if is_combined is not None:
+        params["is_combined"] = is_combined
     if facets:
         params["facets"] = facets
     if fields:
         params["fields"] = fields
     if hydrate:
         params["hydrate"] = True
+    return params
+
+
+def _build_resolve_params(
+    uri: str,
+    scope: LocationScope,
+    storage_platform: StoragePlatform | None,
+    cursor: str | None,
+    limit: int,
+) -> dict:
+    _check_limit(limit, _RESOLVE_MAX_LIMIT, "datasets.resolve()")
+    params: dict = {"uri": uri, "scope": scope.value, "limit": limit}
+    if storage_platform is not None:
+        params["storage_platform"] = storage_platform.value
+    if cursor is not None:
+        params["cursor"] = cursor
     return params
 
 
@@ -352,6 +389,10 @@ class DatasetClient(_SyncBase):
         cohort: str | None = None,
         file_format: str | None = None,
         storage_platform: str | None = None,
+        dataset_type: DatasetType | None = None,
+        observation_unit: ObservationUnit | None = None,
+        is_combined: bool | None = None,
+        uri_prefix: str | None = None,
         facets: _FacetList | None = None,
         fields: _FacetList | None = None,
         sort: DatasetSortOption | None = None,
@@ -387,6 +428,10 @@ class DatasetClient(_SyncBase):
             cohort,
             file_format,
             storage_platform,
+            dataset_type,
+            observation_unit,
+            is_combined,
+            uri_prefix,
             facets,
             fields,
             sort,
@@ -416,6 +461,93 @@ class DatasetClient(_SyncBase):
             if following is None:
                 return
             cursor = following
+
+    def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> DatasetSearchResponse[DatasetResponse]:
+        """Resolve a file or directory URI to the dataset(s) registered at it.
+
+        By default the match is the URI itself. `scope=ancestor` walks *up*,
+        so a deep object key finds the dataset registered on a parent
+        directory, closest match first; `scope=descendant` walks *down* and
+        comes back in `id` order, since no match there outranks another.
+
+        Pass `storage_platform` whenever the URI is a bare POSIX path: every
+        HPC cluster mounts its own `/hpc/projects/x`, so without it the path
+        resolves across all of them.
+
+        Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
+        identical for the whole walk, or use `iter_resolve()`, which manages
+        the cursor for you.
+
+        A deployment predating this route answers `NotFoundError: Dataset
+        'resolve' not found` — the path falls through to the by-id route.
+        That is a missing endpoint, not an unregistered URI.
+        """
+        params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        response = self._get(f"{_PREFIX}/resolve", params=params)
+        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        limit: int = 50,
+    ) -> Iterator[DatasetResponse]:
+        """Walk every dataset the URI resolves to, following cursors until exhausted."""
+        cursor: str | None = None
+        while True:
+            page = self.resolve(
+                uri,
+                scope=scope,
+                storage_platform=storage_platform,
+                cursor=cursor,
+                limit=limit,
+            )
+            yield from page.results
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
+                return
+            cursor = following
+
+    def copy(
+        self,
+        dataset_id: str,
+        request: DatasetCopyRequest,
+        *,
+        copy_type: CopyType,
+    ) -> DatasetCopyResponse:
+        """Register the catalog side of a completed transfer of `dataset_id`.
+
+        Writes the destination and the `copy_of` edge tying it to the source
+        in one transaction, so a copy and the record of whose copy it is are
+        never written apart. `copy_type` is required — the catalog never
+        infers it from the destination or the body.
+
+        Replaying is safe: the destination identity is the idempotency key,
+        so a replay returns the same ids and writes nothing, whatever its
+        entries now say. Correct a registered copy with `update()`, not by
+        replaying with changed entries.
+
+        A refusal raises `CopyError`, whose `code` says why and whose
+        `retryable` says whether retrying the same request can help.
+        """
+        response = self._post(
+            f"{_PREFIX}/{dataset_id}/copy",
+            params={"copy_type": copy_type.value},
+            # exclude_none: lineage_metadata lands on the edge untouched, so a
+            # null the caller never set would be stored as one.
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return DatasetCopyResponse.model_validate(response.json())
 
     def history(
         self,
@@ -603,6 +735,10 @@ class AsyncDatasetClient(_AsyncBase):
         cohort: str | None = None,
         file_format: str | None = None,
         storage_platform: str | None = None,
+        dataset_type: DatasetType | None = None,
+        observation_unit: ObservationUnit | None = None,
+        is_combined: bool | None = None,
+        uri_prefix: str | None = None,
         facets: _FacetList | None = None,
         fields: _FacetList | None = None,
         sort: DatasetSortOption | None = None,
@@ -638,6 +774,10 @@ class AsyncDatasetClient(_AsyncBase):
             cohort,
             file_format,
             storage_platform,
+            dataset_type,
+            observation_unit,
+            is_combined,
+            uri_prefix,
             facets,
             fields,
             sort,
@@ -668,6 +808,94 @@ class AsyncDatasetClient(_AsyncBase):
             if following is None:
                 return
             cursor = following
+
+    async def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> DatasetSearchResponse[DatasetResponse]:
+        """Resolve a file or directory URI to the dataset(s) registered at it.
+
+        By default the match is the URI itself. `scope=ancestor` walks *up*,
+        so a deep object key finds the dataset registered on a parent
+        directory, closest match first; `scope=descendant` walks *down* and
+        comes back in `id` order, since no match there outranks another.
+
+        Pass `storage_platform` whenever the URI is a bare POSIX path: every
+        HPC cluster mounts its own `/hpc/projects/x`, so without it the path
+        resolves across all of them.
+
+        Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
+        identical for the whole walk, or use `iter_resolve()`, which manages
+        the cursor for you.
+
+        A deployment predating this route answers `NotFoundError: Dataset
+        'resolve' not found` — the path falls through to the by-id route.
+        That is a missing endpoint, not an unregistered URI.
+        """
+        params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        response = await self._get(f"{_PREFIX}/resolve", params=params)
+        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+
+    async def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = LocationScope.exact,
+        storage_platform: StoragePlatform | None = None,
+        limit: int = 50,
+    ) -> AsyncIterator[DatasetResponse]:
+        """Walk every dataset the URI resolves to, following cursors until exhausted."""
+        cursor: str | None = None
+        while True:
+            page = await self.resolve(
+                uri,
+                scope=scope,
+                storage_platform=storage_platform,
+                cursor=cursor,
+                limit=limit,
+            )
+            for result in page.results:
+                yield result
+            following = _next_cursor(page.next_cursor, cursor, len(page.results))
+            if following is None:
+                return
+            cursor = following
+
+    async def copy(
+        self,
+        dataset_id: str,
+        request: DatasetCopyRequest,
+        *,
+        copy_type: CopyType,
+    ) -> DatasetCopyResponse:
+        """Register the catalog side of a completed transfer of `dataset_id`.
+
+        Writes the destination and the `copy_of` edge tying it to the source
+        in one transaction, so a copy and the record of whose copy it is are
+        never written apart. `copy_type` is required — the catalog never
+        infers it from the destination or the body.
+
+        Replaying is safe: the destination identity is the idempotency key,
+        so a replay returns the same ids and writes nothing, whatever its
+        entries now say. Correct a registered copy with `update()`, not by
+        replaying with changed entries.
+
+        A refusal raises `CopyError`, whose `code` says why and whose
+        `retryable` says whether retrying the same request can help.
+        """
+        response = await self._post(
+            f"{_PREFIX}/{dataset_id}/copy",
+            params={"copy_type": copy_type.value},
+            # exclude_none: lineage_metadata lands on the edge untouched, so a
+            # null the caller never set would be stored as one.
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return DatasetCopyResponse.model_validate(response.json())
 
     async def history(
         self,

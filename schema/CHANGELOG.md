@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.6.0](#v160--current) | **Current** — active, default for new registrations |
+| [v1.7.0](#v170--current) | **Current** — active, default for new registrations |
+| [v1.6.0](#v160) | Supported for read |
 | [v1.5.0](#v150) | Supported for read |
 | [v1.4.0](#v140) | Supported for read |
 | [v1.3.0](#v130) | Supported for read |
@@ -19,10 +20,48 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.6.0 — Current
+## v1.7.0 — Current
 
 **Status:** Active. All new registrations default to this version. See
-[`v1.6.0/schema.md`](v1.6.0/schema.md).
+[`v1.7.0/schema.md`](v1.7.0/schema.md).
+
+### Added
+
+- **Dataset:** `dataset_type` accepts `analysis`, alongside `raw` and `processed`. An
+  analysis dataset is an interpretive result — output that answers a biological
+  question rather than carrying the measurement, such as differential expression
+  results. The distinction is what the data *means*, not what format it is in: an
+  analysis result and a processed matrix are both commonly H5AD, so format alone
+  cannot separate them.
+- **Data summary:** `observation_unit` — what one observation represents, one of
+  `single_cell`, `pseudobulk` or `bulk`. Validated against the enum, so a near-miss
+  spelling is a `422` rather than a value that silently never matches a filter. It is
+  separate from `sub_modality`, which stays the assay: a pseudobulk RNA-seq dataset
+  carries `sub_modality` `"RNA-seq"` and `observation_unit` `"pseudobulk"`. Leave it
+  unset where observations are not the unit, such as FASTQs.
+- **Data summary:** `is_combined` — whether the data combines more than one *data
+  acquisition*. Combining files from a single acquisition does not count, so a BAM
+  built from several FASTQs and a reference FASTA is not combined. Producer-set, so
+  unset means unknown, and a search for `false` returns only datasets explicitly
+  marked single-acquisition.
+
+Both data-summary fields are recommended, not required, and neither is backfilled.
+
+### Changed
+
+- **Dataset:** `record_schema_version` now defaults to `v1.7.0`.
+
+**Migration note.** Unlike the other enum additions in this schema's history,
+`dataset_type` is a native Postgres enum, so `analysis` ships a database migration. It
+is not reversible without data loss: Postgres cannot drop an enum value, so a downgrade
+rebuilds the type without `analysis` and the cast fails if any row still holds it.
+Reclassify those rows before downgrading rather than expecting them to be nulled.
+
+---
+
+## v1.6.0
+
+**Status:** Supported for read. See [`v1.6.0/schema.md`](v1.6.0/schema.md).
 
 ### Added
 
