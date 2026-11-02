@@ -81,8 +81,16 @@ class CopyError(CatalogHTTPError):
         super().__init__(status_code, detail)
 
 
+class CopyAuthenticationError(CopyError, AuthenticationError):
+    """401 — missing or invalid API token, described with a copy code."""
+
+
 class CopyNotFoundError(CopyError, NotFoundError):
     """404 — the source dataset does not exist or is tombstoned."""
+
+
+class CopyValidationError(CopyError, ValidationError):
+    """422 — the request payload failed server-side validation."""
 
 
 class CopyServerError(CopyError, CatalogServerError):
@@ -91,8 +99,12 @@ class CopyServerError(CopyError, CatalogServerError):
 
 def _copy_error(status_code: int, detail: dict) -> CopyError:
     """The CopyError variant that also subclasses this status's usual error."""
+    if status_code == 401:
+        return CopyAuthenticationError(status_code, detail)
     if status_code == 404:
         return CopyNotFoundError(status_code, detail)
+    if status_code == 422:
+        return CopyValidationError(status_code, detail)
     if status_code >= 500:
         return CopyServerError(status_code, detail)
     return CopyError(status_code, detail)

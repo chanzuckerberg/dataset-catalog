@@ -568,11 +568,12 @@ except CopyError as exc:
         ...          # only LINEAGE_WRITE_FAILED; everything else needs a change
 ```
 
-A refusal is still the status code it arrived as. `CopyNotFoundError` (404) is also a
-`NotFoundError`, and `CopyServerError` (5xx, including the retryable
-`LINEAGE_WRITE_FAILED` and the `501` mirror refusal) is also a `CatalogServerError` —
-so existing handlers and retry wrappers built on those keep working, and `CopyError`
-is there when you want the code:
+A refusal is still the status code it arrived as. `CopyAuthenticationError` (401) is
+also an `AuthenticationError`, `CopyNotFoundError` (404) a `NotFoundError`,
+`CopyValidationError` (422) a `ValidationError`, and `CopyServerError` (5xx, including
+the retryable `LINEAGE_WRITE_FAILED` and the `501` mirror refusal) a
+`CatalogServerError` — so existing handlers and retry wrappers built on those keep
+working, and `CopyError` is there when you want the code:
 
 ```python
 try:
