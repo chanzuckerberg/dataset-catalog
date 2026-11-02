@@ -1,7 +1,5 @@
 """Dot-notation metadata field extraction with list expansion."""
 
-from __future__ import annotations
-
 from typing import Any
 
 

@@ -22,8 +22,6 @@ Config (environment — same contract as the catalog CLI / SDK / query scripts):
 Exit codes: 0 = ready; 2 = misconfigured or token rejected (guidance on stderr).
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import sys

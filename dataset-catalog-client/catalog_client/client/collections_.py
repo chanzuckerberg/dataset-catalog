@@ -1,7 +1,5 @@
 """Collection sub-client (sync and async)."""
 
-from __future__ import annotations
-
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.models.collection import (
     ChildCollectionEntryResponse,

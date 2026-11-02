@@ -1,7 +1,5 @@
 """Sync and async base client wrappers over httpx transports."""
 
-from __future__ import annotations
-
 import httpx
 
 from catalog_client.exceptions import CatalogConnectionError, raise_for_status

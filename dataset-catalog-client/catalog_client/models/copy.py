@@ -1,7 +1,5 @@
 """Models for registering the catalog side of a completed dataset transfer."""
 
-from __future__ import annotations
-
 import datetime
 import enum
 

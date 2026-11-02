@@ -26,8 +26,6 @@ Exit codes:
     2  usage / config     5  server or connection error (5xx / network)
 """
 
-from __future__ import annotations
-
 import argparse
 import dataclasses
 import json
