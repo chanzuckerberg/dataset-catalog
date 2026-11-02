@@ -240,7 +240,7 @@ The builder exposes further optional methods:
 |--------|-------------|
 | `.described(text)` | Set a free-text description |
 | `.as_latest(bool)` | Mark as the latest version (default `True`) |
-| `.of_type(DatasetType)` | Set `dataset_type` to `raw` or `processed` |
+| `.of_type(DatasetType)` | Set `dataset_type` to `raw`, `processed` or `analysis` |
 | `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
 | `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
 | `.with_data_summary(**kwargs)` | Populate `DataSummaryMetadata` (read_count, resolution, …) |
@@ -369,6 +369,10 @@ results = client.datasets.search(
     cohort="cohort-a",                         # from metadata.experiment.cohort
     file_format="fastq",                       # matches a dataset location
     storage_platform="s3",                     # matches a dataset location
+    dataset_type=DatasetType.analysis,         # raw, processed or analysis
+    observation_unit=ObservationUnit.bulk,     # from metadata.data_summary
+    is_combined=False,                         # see note below
+    uri_prefix="s3://bucket/project",          # datasets with a file under this prefix
     facets=["modality", "project"],            # repeatable; returns bucket counts
     fields=["license", "cell_count"],          # extra fields on each hit
     sort=DatasetSortOption.relevance,          # optional; omit to use the server default
@@ -390,6 +394,12 @@ results = client.datasets.search(q="rna-seq liver", hydrate=True, limit=100)
 for record in results.results:
     print(record.id, record.metadata)
 ```
+
+`is_combined` is producer-set, so `False` returns only datasets explicitly marked
+single-acquisition — never those that left the flag unset. `uri_prefix` matches on
+whole path segments (`s3://bucket/proj` does not match `s3://bucket/project-2`); it
+is the lightweight counterpart to `resolve(scope=LocationScope.descendant)`, which
+returns full records instead of hits.
 
 **Search pages by cursor only** — it has no `offset` parameter. Follow
 `next_cursor` until it comes back `None`, or let `iter_search()` walk it:
@@ -556,6 +566,22 @@ except CopyError as exc:
         ...          # pick a different version
     elif exc.retryable:
         ...          # only LINEAGE_WRITE_FAILED; everything else needs a change
+```
+
+A refusal is still the status code it arrived as. `CopyNotFoundError` (404) is also a
+`NotFoundError`, and `CopyServerError` (5xx, including the retryable
+`LINEAGE_WRITE_FAILED` and the `501` mirror refusal) is also a `CatalogServerError` —
+so existing handlers and retry wrappers built on those keep working, and `CopyError`
+is there when you want the code:
+
+```python
+try:
+    client.datasets.copy(source_id, request, copy_type=CopyType.fork)
+except NotFoundError:
+    ...              # the source was tombstoned out from under us
+except CatalogServerError as exc:
+    if getattr(exc, "retryable", False):
+        ...          # LINEAGE_WRITE_FAILED — nothing was written, retry as-is
 ```
 
 ### Update a dataset
@@ -1087,10 +1113,14 @@ sensitivity unknown.
 | Enum | Values |
 |---|---|
 | `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `text`, `unknown` |
-| `DatasetType` | `raw`, `processed` |
+| `DatasetType` | `raw`, `processed`, `analysis` |
 | `AssetType` | `file`, `folder` |
 | `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
+| `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |
+| `LocationScope` | `exact`, `ancestor`, `descendant` — `datasets.resolve()` |
+| `CopyType` | `fork`, `mirror` — `datasets.copy()`; `mirror` is not enabled yet |
+| `CopyErrorCode` | the nine refusal codes on `CopyError.code` |
 | `DatasetSortOption` | `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest` — `datasets.search()`; unset omits the param |
 | `DatasetListSortOption` | `last_modified`, `newest`, `oldest` — `datasets.list()`; unset omits the param |

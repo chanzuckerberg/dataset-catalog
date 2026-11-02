@@ -25,8 +25,10 @@ from catalog_client.models.dataset import (
     DatasetSearchPage,
     DatasetSearchResponse,
     DatasetSortOption,
+    DatasetType,
     DatasetWithRelationsResponse,
 )
+from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedResponse
 
 _PREFIX = "datasets"
@@ -180,6 +182,10 @@ def _build_search_params(
     cohort: str | None,
     file_format: str | None,
     storage_platform: str | None,
+    dataset_type: DatasetType | None,
+    observation_unit: ObservationUnit | None,
+    is_combined: bool | None,
+    uri_prefix: str | None,
     facets: list[str] | None,
     fields: list[str] | None,
     sort: DatasetSortOption | None,
@@ -208,6 +214,7 @@ def _build_search_params(
         "cohort": cohort,
         "file_format": file_format,
         "storage_platform": storage_platform,
+        "uri_prefix": uri_prefix,
         "cursor": cursor,
     }
     for key, value in optional.items():
@@ -215,8 +222,14 @@ def _build_search_params(
             params[key] = value
     if modality is not None:
         params["modality"] = modality.value
+    if dataset_type is not None:
+        params["dataset_type"] = dataset_type.value
+    if observation_unit is not None:
+        params["observation_unit"] = observation_unit.value
     if is_latest is not None:
         params["is_latest"] = is_latest
+    if is_combined is not None:
+        params["is_combined"] = is_combined
     if facets:
         params["facets"] = facets
     if fields:
@@ -378,6 +391,10 @@ class DatasetClient(_SyncBase):
         cohort: str | None = None,
         file_format: str | None = None,
         storage_platform: str | None = None,
+        dataset_type: DatasetType | None = None,
+        observation_unit: ObservationUnit | None = None,
+        is_combined: bool | None = None,
+        uri_prefix: str | None = None,
         facets: _FacetList | None = None,
         fields: _FacetList | None = None,
         sort: DatasetSortOption | None = None,
@@ -413,6 +430,10 @@ class DatasetClient(_SyncBase):
             cohort,
             file_format,
             storage_platform,
+            dataset_type,
+            observation_unit,
+            is_combined,
+            uri_prefix,
             facets,
             fields,
             sort,
@@ -466,6 +487,10 @@ class DatasetClient(_SyncBase):
         Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
         identical for the whole walk, or use `iter_resolve()`, which manages
         the cursor for you.
+
+        A deployment predating this route answers `NotFoundError: Dataset
+        'resolve' not found` — the path falls through to the by-id route.
+        That is a missing endpoint, not an unregistered URI.
         """
         params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
         response = self._get(f"{_PREFIX}/resolve", params=params)
@@ -520,7 +545,9 @@ class DatasetClient(_SyncBase):
         response = self._post(
             f"{_PREFIX}/{dataset_id}/copy",
             params={"copy_type": copy_type.value},
-            json=request.model_dump(mode="json"),
+            # exclude_none: lineage_metadata lands on the edge untouched, so a
+            # null the caller never set would be stored as one.
+            json=request.model_dump(mode="json", exclude_none=True),
         )
         return DatasetCopyResponse.model_validate(response.json())
 
@@ -710,6 +737,10 @@ class AsyncDatasetClient(_AsyncBase):
         cohort: str | None = None,
         file_format: str | None = None,
         storage_platform: str | None = None,
+        dataset_type: DatasetType | None = None,
+        observation_unit: ObservationUnit | None = None,
+        is_combined: bool | None = None,
+        uri_prefix: str | None = None,
         facets: _FacetList | None = None,
         fields: _FacetList | None = None,
         sort: DatasetSortOption | None = None,
@@ -745,6 +776,10 @@ class AsyncDatasetClient(_AsyncBase):
             cohort,
             file_format,
             storage_platform,
+            dataset_type,
+            observation_unit,
+            is_combined,
+            uri_prefix,
             facets,
             fields,
             sort,
@@ -799,6 +834,10 @@ class AsyncDatasetClient(_AsyncBase):
         Pages by cursor only. Keep `uri`, `scope` and `storage_platform`
         identical for the whole walk, or use `iter_resolve()`, which manages
         the cursor for you.
+
+        A deployment predating this route answers `NotFoundError: Dataset
+        'resolve' not found` — the path falls through to the by-id route.
+        That is a missing endpoint, not an unregistered URI.
         """
         params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
         response = await self._get(f"{_PREFIX}/resolve", params=params)
@@ -854,7 +893,9 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._post(
             f"{_PREFIX}/{dataset_id}/copy",
             params={"copy_type": copy_type.value},
-            json=request.model_dump(mode="json"),
+            # exclude_none: lineage_metadata lands on the edge untouched, so a
+            # null the caller never set would be stored as one.
+            json=request.model_dump(mode="json", exclude_none=True),
         )
         return DatasetCopyResponse.model_validate(response.json())
 

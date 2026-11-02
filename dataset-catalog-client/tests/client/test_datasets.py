@@ -9,6 +9,7 @@ from pytest_httpx import HTTPXMock
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.exceptions import (
     CatalogError,
+    CatalogServerError,
     CatalogUsageError,
     CopyError,
     NotFoundError,
@@ -31,7 +32,9 @@ from catalog_client.models.dataset import (
     DatasetResponse,
     DatasetSearchHit,
     DatasetSearchResponse,
+    DatasetType,
 )
+from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import (
     CursorPaginatedResponse,
     PaginatedResponse,
@@ -642,7 +645,7 @@ def test_copy_sends_copy_type_as_query_param(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=COPY_URL, status_code=201, json=COPY_RESPONSE)
     result = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
     assert isinstance(result, DatasetCopyResponse)
-    assert result.dataset_id == "uuid-copy"
+    assert result.model_dump(mode="json") == COPY_RESPONSE
     request = httpx_mock.get_request()
     assert request.url.params["copy_type"] == "fork"
     body = json.loads(request.content)
@@ -651,11 +654,16 @@ def test_copy_sends_copy_type_as_query_param(httpx_mock: HTTPXMock):
     assert body["lineage_metadata"]["hermes_job"] == "job-8f21"
 
 
-def test_copy_replay_returns_the_same_record(httpx_mock: HTTPXMock):
-    """A replay answers 200 rather than 201 and writes nothing."""
+def test_copy_replay_parses_the_200_the_same_way_as_the_201(httpx_mock: HTTPXMock):
+    """A replay answers 200, not 201, and must still deserialize in full.
+
+    The SDK does not surface which of the two it was, so this pins the
+    parsing rather than the distinction: every field of the 201 body must
+    come back identically off the 200.
+    """
     httpx_mock.add_response(url=COPY_URL, status_code=200, json=COPY_RESPONSE)
-    result = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
-    assert result.lineage_edge_id == "edge-1"
+    replayed = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert replayed.model_dump(mode="json") == COPY_RESPONSE
 
 
 def test_copy_refusal_raises_copy_error_with_code(httpx_mock: HTTPXMock):
@@ -721,3 +729,89 @@ async def test_async_copy(httpx_mock: HTTPXMock):
         result = await client.copy("uuid-1", COPY_REQUEST, copy_type=CopyType.mirror)
     assert result.dataset_id == "uuid-copy"
     assert httpx_mock.get_request().url.params["copy_type"] == "mirror"
+
+
+def test_copy_404_is_also_a_not_found_error(httpx_mock: HTTPXMock):
+    """A caller catching NotFoundError around a copy must still be reached."""
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=404,
+        json={
+            "detail": {
+                "code": "SOURCE_NOT_FOUND",
+                "message": "does not exist or has been tombstoned",
+                "retryable": False,
+            }
+        },
+    )
+    with pytest.raises(NotFoundError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert isinstance(excinfo.value, CopyError)
+    assert excinfo.value.code is CopyErrorCode.SOURCE_NOT_FOUND
+
+
+def test_copy_503_is_also_a_server_error(httpx_mock: HTTPXMock):
+    """LINEAGE_WRITE_FAILED is the one retryable refusal, so a retry wrapper
+    built on CatalogServerError — as cli.py's is — has to catch it."""
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=503,
+        json={
+            "detail": {
+                "code": "LINEAGE_WRITE_FAILED",
+                "message": "nothing was written",
+                "retryable": True,
+            }
+        },
+    )
+    with pytest.raises(CatalogServerError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert isinstance(excinfo.value, CopyError)
+    assert excinfo.value.retryable is True
+
+
+def test_copy_omits_provenance_keys_the_caller_never_set(httpx_mock: HTTPXMock):
+    """lineage_metadata is stored on the edge verbatim, nulls included."""
+    httpx_mock.add_response(url=COPY_URL, status_code=201, json=COPY_RESPONSE)
+    _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    body = json.loads(httpx_mock.get_request().content)
+    assert body["lineage_metadata"] == {"hermes_job": "job-8f21"}
+    assert "source_relative_path" in body["entries"][0]
+    assert "encoding" not in body["entries"][0]
+
+
+def test_search_sends_the_v170_filters(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}datasets/search/\?.*"),
+        json={"total": 0, "limit": 10, "results": []},
+    )
+    _sync_client().search(
+        dataset_type=DatasetType.analysis,
+        observation_unit=ObservationUnit.pseudobulk,
+        is_combined=False,
+        uri_prefix="s3://bucket/proj",
+    )
+    params = httpx_mock.get_request().url.params
+    assert params["dataset_type"] == "analysis"
+    assert params["observation_unit"] == "pseudobulk"
+    assert params["is_combined"] == "false"
+    assert params["uri_prefix"] == "s3://bucket/proj"
+
+
+def test_search_omits_the_v170_filters_when_unset(httpx_mock: HTTPXMock):
+    """is_combined=False is a real filter; None must not send one."""
+    httpx_mock.add_response(
+        url=re.compile(rf"{re.escape(BASE)}datasets/search/\?.*"),
+        json={"total": 0, "limit": 10, "results": []},
+    )
+    _sync_client().search(q="x")
+    params = httpx_mock.get_request().url.params
+    for absent in ("dataset_type", "observation_unit", "is_combined", "uri_prefix"):
+        assert absent not in params
+
+
+def test_response_does_not_invent_a_schema_version(httpx_mock: HTTPXMock):
+    """A deployment that omits the field must not read back as this client's default."""
+    body = {k: v for k, v in DATASET_RESPONSE.items() if k != "record_schema_version"}
+    httpx_mock.add_response(url=DATASETS_URL, json=body)
+    assert _sync_client().get("uuid-1").record_schema_version is None

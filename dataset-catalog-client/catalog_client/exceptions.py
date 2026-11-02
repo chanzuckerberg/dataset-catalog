@@ -63,6 +63,11 @@ class CopyError(CatalogHTTPError):
     code is kept as the raw string when the server sends one this client
     does not know, so an unrecognised reason still reaches the caller
     instead of failing to parse.
+
+    A refusal is still the status code it arrived as: the subclasses below
+    co-inherit the error this SDK raises for that status, so a caller
+    catching `NotFoundError` or `CatalogServerError` is not silently skipped
+    just because the route happens to describe itself more precisely.
     """
 
     def __init__(self, status_code: int, detail: dict) -> None:
@@ -74,6 +79,23 @@ class CopyError(CatalogHTTPError):
         self.message: str = detail.get("message", "")
         self.retryable: bool = bool(detail.get("retryable"))
         super().__init__(status_code, detail)
+
+
+class CopyNotFoundError(CopyError, NotFoundError):
+    """404 — the source dataset does not exist or is tombstoned."""
+
+
+class CopyServerError(CopyError, CatalogServerError):
+    """5xx — includes the retryable LINEAGE_WRITE_FAILED and 501 mirror refusal."""
+
+
+def _copy_error(status_code: int, detail: dict) -> CopyError:
+    """The CopyError variant that also subclasses this status's usual error."""
+    if status_code == 404:
+        return CopyNotFoundError(status_code, detail)
+    if status_code >= 500:
+        return CopyServerError(status_code, detail)
+    return CopyError(status_code, detail)
 
 
 class CatalogConnectionError(CatalogError):
@@ -120,7 +142,7 @@ def raise_for_status(response: httpx.Response) -> None:
         return
     structured = _structured_detail(response)
     if structured is not None:
-        raise CopyError(response.status_code, structured)
+        raise _copy_error(response.status_code, structured)
     if response.status_code == 401:
         raise AuthenticationError(401, response.json().get("detail", "Unauthorized"))
     if response.status_code == 404:

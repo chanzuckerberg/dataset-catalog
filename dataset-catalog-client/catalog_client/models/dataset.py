@@ -160,6 +160,13 @@ class DatasetResponse(_DatasetBase):
     governance: GovernanceMetadataResponse = Field(  # type: ignore[assignment]
         description="Access control and compliance metadata"
     )
+    record_schema_version: str | None = Field(
+        # The write-side default must not leak onto reads: a record stored
+        # under an older schema would otherwise report whatever version this
+        # client happens to write.
+        default=None,
+        description="Schema version this record was stored under, or None when the deployment did not report one",
+    )
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     created_at: datetime.datetime = Field(
