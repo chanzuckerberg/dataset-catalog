@@ -41,3 +41,20 @@ jobs:
           enable-cache: true
       - name: Run pytest
         run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum pytest
+
+  imaging:
+    name: Native imaging (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Verify native dependencies are installed
+        run: uv run --python ${{ matrix.python-version }} --group dev --extra imaging python -c "import icechunk, zarr, catalog_client.publication"
+      - name: Run native publication tests
+        run: uv run --python ${{ matrix.python-version }} --group dev --extra imaging pytest tests/test_publication.py -q

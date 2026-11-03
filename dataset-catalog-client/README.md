@@ -6,7 +6,10 @@ Python client library for the Scientific Dataset Catalog API.
 ## Installation
 
 Requires Python 3.11 or newer. The examples below use [uv](https://docs.astral.sh/uv/);
-drop the `uv` prefix to use plain `pip` instead.
+drop the `uv` prefix to use plain `pip` instead. The optional native Icechunk
+publication module (`catalog-client[imaging]`) requires Python 3.12 or newer;
+the core HTTP client continues to support Python 3.11. See the
+[publication guide](docs/icechunk_publication.md).
 
 ### Create and activate an environment
 
