@@ -8,16 +8,22 @@ from catalog_client._context import reset_client, set_client
 from catalog_client.client.collections_ import AsyncCollectionClient, CollectionClient
 from catalog_client.client.datasets import AsyncDatasetClient, DatasetClient
 from catalog_client.client.lineages import AsyncLineageClient, LineageClient
-from catalog_client.exceptions import (
-    CatalogError,
-    DuplicateDatasetError,
-    LineageResolutionError,
-    NotFoundError,
-)
+from catalog_client.exceptions import LineageResolutionError, NotFoundError
 from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetRequest
 from catalog_client.models.lineage import LineageEdgeRequest
 from catalog_client.registration.builder import RegistrationBuilder
+from catalog_client.registration.plan import (
+    RegistrationPlan,
+    check_options,
+    decide,
+    to_dataset_request,
+)
 from catalog_client.registration.request import RegistrationRequest
+from catalog_client.registration.retry import (
+    AsyncRetryTransport,
+    RetryPolicy,
+    RetryTransport,
+)
 
 _API_PREFIX = "/api/v1/"
 
@@ -31,16 +37,61 @@ class CatalogClient:
             datasets = client.datasets.list()
     """
 
-    def __init__(self, base_url: str, api_token: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_token: str,
+        timeout: float = 30.0,
+        retry: RetryPolicy | None = None,
+    ) -> None:
         self._http = httpx.Client(
             base_url=base_url.rstrip("/") + _API_PREFIX,
             headers={"X-catalog-api-token": api_token},
             timeout=timeout,
+            transport=RetryTransport(httpx.HTTPTransport(), retry) if retry else None,
         )
         self.datasets = DatasetClient(self._http)
         self.lineages = LineageClient(self._http)
         self.collections = CollectionClient(self._http)
         self._context_token: object = None
+
+    def plan(
+        self,
+        request: RegistrationRequest | DatasetRequest,
+        update_if_exists: bool = False,
+        error_on_duplicate: bool = True,
+    ) -> RegistrationPlan:
+        """Dry run of register(): decide what it would do using GET requests only."""
+        dataset = to_dataset_request(request)
+        ref = check_options(dataset, update_if_exists, error_on_duplicate)
+        page = self.datasets.list(
+            canonical_id=ref.canonical_id,
+            version=ref.version,
+            project=ref.project,
+            limit=10,
+        )
+        action, dataset_id = decide(
+            ref, page.results, update_if_exists, error_on_duplicate
+        )
+
+        edges: list[LineageEdgeRequest] = []
+        for spec in request.lineage if isinstance(request, RegistrationRequest) else []:
+            if spec.source_dataset_id is not None:
+                source_id = spec.source_dataset_id
+            elif spec.source_ref is not None:
+                source_id = self._resolve_ref(spec.source_ref)
+            else:
+                continue
+            edge = LineageEdgeRequest(
+                source_dataset_id=source_id,
+                destination_dataset_id=dataset_id or "",
+                lineage_type=spec.lineage_type,
+                metadata=spec.metadata,
+            )
+            # A dataset that does not exist yet has no edges; skip the lookup.
+            if dataset_id is None or not self._edge_exists(edge):
+                edges.append(edge)
+        return RegistrationPlan(action, dataset_id, edges, dataset)
 
     def register(
         self,
@@ -49,34 +100,16 @@ class CatalogClient:
         error_on_duplicate: bool = True,
     ) -> str:
         """Register a dataset and any lineage edges. Returns the dataset_id."""
-        if isinstance(request, RegistrationRequest):
-            dataset_request = request.to_dataset_request()
-        else:
-            dataset_request = request
-        dataset_id, created = self._create_or_update(
-            dataset_request, update_if_exists, error_on_duplicate
-        )
-
-        if isinstance(request, RegistrationRequest):
-            for spec in request.lineage:
-                if spec.source_dataset_id is not None:
-                    source_id = spec.source_dataset_id
-                elif spec.source_ref is not None:
-                    source_id = self._resolve_ref(spec.source_ref)
-                else:
-                    continue
-
-                edge = LineageEdgeRequest(
-                    source_dataset_id=source_id,
-                    destination_dataset_id=dataset_id,
-                    lineage_type=spec.lineage_type,
-                    metadata=spec.metadata,
-                )
-                # A dataset created just now has no edges yet; skip the lookup.
-                if not created and self._edge_exists(edge):
-                    continue
-                self.lineages.create(edge)
-
+        plan = self.plan(request, update_if_exists, error_on_duplicate)
+        dataset_id = plan.dataset_id
+        if dataset_id is None:
+            dataset_id = self.datasets.create(plan.request).id
+        elif plan.action == "update":
+            self.datasets.update(dataset_id, plan.request)
+        for edge in plan.lineage_to_create:
+            self.lineages.create(
+                edge.model_copy(update={"destination_dataset_id": dataset_id})
+            )
         return dataset_id
 
     def _resolve_ref(self, ref: DatasetRef) -> str:
@@ -125,56 +158,6 @@ class CatalogClient:
             self._context_token = None
         self.close()
 
-    def _create_or_update(
-        self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
-    ) -> tuple[str, bool]:
-        """Create or update a dataset. Returns (dataset_id, created)."""
-        # Validate mutually exclusive parameters
-        if update_if_exists and error_on_duplicate:
-            raise ValueError(
-                "update_if_exists and error_on_duplicate cannot both be True"
-            )
-
-        if dataset.project is None:
-            raise ValueError("project is required to register a dataset")
-
-        dataset_ref = DatasetRef(
-            canonical_id=dataset.canonical_id,
-            version=dataset.version,
-            project=dataset.project,
-        )
-
-        # Search for existing datasets with same canonical_id, version, and project
-        results = self.datasets.list(
-            canonical_id=dataset.canonical_id,
-            version=dataset.version,
-            project=dataset.project,
-            limit=10,  # reasonable limit for duplicates check
-        )
-        existing_datasets = results.results
-
-        # No existing dataset found - create new one
-        if not existing_datasets:
-            response = self.datasets.create(dataset)
-            return response.id, True
-
-        # Found existing dataset(s) - handle based on parameters
-        if error_on_duplicate:
-            raise DuplicateDatasetError(dataset_ref)
-
-        if len(existing_datasets) > 1:
-            raise CatalogError(
-                f"Multiple datasets found ({len(existing_datasets)}) for {dataset_ref!r}"
-            )
-
-        if update_if_exists:
-            existing_dataset = existing_datasets[0]
-            self.datasets.update(existing_dataset.id, dataset)
-            return existing_dataset.id, False
-
-        # Default: return existing dataset ID without error
-        return existing_datasets[0].id, False
-
 
 class AsyncCatalogClient:
     """Async client for the Scientific Dataset Catalog API.
@@ -185,15 +168,64 @@ class AsyncCatalogClient:
             datasets = await client.datasets.list()
     """
 
-    def __init__(self, base_url: str, api_token: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_token: str,
+        timeout: float = 30.0,
+        retry: RetryPolicy | None = None,
+    ) -> None:
         self._http = httpx.AsyncClient(
             base_url=base_url.rstrip("/") + _API_PREFIX,
             headers={"X-catalog-api-token": api_token},
             timeout=timeout,
+            transport=(
+                AsyncRetryTransport(httpx.AsyncHTTPTransport(), retry)
+                if retry
+                else None
+            ),
         )
         self.datasets = AsyncDatasetClient(self._http)
         self.lineages = AsyncLineageClient(self._http)
         self.collections = AsyncCollectionClient(self._http)
+
+    async def plan(
+        self,
+        request: RegistrationRequest | DatasetRequest,
+        update_if_exists: bool = False,
+        error_on_duplicate: bool = True,
+    ) -> RegistrationPlan:
+        """Dry run of register(): decide what it would do using GET requests only."""
+        dataset = to_dataset_request(request)
+        ref = check_options(dataset, update_if_exists, error_on_duplicate)
+        page = await self.datasets.list(
+            canonical_id=ref.canonical_id,
+            version=ref.version,
+            project=ref.project,
+            limit=10,
+        )
+        action, dataset_id = decide(
+            ref, page.results, update_if_exists, error_on_duplicate
+        )
+
+        edges: list[LineageEdgeRequest] = []
+        for spec in request.lineage if isinstance(request, RegistrationRequest) else []:
+            if spec.source_dataset_id is not None:
+                source_id = spec.source_dataset_id
+            elif spec.source_ref is not None:
+                source_id = await self._resolve_ref(spec.source_ref)
+            else:
+                continue
+            edge = LineageEdgeRequest(
+                source_dataset_id=source_id,
+                destination_dataset_id=dataset_id or "",
+                lineage_type=spec.lineage_type,
+                metadata=spec.metadata,
+            )
+            # A dataset that does not exist yet has no edges; skip the lookup.
+            if dataset_id is None or not await self._edge_exists(edge):
+                edges.append(edge)
+        return RegistrationPlan(action, dataset_id, edges, dataset)
 
     async def register(
         self,
@@ -202,34 +234,16 @@ class AsyncCatalogClient:
         error_on_duplicate: bool = True,
     ) -> str:
         """Register a dataset and any lineage edges. Returns the dataset_id."""
-        if isinstance(request, RegistrationRequest):
-            dataset_request = request.to_dataset_request()
-        else:
-            dataset_request = request
-        dataset_id, created = await self._create_or_update(
-            dataset_request, update_if_exists, error_on_duplicate
-        )
-
-        if isinstance(request, RegistrationRequest):
-            for spec in request.lineage:
-                if spec.source_dataset_id is not None:
-                    source_id = spec.source_dataset_id
-                elif spec.source_ref is not None:
-                    source_id = await self._resolve_ref(spec.source_ref)
-                else:
-                    continue
-
-                edge = LineageEdgeRequest(
-                    source_dataset_id=source_id,
-                    destination_dataset_id=dataset_id,
-                    lineage_type=spec.lineage_type,
-                    metadata=spec.metadata,
-                )
-                # A dataset created just now has no edges yet; skip the lookup.
-                if not created and await self._edge_exists(edge):
-                    continue
-                await self.lineages.create(edge)
-
+        plan = await self.plan(request, update_if_exists, error_on_duplicate)
+        dataset_id = plan.dataset_id
+        if dataset_id is None:
+            dataset_id = (await self.datasets.create(plan.request)).id
+        elif plan.action == "update":
+            await self.datasets.update(dataset_id, plan.request)
+        for edge in plan.lineage_to_create:
+            await self.lineages.create(
+                edge.model_copy(update={"destination_dataset_id": dataset_id})
+            )
         return dataset_id
 
     async def _resolve_ref(self, ref: DatasetRef) -> str:
@@ -246,51 +260,6 @@ class AsyncCatalogClient:
             limit=1,
         )
         return bool(page.results)
-
-    async def _create_or_update(
-        self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
-    ) -> tuple[str, bool]:
-        """Create or update a dataset. Returns (dataset_id, created)."""
-        if update_if_exists and error_on_duplicate:
-            raise ValueError(
-                "update_if_exists and error_on_duplicate cannot both be True"
-            )
-
-        if dataset.project is None:
-            raise ValueError("project is required to register a dataset")
-
-        dataset_ref = DatasetRef(
-            canonical_id=dataset.canonical_id,
-            version=dataset.version,
-            project=dataset.project,
-        )
-
-        results = await self.datasets.list(
-            canonical_id=dataset.canonical_id,
-            version=dataset.version,
-            project=dataset.project,
-            limit=10,
-        )
-        existing_datasets = results.results
-
-        if not existing_datasets:
-            response = await self.datasets.create(dataset)
-            return response.id, True
-
-        if error_on_duplicate:
-            raise DuplicateDatasetError(dataset_ref)
-
-        if len(existing_datasets) > 1:
-            raise CatalogError(
-                f"Multiple datasets found ({len(existing_datasets)}) for {dataset_ref!r}"
-            )
-
-        if update_if_exists:
-            existing_dataset = existing_datasets[0]
-            await self.datasets.update(existing_dataset.id, dataset)
-            return existing_dataset.id, False
-
-        return existing_datasets[0].id, False
 
     def new_registration(
         self,

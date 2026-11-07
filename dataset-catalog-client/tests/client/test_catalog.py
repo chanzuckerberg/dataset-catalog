@@ -16,6 +16,7 @@ from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import DatasetMetadata
 from catalog_client.registration.builder import RegistrationBuilder
+from catalog_client.registration.plan import RegistrationPlan
 from catalog_client.registration.request import LineageSpec, RegistrationRequest
 
 BASE = "http://test.local"
@@ -155,7 +156,6 @@ def test_register_ref_not_found_raises(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         method="GET", json=EMPTY_PAGINATED
     )  # No existing datasets (for create_or_update check)
-    httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
     httpx_mock.add_response(
         method="GET",
         json={
@@ -173,6 +173,8 @@ def test_register_ref_not_found_raises(httpx_mock: HTTPXMock):
         with pytest.raises(LineageResolutionError) as exc_info:
             client.register(req)
     assert exc_info.value.ref == ref
+    # Refs resolve before any write, so a bad ref never leaves an orphan dataset.
+    assert not [r for r in httpx_mock.get_requests() if r.method == "POST"]
 
 
 def test_new_registration_returns_builder():
@@ -516,3 +518,148 @@ async def test_async_reregister_creates_missing_edge(httpx_mock: HTTPXMock):
 
     posts = [r for r in httpx_mock.get_requests() if r.method == "POST"]
     assert len(posts) == 1
+
+
+# --- plan (dry run) ---
+
+
+def _assert_get_only(httpx_mock: HTTPXMock) -> None:
+    assert {r.method for r in httpx_mock.get_requests()} == {"GET"}
+
+
+def test_plan_create_lists_all_edges_without_writing(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)
+    httpx_mock.add_response(method="GET", json=PARENT_PAGINATED)  # ref resolution
+    req = _minimal_request(
+        lineage=[
+            LineageSpec(
+                lineage_type=LineageType.transformed_from,
+                source_dataset_id="parent-uuid",
+            ),
+            LineageSpec(
+                lineage_type=LineageType.version_of,
+                source_ref=DatasetRef("parent-ds", "1.0.0", "atlas"),
+            ),
+        ]
+    )
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = client.plan(req)
+
+    assert isinstance(plan, RegistrationPlan)
+    assert plan.action == "create"
+    assert plan.dataset_id is None
+    assert plan.request.canonical_id == "ds-001"
+    assert [(e.source_dataset_id, e.lineage_type) for e in plan.lineage_to_create] == [
+        ("parent-uuid", LineageType.transformed_from),
+        ("parent-uuid", LineageType.version_of),
+    ]
+    assert not httpx_mock.get_requests(url=LINEAGE_LIST_URL)
+    _assert_get_only(httpx_mock)
+
+
+def test_plan_update_excludes_existing_edges(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EXISTING_EDGE_PAGINATED
+    )
+    httpx_mock.add_response(method="GET", url=LINEAGE_LIST_URL, json=EMPTY_PAGINATED)
+    req = _minimal_request(
+        lineage=[
+            LineageSpec(
+                lineage_type=LineageType.transformed_from,
+                source_dataset_id="parent-uuid",
+            ),
+            LineageSpec(
+                lineage_type=LineageType.version_of, source_dataset_id="other-uuid"
+            ),
+        ]
+    )
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = client.plan(req, update_if_exists=True, error_on_duplicate=False)
+
+    assert plan.action == "update"
+    assert plan.dataset_id == "existing-uuid"
+    assert [e.source_dataset_id for e in plan.lineage_to_create] == ["other-uuid"]
+    assert plan.lineage_to_create[0].destination_dataset_id == "existing-uuid"
+    _assert_get_only(httpx_mock)
+
+
+def test_plan_skip(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = client.plan(_minimal_request(), error_on_duplicate=False)
+
+    assert (plan.action, plan.dataset_id, plan.lineage_to_create) == (
+        "skip",
+        "existing-uuid",
+        [],
+    )
+
+
+def test_plan_accepts_dataset_request(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)
+    dataset_request = _minimal_request().to_dataset_request()
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = client.plan(dataset_request)
+
+    assert plan.request is dataset_request
+    assert plan.lineage_to_create == []
+
+
+def test_plan_raises_what_register_raises(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(method="GET", json=MULTIPLE_EXISTING_PAGINATED)
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        with pytest.raises(DuplicateDatasetError):
+            client.plan(_minimal_request())
+        with pytest.raises(CatalogError, match="Multiple datasets found"):
+            client.plan(_minimal_request(), error_on_duplicate=False)
+        with pytest.raises(ValueError, match="cannot both be True"):
+            client.plan(_minimal_request(), update_if_exists=True)
+
+
+def test_register_creates_planned_edges_against_new_id(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)
+    httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
+    httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        client.register(_lineage_request())
+
+    edge_post = httpx_mock.get_requests(method="POST")[1]
+    assert json.loads(edge_post.content)["destination_dataset_id"] == "new-uuid"
+
+
+async def test_async_plan_update_excludes_existing_edges(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EXISTING_EDGE_PAGINATED
+    )
+
+    async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = await client.plan(
+            _lineage_request(), update_if_exists=True, error_on_duplicate=False
+        )
+
+    assert (plan.action, plan.dataset_id, plan.lineage_to_create) == (
+        "update",
+        "existing-uuid",
+        [],
+    )
+    _assert_get_only(httpx_mock)
+
+
+async def test_async_plan_create(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)
+
+    async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        plan = await client.plan(_lineage_request())
+
+    assert plan.action == "create"
+    assert plan.dataset_id is None
+    assert len(plan.lineage_to_create) == 1

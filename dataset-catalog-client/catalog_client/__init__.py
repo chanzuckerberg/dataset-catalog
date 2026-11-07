@@ -34,6 +34,7 @@ from catalog_client.exceptions import (
     CatalogHTTPError,
     CatalogServerError,
     CatalogUsageError,
+    CompatibilityError,
     CopyAuthenticationError,
     CopyError,
     CopyNotFoundError,
@@ -102,9 +103,15 @@ from catalog_client.models import (
     TissueEntry,
 )
 from catalog_client.registration import (
+    BatchReport,
     LineageSpec,
     RegistrationBuilder,
+    RegistrationPlan,
     RegistrationRequest,
+    RetryPolicy,
+    acheck_compatibility,
+    check_compatibility,
+    run_batch,
 )
 from catalog_client.utils.manifest import (
     FieldFilter,
@@ -133,9 +140,15 @@ __all__ = [
     "generate_manifest_iter",
     "write_manifest",
     # Registration
+    "BatchReport",
     "LineageSpec",
     "RegistrationBuilder",
+    "RegistrationPlan",
     "RegistrationRequest",
+    "RetryPolicy",
+    "acheck_compatibility",
+    "check_compatibility",
+    "run_batch",
     # Models
     "AssetType",
     "AuditLogEventType",
@@ -198,6 +211,7 @@ __all__ = [
     "CatalogError",
     "CatalogUsageError",
     "CatalogHTTPError",
+    "CompatibilityError",
     "CatalogServerError",
     "CopyAuthenticationError",
     "CopyError",

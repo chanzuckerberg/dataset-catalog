@@ -136,6 +136,10 @@ class DuplicateDatasetError(CatalogError):
         )
 
 
+class CompatibilityError(CatalogError):
+    """The server expects a newer record schema than this client writes."""
+
+
 def _structured_detail(response: httpx.Response) -> dict | None:
     """Return the `detail` object of a refusal that carries one, else None."""
     try:
