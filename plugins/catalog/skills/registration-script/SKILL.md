@@ -28,7 +28,11 @@ only its AGENT-EDITABLE functions and `mapping.json` changed. Field definitions 
 7. **Assets** go in with the dataset (its `locations`); there is no separate attach step.
 8. **Lineage** edges are created by `register()` from the request's `lineage` list.
 9. **Collections**: `client.collections.add_dataset(collection_id, dataset_id)` after the dataset exists.
-10. **Verify**: find the new record with search, as the user would.
+10. **Verify**: after a real run the script prints, for each project with at least one registered
+    record, `Search page (<env>, project <project>): <CATALOG_API_URL>/search?sort=last_modified&project=<project>`.
+    Always show the user that link: it opens the catalog UI (SSO login) on that project with the
+    most recently modified records first, so they can see what was just registered or updated.
+    Dry runs and projects whose records all failed print no link.
 
 The script registers into whatever `CATALOG_API_URL` names (auth skill) and logs
 `env=<env> url=<url>` first; state that environment before every run. Sandbox first, always:
@@ -68,7 +72,8 @@ release has not shipped yet: register against the installed version and tell the
 `CATALOG_API_URL`/`CATALOG_API_TOKEN` lookup by name (`catalog_connection()`) and the environment
 name from the URL; `RetryPolicy` (exponential backoff with jitter,
 honours 429/`Retry-After`); `check_compatibility()` at startup; per-record local validation, including the shared-storage check on every asset location;
-`run_batch()` with per-record isolation; the summary line (`48 registered, 2 failed: ...`); exit 1
+`run_batch()` with per-record isolation; the summary line (`48 registered, 2 failed: ...`); the
+search-page link per registered project (step 10); exit 1
 if any record failed, 2 on configuration or compatibility errors.
 
 **AGENT-EDITABLE** (between the `AGENT-EDITABLE` and `END AGENT-EDITABLE` markers):

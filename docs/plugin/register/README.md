@@ -70,7 +70,9 @@ CATALOG_API_TOKEN="$(cat ~/.config/catalog/prod-token)" python register.py --dry
 | `--workers N` | 4 | Concurrent records, 1–16 |
 | `--payload-dir` | `catalog-dry-run/` | Where `--dry-run` writes each payload |
 
-It ends with a summary such as `48 registered, 2 failed: ...` and exits 0 when every record
+It ends with a summary such as `48 registered, 2 failed: ...`; after a real run it also prints a
+link per registered project to the catalog UI, `<CATALOG_API_URL>/search?sort=last_modified&project=<project>`,
+with the most recently modified records first. It exits 0 when every record
 succeeded, 1 when any failed (the others still went through), and 2 on configuration, credential, or
 client/API compatibility errors. Re-running is safe: existing records are updated, not duplicated.
 An update writes the record's complete current state, so files dropped from the source drop off the

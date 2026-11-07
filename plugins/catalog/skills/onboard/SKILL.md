@@ -56,7 +56,7 @@ type and paths. For anything deeper, or if granularity is unclear, use `concepts
 - **Find**: a search that returns a record they recognize, or a confirmed "not registered yet".
 - **Register/automate**: `/catalog:register` for one small, real dataset that already lives on
   shared storage (`--limit 1`); dry run; review with `metadata-reviewer`; register to that dev or staging catalog; then
-  find it with `search`. Never use local files as a stand-in.
+  open the search-page link the run prints (`registration-script`, verify) and find it there. Never use local files as a stand-in.
 
 Governance values (`is_pii`, `is_phi`, `license`, `data_steward`) are always asked, never inferred,
 even outside production.

@@ -139,8 +139,8 @@ def install_stub_sdk() -> None:
 
 
 class FakeRequest:
-    def __init__(self, key: str, valid: bool = True, location=None):
-        self.key, self.valid = key, valid
+    def __init__(self, key: str, valid: bool = True, location=None, project="atlas"):
+        self.key, self.valid, self.project = key, valid, project
         self.location = location or (f"s3://shared-bucket/{key}/", "s3")
 
     def to_dataset_request(self):
@@ -151,7 +151,9 @@ class FakeRequest:
             location_uri=uri, storage_platform=types.SimpleNamespace(value=platform)
         )
         return types.SimpleNamespace(
-            locations=[asset], model_dump=lambda **kw: {"canonical_id": self.key}
+            project=self.project,
+            locations=[asset],
+            model_dump=lambda **kw: {"canonical_id": self.key},
         )
 
 
@@ -181,8 +183,12 @@ class TemplateTest(unittest.TestCase):
         self.mod.discover_records = lambda config: (
             self.mod.Source(key=k) for k in self.keys
         )
+        self.projects: dict[str, str] = {}
         self.mod.build_request = lambda src, config: FakeRequest(
-            src.key, src.key not in self.invalid, self.locations.get(src.key)
+            src.key,
+            src.key not in self.invalid,
+            self.locations.get(src.key),
+            self.projects.get(src.key, "atlas"),
         )
 
     def run_main(self, *args: str, env: dict | None = None) -> tuple[int, str, str]:
@@ -258,6 +264,26 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("catalog-dry-run: ok", out)
         self.assertNotIn(("plan", "b", True, False), FakeClient.instances[0].calls)
 
+    def test_real_run_links_each_registered_project_search_page(self):
+        self.projects = {"b": "lung atlas/v2"}
+        code, out, _ = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertIn(
+            f"Search page (staging, project atlas): {STAGING}/search?sort=last_modified&project=atlas",
+            out,
+        )
+        self.assertIn(
+            f"{STAGING}/search?sort=last_modified&project=lung+atlas%2Fv2", out
+        )
+        self.assertEqual(out.count("Search page"), 2)
+
+    def test_no_search_link_for_dry_runs_or_failed_projects(self):
+        self.assertNotIn("Search page", self.run_main("--dry-run")[1])
+        self.projects, self.invalid = {"b": "only-failed"}, {"b"}
+        _, out, _ = self.run_main()
+        self.assertNotIn("only-failed", out)
+        self.assertIn("project=atlas", out)
+
     def test_local_location_fails_its_record_before_any_api_call(self):
         self.locations = {"b": ("/Users/me/Desktop/run-b/", "other")}
         code, out, _ = self.run_main()
@@ -265,7 +291,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("2 registered, 1 failed: b (ValueError)", out)
         self.assertNotIn(("register", "b", True, False), FakeClient.instances[0].calls)
         handle = self.mod.make_handler(
-            FakeClient("u", "t"), {}, self.mod.parse_args([])
+            FakeClient("u", "t"), {}, self.mod.parse_args([]), set()
         )
         with self.assertRaisesRegex(ValueError, "shared organization storage"):
             handle(self.mod.Source(key="b"))

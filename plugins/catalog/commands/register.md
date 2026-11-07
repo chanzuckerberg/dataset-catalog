@@ -31,4 +31,5 @@ user to confirm. On confirmation, start `script-writer` with that summary as its
 When it returns: run the `metadata-reviewer` agent on one payload from `catalog-dry-run/`, show both
 reports, and explain how to run for real: a real run against the dev or staging catalog first, then, with
 `CATALOG_API_URL`/`CATALOG_API_TOKEN` pointed at prod (a production credential, usually in their
-pipeline), `--dry-run` and then the real run.
+pipeline), `--dry-run` and then the real run. After every real run, show the user the `Search page`
+link(s) the script prints (`registration-script`, verify).

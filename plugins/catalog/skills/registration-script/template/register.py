@@ -148,6 +148,11 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def search_page_url(url: str, project: str) -> str:
+    query = urllib.parse.urlencode({"sort": "last_modified", "project": project})
+    return f"{url}/search?{query}"
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Register datasets with the Scientific Dataset Catalog."
@@ -178,7 +183,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return args
 
 
-def make_handler(client: CatalogClient, config: dict, args: argparse.Namespace):
+def make_handler(
+    client: CatalogClient,
+    config: dict,
+    args: argparse.Namespace,
+    registered_projects: set[str],
+):
     def handle(src: Source) -> None:
         request = build_request(src, config)
         # Local pydantic validation: a bad record fails here, before any API call.
@@ -223,6 +233,7 @@ def make_handler(client: CatalogClient, config: dict, args: argparse.Namespace):
         )
         for collection_id in collections:
             client.collections.add_dataset(collection_id, dataset_id)
+        registered_projects.add(payload.project)
         log.info("%s: registered %s", src.key, dataset_id)
 
     return handle
@@ -251,14 +262,19 @@ def main(argv: list[str] | None = None) -> int:
         records: Iterator[Source] = discover_records(config)
         if args.limit:
             records = itertools.islice(records, args.limit)
+        registered_projects: set[str] = set()
         report = run_batch(
             records,
-            make_handler(client, config, args),
+            make_handler(client, config, args, registered_projects),
             key=lambda src: src.key,
             max_workers=args.workers,
             logger=log,
         )
     print(report.summary("planned" if args.dry_run else "registered"))
+    for project in sorted(registered_projects):
+        print(
+            f"Search page ({env}, project {project}): {search_page_url(url, project)}"
+        )
     if args.dry_run and report.exit_code == 0:
         # Read by the plugin's PreToolUse guard: a production run needs a passing dry run of these exact files.
         script, mapping = Path(__file__).resolve(), args.config.resolve()
