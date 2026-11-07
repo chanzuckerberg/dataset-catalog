@@ -53,7 +53,7 @@ class CatalogClient:
             dataset_request = request.to_dataset_request()
         else:
             dataset_request = request
-        dataset_id = self._create_or_update(
+        dataset_id, created = self._create_or_update(
             dataset_request, update_if_exists, error_on_duplicate
         )
 
@@ -66,14 +66,16 @@ class CatalogClient:
                 else:
                     continue
 
-                self.lineages.create(
-                    LineageEdgeRequest(
-                        source_dataset_id=source_id,
-                        destination_dataset_id=dataset_id,
-                        lineage_type=spec.lineage_type,
-                        metadata=spec.metadata,
-                    )
+                edge = LineageEdgeRequest(
+                    source_dataset_id=source_id,
+                    destination_dataset_id=dataset_id,
+                    lineage_type=spec.lineage_type,
+                    metadata=spec.metadata,
                 )
+                # A dataset created just now has no edges yet; skip the lookup.
+                if not created and self._edge_exists(edge):
+                    continue
+                self.lineages.create(edge)
 
         return dataset_id
 
@@ -82,6 +84,15 @@ class CatalogClient:
             return self.datasets._resolve(ref)
         except NotFoundError as exc:
             raise LineageResolutionError(ref=ref, reason=str(exc)) from exc
+
+    def _edge_exists(self, edge: LineageEdgeRequest) -> bool:
+        page = self.lineages.list(
+            source_dataset_id=edge.source_dataset_id,
+            destination_dataset_id=edge.destination_dataset_id,
+            lineage_type=edge.lineage_type,
+            limit=1,
+        )
+        return bool(page.results)
 
     def new_registration(
         self,
@@ -116,8 +127,8 @@ class CatalogClient:
 
     def _create_or_update(
         self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
-    ) -> str:
-        """Create a new dataset or update existing one based on parameters."""
+    ) -> tuple[str, bool]:
+        """Create or update a dataset. Returns (dataset_id, created)."""
         # Validate mutually exclusive parameters
         if update_if_exists and error_on_duplicate:
             raise ValueError(
@@ -145,7 +156,7 @@ class CatalogClient:
         # No existing dataset found - create new one
         if not existing_datasets:
             response = self.datasets.create(dataset)
-            return response.id
+            return response.id, True
 
         # Found existing dataset(s) - handle based on parameters
         if error_on_duplicate:
@@ -159,10 +170,10 @@ class CatalogClient:
         if update_if_exists:
             existing_dataset = existing_datasets[0]
             self.datasets.update(existing_dataset.id, dataset)
-            return existing_dataset.id
+            return existing_dataset.id, False
 
         # Default: return existing dataset ID without error
-        return existing_datasets[0].id
+        return existing_datasets[0].id, False
 
 
 class AsyncCatalogClient:
@@ -195,7 +206,7 @@ class AsyncCatalogClient:
             dataset_request = request.to_dataset_request()
         else:
             dataset_request = request
-        dataset_id = await self._create_or_update(
+        dataset_id, created = await self._create_or_update(
             dataset_request, update_if_exists, error_on_duplicate
         )
 
@@ -208,14 +219,16 @@ class AsyncCatalogClient:
                 else:
                     continue
 
-                await self.lineages.create(
-                    LineageEdgeRequest(
-                        source_dataset_id=source_id,
-                        destination_dataset_id=dataset_id,
-                        lineage_type=spec.lineage_type,
-                        metadata=spec.metadata,
-                    )
+                edge = LineageEdgeRequest(
+                    source_dataset_id=source_id,
+                    destination_dataset_id=dataset_id,
+                    lineage_type=spec.lineage_type,
+                    metadata=spec.metadata,
                 )
+                # A dataset created just now has no edges yet; skip the lookup.
+                if not created and await self._edge_exists(edge):
+                    continue
+                await self.lineages.create(edge)
 
         return dataset_id
 
@@ -225,10 +238,19 @@ class AsyncCatalogClient:
         except NotFoundError as exc:
             raise LineageResolutionError(ref=ref, reason=str(exc)) from exc
 
+    async def _edge_exists(self, edge: LineageEdgeRequest) -> bool:
+        page = await self.lineages.list(
+            source_dataset_id=edge.source_dataset_id,
+            destination_dataset_id=edge.destination_dataset_id,
+            lineage_type=edge.lineage_type,
+            limit=1,
+        )
+        return bool(page.results)
+
     async def _create_or_update(
         self, dataset: DatasetRequest, update_if_exists: bool, error_on_duplicate: bool
-    ) -> str:
-        """Create a new dataset or update an existing one based on parameters."""
+    ) -> tuple[str, bool]:
+        """Create or update a dataset. Returns (dataset_id, created)."""
         if update_if_exists and error_on_duplicate:
             raise ValueError(
                 "update_if_exists and error_on_duplicate cannot both be True"
@@ -253,7 +275,7 @@ class AsyncCatalogClient:
 
         if not existing_datasets:
             response = await self.datasets.create(dataset)
-            return response.id
+            return response.id, True
 
         if error_on_duplicate:
             raise DuplicateDatasetError(dataset_ref)
@@ -266,9 +288,9 @@ class AsyncCatalogClient:
         if update_if_exists:
             existing_dataset = existing_datasets[0]
             await self.datasets.update(existing_dataset.id, dataset)
-            return existing_dataset.id
+            return existing_dataset.id, False
 
-        return existing_datasets[0].id
+        return existing_datasets[0].id, False
 
     def new_registration(
         self,

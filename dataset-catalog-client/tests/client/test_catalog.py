@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from pytest_httpx import HTTPXMock
@@ -218,6 +219,26 @@ EMPTY_PAGINATED = {
     "results": [],
 }
 
+LINEAGE_LIST_URL = re.compile(r".*/api/v1/lineage/\?.*")
+
+EXISTING_EDGE_PAGINATED = {
+    "total": 1,
+    "limit": 1,
+    "offset": 0,
+    "results": [{**EDGE_RESPONSE, "destination_dataset_id": "existing-uuid"}],
+}
+
+
+def _lineage_request() -> RegistrationRequest:
+    return _minimal_request(
+        lineage=[
+            LineageSpec(
+                lineage_type=LineageType.transformed_from,
+                source_dataset_id="parent-uuid",
+            )
+        ]
+    )
+
 
 def test_register_default_behavior_new_dataset_creates(httpx_mock: HTTPXMock):
     """Default behavior: new dataset should be created"""
@@ -333,6 +354,9 @@ def test_register_with_lineage_update_if_exists(httpx_mock: HTTPXMock):
         method="PATCH", json=EXISTING_DATASET_RESPONSE, status_code=200
     )  # Update response
     httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EMPTY_PAGINATED
+    )  # No edge yet
+    httpx_mock.add_response(
         method="POST", json=EDGE_RESPONSE, status_code=201
     )  # Lineage creation
 
@@ -422,3 +446,73 @@ def test_register_sends_lineage_metadata(httpx_mock: HTTPXMock):
         r for r in httpx_mock.get_requests() if r.url.path.endswith("/lineage/")
     ][0]
     assert json.loads(lineage_req.content)["metadata"] == {"pipeline": "nf-core"}
+
+
+# --- lineage dedup on re-register ---
+
+
+def test_reregister_skips_existing_edge(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(method="PATCH", json=EXISTING_DATASET_RESPONSE)
+    httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EXISTING_EDGE_PAGINATED
+    )
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        dataset_id = client.register(
+            _lineage_request(), update_if_exists=True, error_on_duplicate=False
+        )
+
+    assert dataset_id == "existing-uuid"
+    assert not [r for r in httpx_mock.get_requests() if r.method == "POST"]
+    lookup = httpx_mock.get_requests(url=LINEAGE_LIST_URL)[0]
+    assert lookup.url.params["source_dataset_id"] == "parent-uuid"
+    assert lookup.url.params["destination_dataset_id"] == "existing-uuid"
+    assert lookup.url.params["lineage_type"] == "transformed_from"
+
+
+def test_reregister_skip_mode_skips_existing_edge(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EXISTING_EDGE_PAGINATED
+    )
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        client.register(_lineage_request(), error_on_duplicate=False)
+
+    assert not [r for r in httpx_mock.get_requests() if r.method == "POST"]
+
+
+def test_register_create_does_not_look_up_edges(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EMPTY_PAGINATED)
+    httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
+    httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
+
+    with CatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        client.register(_lineage_request())
+
+    assert not httpx_mock.get_requests(url=LINEAGE_LIST_URL)
+
+
+async def test_async_reregister_skips_existing_edge(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(
+        method="GET", url=LINEAGE_LIST_URL, json=EXISTING_EDGE_PAGINATED
+    )
+
+    async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        await client.register(_lineage_request(), error_on_duplicate=False)
+
+    assert not [r for r in httpx_mock.get_requests() if r.method == "POST"]
+
+
+async def test_async_reregister_creates_missing_edge(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="GET", json=EXISTING_PAGINATED)
+    httpx_mock.add_response(method="GET", url=LINEAGE_LIST_URL, json=EMPTY_PAGINATED)
+    httpx_mock.add_response(method="POST", json=EDGE_RESPONSE, status_code=201)
+
+    async with AsyncCatalogClient(base_url=BASE, api_token=TOKEN) as client:
+        await client.register(_lineage_request(), error_on_duplicate=False)
+
+    posts = [r for r in httpx_mock.get_requests() if r.method == "POST"]
+    assert len(posts) == 1
