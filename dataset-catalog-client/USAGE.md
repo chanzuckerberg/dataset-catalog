@@ -15,8 +15,13 @@ client = CatalogClient(
     base_url="https://your-catalog.example.com",
     api_token="your-token-here",
     timeout=30.0,  # optional, default 30 s
+    retry=None,    # optional RetryPolicy; None sends each request once
 )
 ```
+
+For pipelines, pass `retry=RetryPolicy()` to retry rate limits and transient
+failures with exponential backoff — see [Pipeline registration
+runtime](#pipeline-registration-runtime).
 
 Use the client as a context manager to ensure the HTTP connection is closed:
 
@@ -33,9 +38,9 @@ An async variant is also available — see [Async usage](#async-usage).
 
 Installing the package also installs a read-only `catalog` command for querying
 the catalog from the shell. It only issues GET requests — creating, updating,
-and deleting always go through the Python API. One subcommand, `checksum`, does
-not talk to the catalog at all; see [Checksums from the command
-line](#checksums-from-the-command-line).
+and deleting always go through the Python API. Two subcommands do not talk to
+the catalog at all: `checksum` (see [Checksums from the command
+line](#checksums-from-the-command-line)) and `validate`.
 
 Configure the query subcommands via the environment:
 
@@ -77,7 +82,23 @@ catalog collections parents <collection-uuid>
 
 # Hash a local path or S3 URI — no catalog credentials involved
 catalog checksum data/sample.h5ad
+
+# Validate a DatasetRequest JSON payload locally — no network, no credentials
+catalog validate dataset.json
+cat dataset.json | catalog validate -
 ```
+
+`catalog validate` prints `valid` (exit `0`), or one `<dotted.field.path>:
+<message>` line per problem on stdout (exit `1`):
+
+```
+modality: Input should be 'imaging', 'sequencing', 'mass spec', 'text' or 'unknown'
+locations.0.location_uri: Field required
+```
+
+A file that is not JSON exits `1` with `error: <path>: not valid JSON: ...` on
+stderr; a missing file exits `4`. Unknown keys are ignored, as they are by the
+Python model.
 
 Useful flags:
 
@@ -289,6 +310,74 @@ dataset_id = client.register(request, error_on_duplicate=False)
 - `error_on_duplicate: bool = True` – Raise `DuplicateDatasetError` if duplicate found
 
 Note: `update_if_exists=True` and `error_on_duplicate=True` cannot be used together.
+
+Re-registering is safe: when the dataset already exists, each lineage edge is
+looked up by `(source_dataset_id, destination_dataset_id, lineage_type)` and only
+created if missing. Lineage `source_ref`s are resolved before anything is
+written, so a `LineageResolutionError` never leaves a half-registered dataset.
+
+### Pipeline registration runtime
+
+Helpers for registration scripts that run unattended. Full reference:
+[catalog_client/registration/README.md](catalog_client/registration/README.md).
+
+**Dry run** — `plan()` takes `register()`'s arguments, makes the same decision,
+raises the same errors, and issues GET requests only:
+
+```python
+plan = client.plan(request, update_if_exists=True, error_on_duplicate=False)
+# RegistrationPlan(
+#     action="update",              # "create" | "update" | "skip"
+#     dataset_id="0192f3c4-...",    # None when action == "create"
+#     lineage_to_create=[LineageEdgeRequest(...)],  # existing edges left out
+#     request=DatasetRequest(...),
+# )
+```
+
+**Retries** — idempotent requests (`GET`/`HEAD`/`PUT`/`DELETE`) retry on `429`,
+`502`, `503`, `504` and network errors; `POST`/`PATCH` retry only on `429` and
+connect errors, since a request that reached the server may have been applied.
+`Retry-After` is honoured; every delay is capped at `max_delay`.
+
+```python
+from catalog_client import CatalogClient, RetryPolicy
+
+client = CatalogClient(
+    base_url="...",
+    api_token="...",
+    retry=RetryPolicy(max_attempts=5, base_delay=0.5, max_delay=30.0, jitter=True),
+)
+```
+
+**Startup compatibility check** — raises `CompatibilityError` when the server's
+`DatasetRequest.record_schema_version` is newer than the one this client writes:
+
+```python
+from catalog_client import check_compatibility
+
+check_compatibility(client)
+# CompatibilityError: server expects record schema v1.8.0, installed
+# catalog-client supports v1.7.0 — upgrade catalog-client
+```
+
+`acheck_compatibility(async_client)` is the `AsyncCatalogClient` variant.
+
+**Batches** — `run_batch()` runs `handle` over `items` on a thread pool, records
+and logs each failure as one line, and never lets one item stop the batch:
+
+```python
+import sys
+from catalog_client import run_batch
+
+report = run_batch(
+    iter_samples(),                    # any iterable; consumed lazily
+    lambda s: client.register(build_request(s), update_if_exists=True, error_on_duplicate=False),
+    key=lambda s: s.name,
+    max_workers=4,
+)
+print(report.summary())  # "48 registered, 2 failed: s-017 (NotFoundError: ...), s-031 (...)"
+sys.exit(report.exit_code)  # 1 if anything failed
+```
 
 ### List datasets
 
@@ -1062,10 +1151,12 @@ from catalog_client import (
     CatalogConnectionError,
     CatalogError,
     CatalogUsageError,
+    CompatibilityError,
     DuplicateDatasetError,
     LineageResolutionError,
     NotFoundError,
     ValidationError,
+    check_compatibility,
 )
 
 try:
@@ -1098,6 +1189,12 @@ except DuplicateDatasetError as e:
     # Consider using update_if_exists=True or error_on_duplicate=False
 except LineageResolutionError as e:
     print(f"Could not resolve source dataset ref: {e}")
+
+# At pipeline startup
+try:
+    check_compatibility(client)
+except CompatibilityError as e:
+    raise SystemExit(str(e))  # server expects a newer record schema — upgrade catalog-client
 ```
 
 `ValidationError` above is the catalog's `422` wrapper, raised when the API rejects a

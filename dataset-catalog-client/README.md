@@ -100,6 +100,22 @@ print(f"{result.stats.total_rows} rows from {result.stats.total_datasets} datase
 
 See [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) for the full manifest generation guide.
 
+For pipeline registration scripts — retries with backoff, a read-only dry run,
+failure-isolated batches, and a startup compatibility check:
+
+```python
+from catalog_client import CatalogClient, RetryPolicy, check_compatibility, run_batch
+
+with CatalogClient(base_url="...", api_token="...", retry=RetryPolicy()) as client:
+    check_compatibility(client)  # raises CompatibilityError if the server's schema is newer
+    print(client.plan(request).action)  # "create" | "update" | "skip"; GET requests only
+    report = run_batch(requests, lambda r: client.register(r, error_on_duplicate=False),
+                       key=lambda r: r.canonical_id)
+print(report.summary())  # "3 registered, 0 failed"
+```
+
+See [catalog_client/registration/README.md](catalog_client/registration/README.md) for the registration runtime guide.
+
 ## Command-line interface
 
 Installing the package also installs a read-only `catalog` command for querying the catalog from the shell:
@@ -123,6 +139,13 @@ catalog checksum data/run-01/ --children
 catalog checksum s3://my-bucket/prefix/object.tif --algorithm crc32
 ```
 
+The `validate` subcommand checks a `DatasetRequest` JSON payload locally — no network, no token. It prints `valid` (exit 0) or one `<dotted.field.path>: <message>` line per error (exit 1):
+
+```bash
+catalog validate dataset.json
+cat dataset.json | catalog validate -
+```
+
 Output is a human-readable table on a terminal and JSON when piped (override with `-o table|json`). See the [CLI section of USAGE.md](USAGE.md#command-line-interface) for all subcommands, flags, and exit codes.
 
 ## Documentation
@@ -133,6 +156,7 @@ Output is a human-readable table on a terminal and JSON when piped (override wit
 | [schema/v1.8.0/schema.md](../schema/v1.8.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) — the version this client writes |
 | [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
+| [catalog_client/registration/README.md](catalog_client/registration/README.md) | Registration runtime — `plan()` dry run, `RetryPolicy`, `run_batch()`, `check_compatibility()`, `catalog validate` |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:
 
