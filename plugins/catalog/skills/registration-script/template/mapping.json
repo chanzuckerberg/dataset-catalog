@@ -1,0 +1,34 @@
+{
+  "_comment": "Data-specific values for register.py. null = not yet answered: governance values come from the data owner, never inferred. Field meanings: field-reference skill.",
+  "data": {
+    "root": "/path/to/data",
+    "dataset_glob": "*"
+  },
+  "dataset": {
+    "canonical_id_prefix": "my-project/my-experiment",
+    "name_prefix": "My experiment",
+    "version": "1.0.0",
+    "project": "my-project",
+    "modality": "sequencing",
+    "dataset_type": "raw",
+    "description": null,
+    "organism": [
+      {"label": "Homo sapiens", "ontology_id": "NCBITaxon:9606"}
+    ]
+  },
+  "assets": {
+    "storage_platform": null,
+    "file_format": null,
+    "checksum_algorithm": "blake2b"
+  },
+  "governance": {
+    "access_scope": "internal",
+    "data_steward": null,
+    "data_owner": null,
+    "license": null,
+    "is_pii": null,
+    "is_phi": null
+  },
+  "lineage_parents": [],
+  "collections": []
+}

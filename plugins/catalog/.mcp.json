@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "ols": {
-      "type": "http",
-      "url": "https://www.ebi.ac.uk/ols4/api/mcp"
-    }
-  }
-}

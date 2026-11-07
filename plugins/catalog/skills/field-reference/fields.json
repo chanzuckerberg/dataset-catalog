@@ -1,0 +1,1897 @@
+{
+  "stamp": {
+    "generated": "2026-11-06",
+    "client_version": "1.2.0",
+    "record_schema_version": "v1.7.0",
+    "api_source": "https://datacatalog.staging-sci-data.staging.czi.team/api/v1/meta/openapi.json",
+    "api_version": "0.1.0"
+  },
+  "models": {
+    "dataset": {
+      "root": "DatasetRequest",
+      "extra_allowed": false,
+      "fields": {
+        "canonical_id": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Unique identifier for the dataset across versions in a project",
+          "source": "both",
+          "decided_by": "A stable id from the source system (LIMS id, accession, run id). Together with `version` and `project` it is the record's signature, so it must come out identical on every re-run.",
+          "common_mistakes": "Building it from values that change between runs (timestamps, temp paths), which mints a new record every run. Composite ids out of order or `_`-joined: order the parts highest to lowest granularity and join with `/`, the same way for every record.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "dynacell/screen-07/plate-03",
+              "note": "composite id, coarsest to finest, `/`-separated"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "GSE123456/GSM3511234"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "PXD012345/run-14"
+            }
+          ]
+        },
+        "name": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Human-readable name of the dataset",
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "HEK293 H2B-GFP live imaging, plate 03"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "Mouse liver scRNA-seq, 10x 3' v3, donor 2"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "Human plasma proteome LC-MS/MS, run 14"
+            }
+          ]
+        },
+        "version": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": false,
+          "description": "Version string for the dataset (defaults to '1.0.0')",
+          "default": "1.0.0",
+          "source": "both",
+          "decided_by": "The source's own release or version label; `1.0.0` when it has none.",
+          "common_mistakes": "Passing `null`: the field is a string, so send `1.0.0` rather than nothing."
+        },
+        "project": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Initiative that this dataset belongs to ex: CellXGene, SRA, CryoET, Shrimp, DynaCell",
+          "source": "both",
+          "decided_by": "The initiative the data belongs to. Part of the signature.",
+          "common_mistakes": "Using a lab or person name. Use the initiative name other records in that initiative already use (check with search facets).",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "DynaCell"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "CellXGene"
+            }
+          ]
+        },
+        "modality": {
+          "type": "enum DatasetModality — `imaging` | `sequencing` | `mass spec` | `text` | `unknown`",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Data modality (imaging, sequencing, mass spec, text, or unknown)",
+          "enum": [
+            "imaging",
+            "sequencing",
+            "mass spec",
+            "text",
+            "unknown"
+          ],
+          "source": "both",
+          "decided_by": "The acquisition technology, derived from the assay or file format rather than copied verbatim from a source column.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "imaging"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "sequencing"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "mass spec",
+              "note": "with a space, not `mass_spec`"
+            }
+          ]
+        },
+        "governance": {
+          "type": "GovernanceMetadata",
+          "json_types": [
+            "object"
+          ],
+          "required": true,
+          "description": "Access control and compliance metadata",
+          "object": "GovernanceMetadata",
+          "extra_allowed": true,
+          "source": "both",
+          "common_mistakes": "Putting access, consent, or compliance values that have no named field here (e.g. `consent`, `data_use_agreement`). The block accepts extra keys, but only the named fields are governance; put the rest under `metadata.additional_metadata`."
+        },
+        "governance.license": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "License under which the dataset is made available. This can either be the name of the license like 'MIT' or a link to the term of agreement",
+          "default": null,
+          "source": "both",
+          "decided_by": "The data owner or the source's terms. Ask; never infer.",
+          "common_mistakes": "Guessing a license because the dataset is public somewhere.",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": "CC-BY-4.0",
+              "note": "public deposit"
+            },
+            {
+              "data_type": "imaging",
+              "value": "https://example.org/data-use-terms",
+              "note": "a URL to bespoke terms also works"
+            }
+          ]
+        },
+        "governance.data_sensitivity": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Classification level of data sensitivity: 'Low', 'Medium' or 'High'",
+          "default": null,
+          "source": "both",
+          "decided_by": "Leave unset. Records registered through this plugin do not populate it.",
+          "common_mistakes": "Mapping a source sensitivity column onto it, or routing it to custom metadata instead."
+        },
+        "governance.access_scope": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Gates record visibility: exactly 'internal' (the server default) or 'public'",
+          "default": null,
+          "source": "both",
+          "decided_by": "Always `internal` for records registered through this plugin. Never mapped from a source field.",
+          "common_mistakes": "Copying a source `visibility: public` value."
+        },
+        "governance.is_pii": {
+          "type": "boolean",
+          "json_types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Required. Whether the dataset contains Personally Identifiable Information. 'I am not sure' is not False — ask your data steward before you write",
+          "source": "both",
+          "decided_by": "Consent and data source, confirmed by a person who knows them. Never inferred from file contents.",
+          "common_mistakes": "Defaulting to `false` because the field is required. `false` is a claim, not a default.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": false,
+              "note": "commercial cell line, no donor data (confirmed by the data owner)"
+            },
+            {
+              "data_type": "sequencing",
+              "value": true,
+              "note": "human donor genotypes"
+            }
+          ]
+        },
+        "governance.is_phi": {
+          "type": "boolean",
+          "json_types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Required. Whether the dataset contains Protected Health Information",
+          "source": "both",
+          "decided_by": "Consent and data source, confirmed by a person who knows them. Never inferred from file contents.",
+          "common_mistakes": "Defaulting to `false` because the field is required, or treating it as the same question as `is_pii`."
+        },
+        "governance.data_steward": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Required. Person or org that defines the standards and best practices for the data's accuracy, quality and completeness, and ingests and formats datasets to meet them",
+          "source": "both",
+          "decided_by": "Ask the user. There is no honest empty value.",
+          "common_mistakes": "Substituting `data_owner` or a contact address. Steward and owner are different accountabilities.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "imaging-platform-team"
+            }
+          ]
+        },
+        "governance.data_generator": {
+          "type": "string or list of string, nullable",
+          "json_types": [
+            "string",
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Person, lab or org that produced the data. Pass a list when more than one party generated it",
+          "default": null,
+          "item_types": [
+            "string"
+          ],
+          "source": "both"
+        },
+        "governance.data_owner": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Person or organization that owns the data",
+          "default": null,
+          "source": "both",
+          "common_mistakes": "Inventing one when the source has none; leave it unset."
+        },
+        "governance.is_external_reference": {
+          "type": "boolean",
+          "json_types": [
+            "boolean"
+          ],
+          "required": false,
+          "description": "Whether this dataset references external data hosted by a third part, and not stored locally",
+          "default": false,
+          "source": "both"
+        },
+        "governance.embargoed_until": {
+          "type": "string (date), nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Date until which the dataset is under embargo/restricted access",
+          "default": null,
+          "format": "date",
+          "source": "both"
+        },
+        "metadata": {
+          "type": "DatasetMetadata",
+          "json_types": [
+            "object"
+          ],
+          "required": true,
+          "description": "Biological, experimental and data quality metadata",
+          "object": "DatasetMetadata",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.experiment": {
+          "type": "ExperimentMetadata, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Experimental design and protocol metadata",
+          "default": null,
+          "object": "ExperimentMetadata",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.experiment.sub_modality": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Specific sub-type within the main data modality",
+          "default": null,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "confocal"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "scRNA-seq"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "proteomics"
+            }
+          ]
+        },
+        "metadata.experiment.assay": {
+          "type": "list of OntologyEntry, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Assay(s) or experimental technique(s) used",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "OntologyEntry",
+          "items_extra_allowed": true,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": [
+                {
+                  "label": "confocal microscopy",
+                  "ontology_id": "FBbi:00000251"
+                }
+              ]
+            },
+            {
+              "data_type": "sequencing",
+              "value": [
+                {
+                  "label": "10x 3' v3",
+                  "ontology_id": "EFO:0009922"
+                }
+              ]
+            },
+            {
+              "data_type": "mass spec",
+              "value": [
+                {
+                  "label": "liquid chromatography-tandem mass spectrometry",
+                  "ontology_id": "CHMO:0000701"
+                }
+              ]
+            }
+          ]
+        },
+        "metadata.experiment.assay[].label": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable name or label for the ontology term",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.experiment.assay[].ontology_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
+          "default": null,
+          "source": "both",
+          "decided_by": "An ontology lookup that matches the label exactly (case-insensitive, label or synonym). Leave unset when there is no confident match.",
+          "common_mistakes": "Naming the key `ontology_term_id`; it is `ontology_id`. Fabricating or partially guessing a CURIE."
+        },
+        "metadata.experiment.machine_information": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Information about instruments or machines used",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.experiment.experimental_protocols": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Protocols and procedures used in the experiment",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample": {
+          "type": "SampleMetadata, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Biological sample characteristics and preparation metadata",
+          "default": null,
+          "object": "SampleMetadata",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.sample.organism": {
+          "type": "list of OntologyEntry, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Organism(s) from which the sample was derived",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "OntologyEntry",
+          "items_extra_allowed": true,
+          "source": "both",
+          "common_mistakes": "Deriving it from a cell type that exists in several species. Fill it from another column only when that column uniquely determines it (a cell line pins its species), and confirm the rule with the user first.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": [
+                {
+                  "label": "Homo sapiens",
+                  "ontology_id": "NCBITaxon:9606"
+                }
+              ]
+            },
+            {
+              "data_type": "sequencing",
+              "value": [
+                {
+                  "label": "Mus musculus",
+                  "ontology_id": "NCBITaxon:10090"
+                }
+              ]
+            }
+          ]
+        },
+        "metadata.sample.organism[].label": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable name or label for the ontology term",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.organism[].ontology_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.tissue": {
+          "type": "list of TissueEntry, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Tissue(s) from which the sample was derived",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "TissueEntry",
+          "items_extra_allowed": true,
+          "source": "both",
+          "common_mistakes": "Adding a separate `cell_line` key instead of a tissue entry with `type: cell line`. Naming the key `tissue_type`; it is `type`.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": [
+                {
+                  "label": "HEK293",
+                  "ontology_id": "CLO:0001230",
+                  "type": "cell line"
+                }
+              ],
+              "note": "cell lines go here, with `type: cell line`"
+            },
+            {
+              "data_type": "sequencing",
+              "value": [
+                {
+                  "label": "liver",
+                  "ontology_id": "UBERON:0002107",
+                  "type": "tissue"
+                }
+              ]
+            },
+            {
+              "data_type": "mass spec",
+              "value": [
+                {
+                  "label": "lung",
+                  "ontology_id": "UBERON:0002048",
+                  "type": "tissue"
+                }
+              ]
+            }
+          ]
+        },
+        "metadata.sample.tissue[].label": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable name or label for the ontology term",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.tissue[].ontology_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.tissue[].type": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Additional tissue type classification (e.g., 'organelle', 'cell line', 'tissue', 'cell culture', 'organoid')",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.development_stage": {
+          "type": "list of OntologyEntry, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Developmental stage(s) of the sample",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "OntologyEntry",
+          "items_extra_allowed": true,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": [
+                {
+                  "label": "adult stage",
+                  "ontology_id": "HsapDv:0000258"
+                }
+              ]
+            }
+          ]
+        },
+        "metadata.sample.development_stage[].label": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable name or label for the ontology term",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.development_stage[].ontology_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.disease": {
+          "type": "list of OntologyEntry, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Disease(s) or pathological condition(s) associated with the sample",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "OntologyEntry",
+          "items_extra_allowed": true,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": [
+                {
+                  "label": "normal",
+                  "ontology_id": "PATO:0000461"
+                }
+              ],
+              "note": "healthy donor"
+            }
+          ]
+        },
+        "metadata.sample.disease[].label": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable name or label for the ontology term",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.disease[].ontology_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Unique identifier from the relevant ontology (e.g., GO:0001234, NCBI:9606)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.perturbation": {
+          "type": "list of object, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Codebook of the distinct perturbations applied, one entry per perturbation with 'id', 'type' (chemical/protein/genetic/environmental/combination/none/other/unknown) and 'role' (treatment/negative_control/positive_control/untreated). Per-cell or per-well assignment stays in the data, keyed by 'id'. Stored unvalidated",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "source": "both"
+        },
+        "metadata.sample.sample_parent": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Information about the parent sample or source",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.sample.sample_preparation_protocols": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Protocols used for sample preparation and processing",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary": {
+          "type": "DataSummaryMetadata, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Summary statistics and characteristics of the data",
+          "default": null,
+          "object": "DataSummaryMetadata",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.data_summary.cell_count": {
+          "type": "integer, nullable",
+          "json_types": [
+            "integer",
+            "null"
+          ],
+          "required": false,
+          "description": "Total number of cells detected or segmented in the dataset",
+          "default": null,
+          "source": "both",
+          "common_mistakes": "Copying a collection-level total onto every dataset in it.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": 48211,
+              "note": "segmented cells"
+            },
+            {
+              "data_type": "sequencing",
+              "value": 9874,
+              "note": "cells passing QC"
+            }
+          ]
+        },
+        "metadata.data_summary.read_count": {
+          "type": "integer, nullable",
+          "json_types": [
+            "integer",
+            "null"
+          ],
+          "required": false,
+          "description": "Number of reads or sequences (for sequencing data)",
+          "default": null,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": 412000000
+            }
+          ]
+        },
+        "metadata.data_summary.read_length": {
+          "type": "integer or object, nullable",
+          "json_types": [
+            "integer",
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Length of reads in base pairs (for sequencing data)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.read_confidence": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Quality score or confidence measure for reads",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.observation_unit": {
+          "type": "enum ObservationUnit — `single_cell` | `pseudobulk` | `bulk`, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Sequencing and imaging. What one observation represents. Leave unset where observations are not the unit, such as FASTQs",
+          "default": null,
+          "enum": [
+            "single_cell",
+            "pseudobulk",
+            "bulk"
+          ],
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": "single_cell"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "bulk"
+            }
+          ]
+        },
+        "metadata.data_summary.is_combined": {
+          "type": "boolean, nullable",
+          "json_types": [
+            "boolean",
+            "null"
+          ],
+          "required": false,
+          "description": "All modalities. True when the data combines more than one data acquisition; combining files from a single acquisition does not count. Unset means unknown, so a search for False returns only datasets explicitly marked single-acquisition",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.axes": {
+          "type": "list of object, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "OME-ngff v0.5 axes metadata; length MUST equal the number of array dimensions; each entry has 'name', 'type', and 'unit' keys; units MUST follow OME-ngff v0.5 specification for spatial and temporal dimensions",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "source": "both"
+        },
+        "metadata.data_summary.channels": {
+          "type": "list of ChannelMetadata, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "DCA per-channel metadata array (dca.channels); SHOULD include an entry for each channel in the image",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "items_object": "ChannelMetadata",
+          "items_extra_allowed": true,
+          "source": "both",
+          "common_mistakes": "Leaving out a channel: include one entry per channel in the image's C axis, with `index` matching its position.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": [
+                {
+                  "name": "Phase2D",
+                  "index": 0,
+                  "channel_type": "labelfree"
+                },
+                {
+                  "name": "H2B-GFP",
+                  "index": 1,
+                  "channel_type": "fluorescence",
+                  "biological_annotation": {
+                    "biological_target": "nucleus",
+                    "marker": "H2B",
+                    "marker_type": "endogenous_tag"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "metadata.data_summary.channels[].name": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Short name capturing the acquisition and/or biological context (e.g. 'H2B-GFP', 'Phase2D'); SHOULD match the OME-NGFF omero.channels label",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].index": {
+          "type": "integer, nullable",
+          "json_types": [
+            "integer",
+            "null"
+          ],
+          "required": false,
+          "description": "Zero-based channel index in the C axis",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].description": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Rich natural language description of the channel suitable for text embedding; SHOULD capture biological target and imaging context",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].channel_type": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Functional type of the channel; SHOULD be one of: fluorescence (fluorescent label microscopy), chromogenic (chromogenic staining e.g. H&E, IHC), labelfree (brightfield, phase, DIC), predicted (computationally predicted via virtual staining)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].biological_annotation": {
+          "type": "BiologicalAnnotation, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Biological target details for the channel; SHOULD be provided for fluorescence and predicted channels",
+          "default": null,
+          "object": "BiologicalAnnotation",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].biological_annotation.biological_target": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Target organelle, structure, or protein class visualized (e.g. 'chaperones', 'actin filament', 'nuclei')",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].biological_annotation.marker_type": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Type of reagent used to label the target; SHOULD be one of: endogenous_tag (genetically encoded fluorescent protein), live_cell_dye (cell-permeable dye applied to living cells), fixed_dye (dye applied after fixation), antibody (fluorescently conjugated antibody). SHOULD be provided for fluorescent channels.",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channels[].biological_annotation.marker": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Specific reagent, protein, or dye used (e.g. 'HSPA1B', 'FastAct_SPY555 Live Cell Dye', 'virtual stain')",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.resolution": {
+          "type": "ResolutionMetadata, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Spatial and temporal resolution of the imaging data using OME-ngff v0.5 units",
+          "default": null,
+          "object": "ResolutionMetadata",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.data_summary.resolution.spatial": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Spatial resolution per axis using OME-ngff v0.5 units (e.g., {'x': 0.1, 'y': 0.1, 'z': 0.25, 'unit': 'micrometer'})",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.resolution.temporal": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Temporal resolution using OME-ngff v0.5 units (e.g., {'interval': 5, 'unit': 'second'})",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.dimension": {
+          "type": "list of integer, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Shape of the 5D image array in (time, channels, z, y, x) order; all datasets MUST be 5-dimensional with placeholder values where a dimension is unused",
+          "default": null,
+          "item_types": [
+            "integer"
+          ],
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": [
+                1,
+                2,
+                30,
+                2048,
+                2048
+              ],
+              "note": "(t, c, z, y, x)"
+            }
+          ]
+        },
+        "metadata.data_summary.multiscales": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "OME-ngff v0.5 multiscales metadata stored in zarr.json at the group level; includes pyramid levels, coordinate transforms, and MUST document the downsampling method used",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.plate": {
+          "type": "string or object, nullable",
+          "json_types": [
+            "string",
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Plate metadata for OME-ngff v0.5 HCS layout; SHOULD follow OME-ngff 0.5 standards for high-content screening datasets",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.well": {
+          "type": "string or object, nullable",
+          "json_types": [
+            "string",
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Well metadata for OME-ngff v0.5 HCS layout; SHOULD follow OME-ngff 0.5 standards for high-content screening datasets",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.fov": {
+          "type": "string or object, nullable",
+          "json_types": [
+            "string",
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Field-of-view level identifier in an OME-ngff HCS layout (e.g. plate.ome.zarr/A/3/0); the level at which DCA metadata (dca key) is stored in zarr.json",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization": {
+          "type": "ChannelNormalization, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Per-channel normalization statistics stored in dca.normalization_statistics; keyed by zero-based channel index (as string); used for display scaling and AI model training normalization",
+          "default": null,
+          "object": "ChannelNormalization",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics": {
+          "type": "IntensityStatistics, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Intensity statistics computed over all spatial dimensions and timepoints for that channel; MUST be present for each channel normalization entry",
+          "default": null,
+          "object": "IntensityStatistics",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p1": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "1st percentile of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p5": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "5th percentile of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p95": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "95th percentile of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p99": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "99th percentile of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p95_p5": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Robust range: 95th percentile minus 5th percentile",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.p99_p1": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Wide robust range: 99th percentile minus 1st percentile",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.mean": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Arithmetic mean of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.std": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Standard deviation of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.median": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Median (50th percentile) of pixel intensities",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.dataset_statistics.iqr": {
+          "type": "number, nullable",
+          "json_types": [
+            "number",
+            "null"
+          ],
+          "required": false,
+          "description": "Interquartile range (75th percentile minus 25th percentile)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata.data_summary.channel_normalization.timepoint_statistics": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Per-timepoint intensity statistics keyed by zero-based timepoint index (as string); if present, MUST contain entries for all timepoints in the dataset",
+          "default": null,
+          "source": "both"
+        },
+        "description": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Detailed description of the dataset",
+          "default": null,
+          "source": "both",
+          "common_mistakes": "Repeating the name. Say what was measured, on what, and how."
+        },
+        "doi": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Digital Object Identifier for the dataset",
+          "default": null,
+          "source": "both"
+        },
+        "cross_db_references": {
+          "type": "list of string or string, nullable",
+          "json_types": [
+            "array",
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "References to external databases or systems",
+          "default": null,
+          "item_types": [
+            "string"
+          ],
+          "source": "both"
+        },
+        "dataset_type": {
+          "type": "enum DatasetType — `raw` | `processed` | `analysis`, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Whether dataset is raw or processed",
+          "default": null,
+          "enum": [
+            "raw",
+            "processed",
+            "analysis"
+          ],
+          "source": "both",
+          "decided_by": "Processing stage: instrument output is `raw`; anything a pipeline produced from it is `processed`; derived results such as embeddings or statistics are `analysis`.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "raw",
+              "note": "OME-Zarr straight from the microscope"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "processed",
+              "note": "count matrix (.h5ad) from FASTQ"
+            }
+          ]
+        },
+        "is_latest": {
+          "type": "boolean",
+          "json_types": [
+            "boolean"
+          ],
+          "required": false,
+          "description": "Whether this is the latest version of the dataset",
+          "default": true,
+          "source": "both"
+        },
+        "record_schema_version": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Version of the record schema used for this dataset",
+          "default": "v1.7.0",
+          "source": "both",
+          "decided_by": "The client model. Never set it by hand.",
+          "common_mistakes": "Mapping a source field onto it."
+        },
+        "metadata_schema": {
+          "type": "list of string, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Schema version used for the metadata structure",
+          "default": null,
+          "item_types": [
+            "string"
+          ],
+          "source": "both"
+        },
+        "data_quality": {
+          "type": "DataQualityChecks, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Results of data quality validation checks",
+          "default": null,
+          "object": "DataQualityChecks",
+          "extra_allowed": true,
+          "source": "both"
+        },
+        "data_quality.checks_passed": {
+          "type": "list of any, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "List of data quality checks that passed validation",
+          "default": null,
+          "item_types": [
+            "any"
+          ],
+          "source": "both",
+          "meaning": "Quality checks that passed. Items may be any shape (names, counts, objects); state the evidence for each.",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": [
+                "fastqc",
+                "checksum_match"
+              ]
+            }
+          ]
+        },
+        "data_quality.checks_failed": {
+          "type": "list of any, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "List of data quality checks that failed validation",
+          "default": null,
+          "item_types": [
+            "any"
+          ],
+          "source": "both"
+        },
+        "data_quality.checks_skipped": {
+          "type": "list of any, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "List of data quality checks that were skipped or not applicable",
+          "default": null,
+          "item_types": [
+            "any"
+          ],
+          "source": "both"
+        },
+        "data_quality.report_assets": {
+          "type": "list of object, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable QC reports, one entry per file, as {'name': ..., 'uri': ...} (e.g. {'name': 'fastqc', 'uri': 's3://bucket/qc/fastqc.html'}). Pointers only; the catalog never fetches or hosts them",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "source": "both"
+        },
+        "data_quality.metrics_assets": {
+          "type": "list of object, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Machine-readable metric files backing the checks, one entry per file, as {'name': ..., 'uri': ...} (e.g. {'name': 'multiqc', 'uri': 's3://bucket/qc/multiqc_data.json'})",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "source": "both"
+        },
+        "data_quality.metrics": {
+          "type": "list of object, nullable",
+          "json_types": [
+            "array",
+            "null"
+          ],
+          "required": false,
+          "description": "Metric values inline, one entry per metric with at least a name and value (e.g. {'name': 'duplication_rate', 'value': 0.12}); use for the few worth reading without opening a file, and put the bulk in metrics_assets",
+          "default": null,
+          "item_types": [
+            "object"
+          ],
+          "source": "both"
+        },
+        "locations": {
+          "type": "list of DataAssetRequest",
+          "json_types": [
+            "array"
+          ],
+          "required": true,
+          "description": "List of data assets that comprise this dataset",
+          "min_items": 1,
+          "item_types": [
+            "object"
+          ],
+          "items_model": "asset",
+          "source": "both"
+        }
+      }
+    },
+    "asset": {
+      "root": "DataAssetRequest",
+      "extra_allowed": false,
+      "fields": {
+        "location_uri": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "URI or path to the data asset (file or directory)",
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "s3://czi-imaging/dynacell/screen-07/plate-03.ome.zarr/"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "/hpc/projects/atlas/liver/donor2/counts.h5ad"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "s3://czi-ms/plasma/run-14/"
+            }
+          ]
+        },
+        "asset_type": {
+          "type": "enum AssetType — `file` | `folder`",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Whether the asset is a file or folder",
+          "enum": [
+            "file",
+            "folder"
+          ],
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "folder",
+              "note": "a .zarr store is a folder"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "file"
+            }
+          ]
+        },
+        "encoding": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Text encoding of the asset (e.g., 'utf-8')",
+          "default": null,
+          "source": "both"
+        },
+        "size_bytes": {
+          "type": "integer, nullable",
+          "json_types": [
+            "integer",
+            "null"
+          ],
+          "required": false,
+          "description": "Size of the asset in bytes",
+          "default": null,
+          "source": "both",
+          "meaning": "Total bytes in the asset: the file size, or for a folder the sum over every file in it.",
+          "common_mistakes": "Writing `0` when the size is unknown; leave it unset instead."
+        },
+        "checksum": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Checksum hash value for data integrity verification",
+          "default": null,
+          "source": "both",
+          "meaning": "Content digest of the asset, in the encoding the algorithm produces (hex for the `catalog checksum` algorithms).",
+          "common_mistakes": "A checksum without `checksum_alg`. Reusing a stored storage checksum without checking how it was made (registration-script skill)."
+        },
+        "checksum_alg": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Algorithm used to compute the checksum (e.g., 'md5', 'sha256')",
+          "default": null,
+          "source": "both",
+          "meaning": "Algorithm that produced `checksum`. The client's checksum utilities produce `blake3`, `blake2b`, `crc32`, `crc64`, or `crc64nvme`.",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "blake3"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "crc64nvme",
+              "note": "reused from S3's stored full-object checksum"
+            }
+          ]
+        },
+        "file_format": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Format or type of the file (e.g., 'csv', 'parquet', 'tiff')",
+          "default": null,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "ome-zarr"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "h5ad"
+            },
+            {
+              "data_type": "mass spec",
+              "value": "mzML"
+            }
+          ]
+        },
+        "description": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Human-readable description of the asset",
+          "default": null,
+          "source": "both"
+        },
+        "storage_platform": {
+          "type": "enum StoragePlatform — `s3` | `sf_hpc` | `chi_hpc` | `ny_hpc` | `reef` | `kelp` | `atoll` | `external` | `other`",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Storage platform where the asset is located",
+          "enum": [
+            "s3",
+            "sf_hpc",
+            "chi_hpc",
+            "ny_hpc",
+            "reef",
+            "kelp",
+            "atoll",
+            "external",
+            "other"
+          ],
+          "source": "both",
+          "decided_by": "Where the bytes live, confirmed with the user when the path alone is ambiguous.",
+          "common_mistakes": "Reading `/hpc/...` as `sf_hpc` (there are three HPC sites: `sf_hpc`, `chi_hpc`, `ny_hpc`), or every `https://` URI as `external` (internal platforms sit behind URLs too).",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "s3"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "sf_hpc",
+              "note": "only after confirming which HPC site"
+            }
+          ]
+        },
+        "file_count": {
+          "type": "integer, nullable",
+          "json_types": [
+            "integer",
+            "null"
+          ],
+          "required": false,
+          "description": "Number of files in the asset (applicable for folders)",
+          "default": null,
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": 1000,
+              "note": "folder of 1,000 TIFFs"
+            }
+          ]
+        },
+        "includes_pattern": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Glob pattern for files to include (applicable for folders)",
+          "default": null,
+          "source": "client-only",
+          "common_mistakes": "Relying on it: the API drops it without an error."
+        },
+        "excludes_pattern": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Glob pattern for files to exclude (applicable for folders)",
+          "default": null,
+          "source": "client-only",
+          "common_mistakes": "Relying on it: the API drops it without an error."
+        }
+      }
+    },
+    "collection": {
+      "root": "CollectionRequest",
+      "extra_allowed": false,
+      "fields": {
+        "canonical_id": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Unique identifier for the collection across versions",
+          "source": "both"
+        },
+        "version": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Version string for the collection",
+          "source": "both"
+        },
+        "name": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Human-readable name of the collection",
+          "source": "both"
+        },
+        "collection_owner": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Owner or maintainer of the collection",
+          "source": "both",
+          "decided_by": "The person or team who maintains membership."
+        },
+        "description": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Detailed description of the collection",
+          "default": null,
+          "source": "both"
+        },
+        "license": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "License under which the collection is made available",
+          "default": null,
+          "source": "both"
+        },
+        "doi": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Digital Object Identifier for the collection",
+          "default": null,
+          "source": "both"
+        },
+        "external_reference": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "External URL or reference link for the collection",
+          "default": null,
+          "source": "both"
+        },
+        "collection_type": {
+          "type": "enum CollectionType — `publication` | `training` | `study` | `experiment`, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Type of collection (publication, training, study or experiment)",
+          "default": null,
+          "enum": [
+            "publication",
+            "training",
+            "study",
+            "experiment"
+          ],
+          "source": "both",
+          "examples": [
+            {
+              "data_type": "imaging",
+              "value": "training",
+              "note": "datasets used to train one model"
+            },
+            {
+              "data_type": "sequencing",
+              "value": "publication"
+            }
+          ]
+        },
+        "metadata": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Additional metadata as key-value pairs",
+          "default": null,
+          "source": "both"
+        }
+      }
+    },
+    "lineage": {
+      "root": "LineageEdgeRequest",
+      "extra_allowed": false,
+      "fields": {
+        "source_dataset_id": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "ID of the source dataset in the lineage relationship",
+          "source": "both"
+        },
+        "destination_dataset_id": {
+          "type": "string",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "ID of the destination dataset in the lineage relationship",
+          "source": "both"
+        },
+        "lineage_type": {
+          "type": "enum LineageType — `version_of` | `transformed_from` | `copy_of`",
+          "json_types": [
+            "string"
+          ],
+          "required": true,
+          "description": "Type of lineage relationship (version_of, transformed_from, copy_of)",
+          "enum": [
+            "version_of",
+            "transformed_from",
+            "copy_of"
+          ],
+          "source": "both",
+          "meaning": "`transformed_from`: the destination was produced by processing the source. `version_of`: the destination is another run or release of the same data or processing. `copy_of`: the same bytes at another location.",
+          "common_mistakes": "Pointing the edge the wrong way: `source_dataset_id` is the parent, `destination_dataset_id` the derived record.",
+          "examples": [
+            {
+              "data_type": "sequencing",
+              "value": "transformed_from",
+              "note": "count matrix (destination) from FASTQ (source)"
+            },
+            {
+              "data_type": "imaging",
+              "value": "version_of",
+              "note": "segmentation re-run with the same pipeline"
+            }
+          ]
+        },
+        "source_data_asset_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Specific data asset ID within the source dataset (optional)",
+          "default": null,
+          "source": "both"
+        },
+        "destination_data_asset_id": {
+          "type": "string, nullable",
+          "json_types": [
+            "string",
+            "null"
+          ],
+          "required": false,
+          "description": "Specific data asset ID within the destination dataset (optional)",
+          "default": null,
+          "source": "both"
+        },
+        "metadata": {
+          "type": "object, nullable",
+          "json_types": [
+            "object",
+            "null"
+          ],
+          "required": false,
+          "description": "Additional metadata about the lineage relationship",
+          "default": null,
+          "source": "both"
+        }
+      }
+    }
+  }
+}

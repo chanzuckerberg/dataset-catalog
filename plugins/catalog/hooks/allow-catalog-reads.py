@@ -2,12 +2,13 @@
 """PreToolUse hook: auto-approve read-only Scientific Dataset Catalog commands.
 
 Enabled with the `catalog` plugin. Emits an "allow" decision only for
-unambiguous catalog GET/read commands (the shared `preflight.py`, the `catalog`
-CLI reads, the bundled `search_expanded.py` / `ols.py`, and the stdlib `urllib`
-REST GETs that send the token as the `X-catalog-api-token` header to a catalog
-host). For everything else — including the register script, any HTTP mutation,
-and any request to a non-catalog host — it stays silent and defers to Claude's
-normal permission flow. A hook "allow" never overrides a user's explicit
+unambiguous catalog GET/read commands (the bundled `check_auth.py`,
+`check_env.py`, and `validate_record.py`, the `catalog` CLI reads including
+`catalog validate` and `catalog checksum`, and the stdlib `urllib` REST GETs
+that send the token as the `X-catalog-api-token` header to a catalog host). For
+everything else — including registration scripts, any HTTP mutation, and any
+request to a non-catalog host — it stays silent and defers to Claude's normal
+permission flow. A hook "allow" never overrides a user's explicit
 deny/ask rule.
 """
 
@@ -20,7 +21,10 @@ try:
 except (json.JSONDecodeError, ValueError):
     sys.exit(0)  # malformed input: defer, never crash the tool call
 
-cmd = data.get("tool_input", {}).get("command", "")
+tool_input = data.get("tool_input") if isinstance(data, dict) else None
+cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+if not isinstance(cmd, str):
+    sys.exit(0)
 
 # Defer anything with shell chaining, piping, redirection, a newline, or command
 # substitution: a substring match on the first command can't vouch for a second
@@ -28,13 +32,13 @@ cmd = data.get("tool_input", {}).get("command", "")
 if re.search(r"[;&|<>`\n]|\$\(", cmd):
     sys.exit(0)
 
-# Never auto-approve a write: the register script, or an inline HTTP call that
+# Never auto-approve a write: a registration script, or an inline HTTP call that
 # carries a body / non-GET method. A body is bytes, so `urlopen(url, b"…")` /
 # `Request(url, data)` positional bodies show up as a bytes literal or an
 # `.encode(` — reads never build one, so treat any of these as a mutation.
 # (A body assembled across statements would need `;`, already deferred above.)
 mutates = (
-    "register_dataset.py" in cmd
+    re.search(r"\bregister\w*\.py\b", cmd)
     or re.search(r'method\s*=\s*["\'](POST|PUT|PATCH|DELETE)', cmd)
     or re.search(r"\bdata\s*=", cmd)
     or re.search(r"\bb['\"]", cmd)
@@ -60,12 +64,14 @@ foreign_url = any(
 )
 
 reads = (
-    re.search(r"\bcatalog\s+(search|get|list|facets|lineage)\b", cmd)
+    re.search(
+        r"\bcatalog\s+(search|get|list|facets|lineage|resolve|validate|checksum)\b", cmd
+    )
     # collections is a resource with mutating subcommands; allow only its reads.
     or re.search(r"\bcatalog\s+collections\s+(list|get|entries|parents)\b", cmd)
     or re.search(r"\bcatalog\s+--version\b", cmd)
     # bundled read-only scripts, anchored to the scripts/ dir (not a bare filename).
-    or re.search(r"scripts/(preflight|search_expanded|ols|api_map)\.py\b", cmd)
+    or re.search(r"scripts/(check_auth|check_env|validate_record)\.py\b", cmd)
     # stdlib REST GET against the catalog. Require the sanctioned read signature:
     # the token sent as the X-catalog-api-token *header* (exfiltration puts it in
     # the URL instead), no mutation, and no URL literal to a non-catalog host.
@@ -79,7 +85,7 @@ if reads and not mutates:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "permissionDecisionReason": "catalog and ols read-only query auto-approved by catalog plugin",
+                    "permissionDecisionReason": "catalog read-only command auto-approved by catalog plugin",
                 }
             }
         )

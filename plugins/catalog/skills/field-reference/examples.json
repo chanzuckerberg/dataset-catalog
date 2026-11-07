@@ -1,0 +1,253 @@
+{
+  "_comment": "Hand-curated input to scripts/generate.py: the only hand-edited part of the field reference. Keys are model -> dotted field path (arrays as []). Allowed keys per field: meaning (overrides the model description), decided_by, common_mistakes, examples [{data_type, value, note}]. Ontology ids here were checked against EBI OLS4.",
+  "fields": {
+    "dataset": {
+      "canonical_id": {
+        "decided_by": "A stable id from the source system (LIMS id, accession, run id). Together with `version` and `project` it is the record's signature, so it must come out identical on every re-run.",
+        "examples": [
+          {"data_type": "imaging", "value": "dynacell/screen-07/plate-03", "note": "composite id, coarsest to finest, `/`-separated"},
+          {"data_type": "sequencing", "value": "GSE123456/GSM3511234"},
+          {"data_type": "mass spec", "value": "PXD012345/run-14"}
+        ],
+        "common_mistakes": "Building it from values that change between runs (timestamps, temp paths), which mints a new record every run. Composite ids out of order or `_`-joined: order the parts highest to lowest granularity and join with `/`, the same way for every record."
+      },
+      "name": {
+        "examples": [
+          {"data_type": "imaging", "value": "HEK293 H2B-GFP live imaging, plate 03"},
+          {"data_type": "sequencing", "value": "Mouse liver scRNA-seq, 10x 3' v3, donor 2"},
+          {"data_type": "mass spec", "value": "Human plasma proteome LC-MS/MS, run 14"}
+        ]
+      },
+      "version": {
+        "decided_by": "The source's own release or version label; `1.0.0` when it has none.",
+        "common_mistakes": "Passing `null`: the field is a string, so send `1.0.0` rather than nothing."
+      },
+      "project": {
+        "decided_by": "The initiative the data belongs to. Part of the signature.",
+        "examples": [
+          {"data_type": "imaging", "value": "DynaCell"},
+          {"data_type": "sequencing", "value": "CellXGene"}
+        ],
+        "common_mistakes": "Using a lab or person name. Use the initiative name other records in that initiative already use (check with search facets)."
+      },
+      "modality": {
+        "decided_by": "The acquisition technology, derived from the assay or file format rather than copied verbatim from a source column.",
+        "examples": [
+          {"data_type": "imaging", "value": "imaging"},
+          {"data_type": "sequencing", "value": "sequencing"},
+          {"data_type": "mass spec", "value": "mass spec", "note": "with a space, not `mass_spec`"}
+        ]
+      },
+      "dataset_type": {
+        "decided_by": "Processing stage: instrument output is `raw`; anything a pipeline produced from it is `processed`; derived results such as embeddings or statistics are `analysis`.",
+        "examples": [
+          {"data_type": "imaging", "value": "raw", "note": "OME-Zarr straight from the microscope"},
+          {"data_type": "sequencing", "value": "processed", "note": "count matrix (.h5ad) from FASTQ"}
+        ]
+      },
+      "record_schema_version": {
+        "decided_by": "The client model. Never set it by hand.",
+        "common_mistakes": "Mapping a source field onto it."
+      },
+      "description": {
+        "common_mistakes": "Repeating the name. Say what was measured, on what, and how."
+      },
+      "governance": {
+        "common_mistakes": "Putting access, consent, or compliance values that have no named field here (e.g. `consent`, `data_use_agreement`). The block accepts extra keys, but only the named fields are governance; put the rest under `metadata.additional_metadata`."
+      },
+      "governance.license": {
+        "decided_by": "The data owner or the source's terms. Ask; never infer.",
+        "examples": [
+          {"data_type": "sequencing", "value": "CC-BY-4.0", "note": "public deposit"},
+          {"data_type": "imaging", "value": "https://example.org/data-use-terms", "note": "a URL to bespoke terms also works"}
+        ],
+        "common_mistakes": "Guessing a license because the dataset is public somewhere."
+      },
+      "governance.data_sensitivity": {
+        "decided_by": "Leave unset. Records registered through this plugin do not populate it.",
+        "common_mistakes": "Mapping a source sensitivity column onto it, or routing it to custom metadata instead."
+      },
+      "governance.access_scope": {
+        "decided_by": "Always `internal` for records registered through this plugin. Never mapped from a source field.",
+        "common_mistakes": "Copying a source `visibility: public` value."
+      },
+      "governance.is_pii": {
+        "decided_by": "Consent and data source, confirmed by a person who knows them. Never inferred from file contents.",
+        "examples": [
+          {"data_type": "imaging", "value": false, "note": "commercial cell line, no donor data (confirmed by the data owner)"},
+          {"data_type": "sequencing", "value": true, "note": "human donor genotypes"}
+        ],
+        "common_mistakes": "Defaulting to `false` because the field is required. `false` is a claim, not a default."
+      },
+      "governance.is_phi": {
+        "decided_by": "Consent and data source, confirmed by a person who knows them. Never inferred from file contents.",
+        "common_mistakes": "Defaulting to `false` because the field is required, or treating it as the same question as `is_pii`."
+      },
+      "governance.data_steward": {
+        "decided_by": "Ask the user. There is no honest empty value.",
+        "examples": [
+          {"data_type": "imaging", "value": "imaging-platform-team"}
+        ],
+        "common_mistakes": "Substituting `data_owner` or a contact address. Steward and owner are different accountabilities."
+      },
+      "governance.data_owner": {
+        "common_mistakes": "Inventing one when the source has none; leave it unset."
+      },
+      "metadata.experiment.sub_modality": {
+        "examples": [
+          {"data_type": "imaging", "value": "confocal"},
+          {"data_type": "sequencing", "value": "scRNA-seq"},
+          {"data_type": "mass spec", "value": "proteomics"}
+        ]
+      },
+      "metadata.experiment.assay": {
+        "examples": [
+          {"data_type": "imaging", "value": [{"label": "confocal microscopy", "ontology_id": "FBbi:00000251"}]},
+          {"data_type": "sequencing", "value": [{"label": "10x 3' v3", "ontology_id": "EFO:0009922"}]},
+          {"data_type": "mass spec", "value": [{"label": "liquid chromatography-tandem mass spectrometry", "ontology_id": "CHMO:0000701"}]}
+        ]
+      },
+      "metadata.experiment.assay[].ontology_id": {
+        "decided_by": "An ontology lookup that matches the label exactly (case-insensitive, label or synonym). Leave unset when there is no confident match.",
+        "common_mistakes": "Naming the key `ontology_term_id`; it is `ontology_id`. Fabricating or partially guessing a CURIE."
+      },
+      "metadata.sample.organism": {
+        "examples": [
+          {"data_type": "imaging", "value": [{"label": "Homo sapiens", "ontology_id": "NCBITaxon:9606"}]},
+          {"data_type": "sequencing", "value": [{"label": "Mus musculus", "ontology_id": "NCBITaxon:10090"}]}
+        ],
+        "common_mistakes": "Deriving it from a cell type that exists in several species. Fill it from another column only when that column uniquely determines it (a cell line pins its species), and confirm the rule with the user first."
+      },
+      "metadata.sample.tissue": {
+        "examples": [
+          {"data_type": "imaging", "value": [{"label": "HEK293", "ontology_id": "CLO:0001230", "type": "cell line"}], "note": "cell lines go here, with `type: cell line`"},
+          {"data_type": "sequencing", "value": [{"label": "liver", "ontology_id": "UBERON:0002107", "type": "tissue"}]},
+          {"data_type": "mass spec", "value": [{"label": "lung", "ontology_id": "UBERON:0002048", "type": "tissue"}]}
+        ],
+        "common_mistakes": "Adding a separate `cell_line` key instead of a tissue entry with `type: cell line`. Naming the key `tissue_type`; it is `type`."
+      },
+      "metadata.sample.development_stage": {
+        "examples": [
+          {"data_type": "sequencing", "value": [{"label": "adult stage", "ontology_id": "HsapDv:0000258"}]}
+        ]
+      },
+      "metadata.sample.disease": {
+        "examples": [
+          {"data_type": "sequencing", "value": [{"label": "normal", "ontology_id": "PATO:0000461"}], "note": "healthy donor"}
+        ]
+      },
+      "metadata.data_summary.cell_count": {
+        "examples": [
+          {"data_type": "imaging", "value": 48211, "note": "segmented cells"},
+          {"data_type": "sequencing", "value": 9874, "note": "cells passing QC"}
+        ],
+        "common_mistakes": "Copying a collection-level total onto every dataset in it."
+      },
+      "metadata.data_summary.read_count": {
+        "examples": [
+          {"data_type": "sequencing", "value": 412000000}
+        ]
+      },
+      "metadata.data_summary.observation_unit": {
+        "examples": [
+          {"data_type": "sequencing", "value": "single_cell"},
+          {"data_type": "mass spec", "value": "bulk"}
+        ]
+      },
+      "metadata.data_summary.channels": {
+        "examples": [
+          {"data_type": "imaging", "value": [{"name": "Phase2D", "index": 0, "channel_type": "labelfree"}, {"name": "H2B-GFP", "index": 1, "channel_type": "fluorescence", "biological_annotation": {"biological_target": "nucleus", "marker": "H2B", "marker_type": "endogenous_tag"}}]}
+        ],
+        "common_mistakes": "Leaving out a channel: include one entry per channel in the image's C axis, with `index` matching its position."
+      },
+      "metadata.data_summary.dimension": {
+        "examples": [
+          {"data_type": "imaging", "value": [1, 2, 30, 2048, 2048], "note": "(t, c, z, y, x)"}
+        ]
+      },
+      "data_quality.checks_passed": {
+        "meaning": "Quality checks that passed. Items may be any shape (names, counts, objects); state the evidence for each.",
+        "examples": [
+          {"data_type": "sequencing", "value": ["fastqc", "checksum_match"]}
+        ]
+      }
+    },
+    "asset": {
+      "location_uri": {
+        "examples": [
+          {"data_type": "imaging", "value": "s3://czi-imaging/dynacell/screen-07/plate-03.ome.zarr/"},
+          {"data_type": "sequencing", "value": "/hpc/projects/atlas/liver/donor2/counts.h5ad"},
+          {"data_type": "mass spec", "value": "s3://czi-ms/plasma/run-14/"}
+        ]
+      },
+      "storage_platform": {
+        "decided_by": "Where the bytes live, confirmed with the user when the path alone is ambiguous.",
+        "examples": [
+          {"data_type": "imaging", "value": "s3"},
+          {"data_type": "sequencing", "value": "sf_hpc", "note": "only after confirming which HPC site"}
+        ],
+        "common_mistakes": "Reading `/hpc/...` as `sf_hpc` (there are three HPC sites: `sf_hpc`, `chi_hpc`, `ny_hpc`), or every `https://` URI as `external` (internal platforms sit behind URLs too)."
+      },
+      "asset_type": {
+        "examples": [
+          {"data_type": "imaging", "value": "folder", "note": "a .zarr store is a folder"},
+          {"data_type": "sequencing", "value": "file"}
+        ]
+      },
+      "file_format": {
+        "examples": [
+          {"data_type": "imaging", "value": "ome-zarr"},
+          {"data_type": "sequencing", "value": "h5ad"},
+          {"data_type": "mass spec", "value": "mzML"}
+        ]
+      },
+      "size_bytes": {
+        "meaning": "Total bytes in the asset: the file size, or for a folder the sum over every file in it.",
+        "common_mistakes": "Writing `0` when the size is unknown; leave it unset instead."
+      },
+      "checksum": {
+        "meaning": "Content digest of the asset, in the encoding the algorithm produces (hex for the `catalog checksum` algorithms).",
+        "common_mistakes": "A checksum without `checksum_alg`. Reusing a stored storage checksum without checking how it was made (registration-script skill)."
+      },
+      "checksum_alg": {
+        "meaning": "Algorithm that produced `checksum`. The client's checksum utilities produce `blake3`, `blake2b`, `crc32`, `crc64`, or `crc64nvme`.",
+        "examples": [
+          {"data_type": "imaging", "value": "blake3"},
+          {"data_type": "sequencing", "value": "crc64nvme", "note": "reused from S3's stored full-object checksum"}
+        ]
+      },
+      "file_count": {
+        "examples": [
+          {"data_type": "imaging", "value": 1000, "note": "folder of 1,000 TIFFs"}
+        ]
+      },
+      "includes_pattern": {
+        "common_mistakes": "Relying on it: the API drops it without an error."
+      },
+      "excludes_pattern": {
+        "common_mistakes": "Relying on it: the API drops it without an error."
+      }
+    },
+    "collection": {
+      "collection_type": {
+        "examples": [
+          {"data_type": "imaging", "value": "training", "note": "datasets used to train one model"},
+          {"data_type": "sequencing", "value": "publication"}
+        ]
+      },
+      "collection_owner": {
+        "decided_by": "The person or team who maintains membership."
+      }
+    },
+    "lineage": {
+      "lineage_type": {
+        "meaning": "`transformed_from`: the destination was produced by processing the source. `version_of`: the destination is another run or release of the same data or processing. `copy_of`: the same bytes at another location.",
+        "examples": [
+          {"data_type": "sequencing", "value": "transformed_from", "note": "count matrix (destination) from FASTQ (source)"},
+          {"data_type": "imaging", "value": "version_of", "note": "segmentation re-run with the same pipeline"}
+        ],
+        "common_mistakes": "Pointing the edge the wrong way: `source_dataset_id` is the parent, `destination_dataset_id` the derived record."
+      }
+    }
+  }
+}
