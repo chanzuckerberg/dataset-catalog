@@ -225,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             max_workers=args.workers,
             logger=log,
         )
-    print(report.summary())
+    print(report.summary("planned" if args.dry_run else "registered"))
     if args.dry_run and report.exit_code == 0:
         # Read by the plugin's PreToolUse guard: a production run needs a passing dry run of these exact files.
         script, mapping = Path(__file__).resolve(), args.config.resolve()

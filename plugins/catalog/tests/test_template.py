@@ -27,8 +27,8 @@ class Report:
         self.ok, self.failed = ok, failed
         self.exit_code = 1 if failed else 0
 
-    def summary(self) -> str:
-        return f"{self.ok} registered, {len(self.failed)} failed" + (
+    def summary(self, verb: str = "registered") -> str:
+        return f"{self.ok} {verb}, {len(self.failed)} failed" + (
             ": " + ", ".join(self.failed) if self.failed else ""
         )
 
@@ -231,6 +231,7 @@ class TemplateTest(unittest.TestCase):
         )
         self.assertIn(("plan", "a", True, False), calls)
         self.assertEqual(len(list((self.tmp / "payloads").glob("*.json"))), 3)
+        self.assertIn("3 planned, 0 failed", out)
         self.assertIn("catalog-dry-run: ok env=staging", out)
         self.assertIn(f"config={self.config.resolve()}", out)
         self.assertIn("-> (new dataset)", err)
@@ -239,7 +240,7 @@ class TemplateTest(unittest.TestCase):
         self.invalid = {"b"}
         code, out, _ = self.run_main("--dry-run")
         self.assertEqual(code, 1)
-        self.assertIn("2 registered, 1 failed: b (ValueError)", out)
+        self.assertIn("2 planned, 1 failed: b (ValueError)", out)
         self.assertNotIn("catalog-dry-run: ok", out)
         self.assertNotIn(("plan", "b", True, False), FakeClient.instances[0].calls)
 
