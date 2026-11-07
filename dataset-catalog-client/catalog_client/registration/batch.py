@@ -8,6 +8,8 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import TypeVar
 
+import pydantic
+
 T = TypeVar("T")
 
 _logger = logging.getLogger(__name__)
@@ -18,8 +20,8 @@ class BatchReport:
     succeeded: list[tuple[str, str]] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
 
-    def summary(self) -> str:
-        head = f"{len(self.succeeded)} registered, {len(self.failed)} failed"
+    def summary(self, verb: str = "registered") -> str:
+        head = f"{len(self.succeeded)} {verb}, {len(self.failed)} failed"
         if not self.failed:
             return head
         return head + ": " + ", ".join(f"{k} ({msg})" for k, msg in self.failed)
@@ -30,7 +32,14 @@ class BatchReport:
 
 
 def _describe(exc: Exception) -> str:
-    # Collapse multi-line messages (pydantic's, notably) so each failure stays one log line.
+    if isinstance(exc, pydantic.ValidationError):
+        # str() of a pydantic error repeats the model name and a docs URL per field; keep path + message.
+        fields = "; ".join(
+            f"{'.'.join(map(str, e['loc'])) or '<root>'}: {e['msg']}"
+            for e in exc.errors()
+        )
+        return f"ValidationError ({exc.title}): {fields}"
+    # Collapse other multi-line messages so each failure stays one log line.
     return f"{type(exc).__name__}: {' '.join(str(exc).split())}"
 
 

@@ -154,6 +154,7 @@ BatchReport(
 )
 report.summary()    # "48 registered, 2 failed: sample-017 (NotFoundError: ...), sample-031 (...)"
                     # "3 registered, 0 failed" when nothing failed
+report.summary("planned")  # "3 planned, 0 failed" — for dry runs
 report.exit_code    # 1 if anything failed, else 0
 ```
 

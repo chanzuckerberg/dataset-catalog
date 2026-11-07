@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Iterator
 
+import pydantic
 import pytest
 
 from catalog_client.exceptions import NotFoundError
@@ -43,6 +44,30 @@ def test_summary_lists_failures() -> None:
     assert report.summary() == (
         "1 registered, 2 failed: key-a (NotFoundError: gone), key-b (ValueError: bad)"
     )
+
+
+def test_summary_verb_for_dry_runs() -> None:
+    report = BatchReport(succeeded=[("x", "1")], failed=[])
+    assert report.summary("planned") == "1 planned, 0 failed"
+
+
+def test_pydantic_errors_keep_only_path_and_message() -> None:
+    class Governance(pydantic.BaseModel):
+        is_pii: bool
+        data_steward: str
+
+    def handle(item: str) -> str:
+        Governance.model_validate({"is_pii": None})
+        return item
+
+    report = run_batch(["a"], handle)
+    assert report.failed == [
+        (
+            "a",
+            "ValidationError (Governance): is_pii: Input should be a valid boolean; "
+            "data_steward: Field required",
+        )
+    ]
 
 
 def test_multiline_messages_collapse_to_one_line() -> None:
