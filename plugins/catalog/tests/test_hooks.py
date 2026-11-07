@@ -89,6 +89,23 @@ class GuardSecretsTest(unittest.TestCase):
             self.assertEqual(decision(result), "deny", content)
             self.assertNotIn(FAKE_TOKEN, result.stdout)
 
+    def test_blocks_bare_token_key_with_issued_token_shape(self):
+        issued = "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"
+        for content in (f'token = "{issued}"', f'{{"token": "{issued}"}}'):
+            result = self.check({"file_path": "/tmp/x.py", "content": content})
+            self.assertEqual(decision(result), "deny", content)
+
+    def test_allows_bare_token_key_without_issued_token_shape(self):
+        for content in (
+            'token = "abcdef0123456789abcdef0123456789abcd"',
+            'next_token = "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"',
+            'csrf-token: "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"',
+        ):
+            self.assertIsNone(
+                decision(self.check({"file_path": "/tmp/x", "content": content})),
+                content,
+            )
+
     def test_blocks_value_of_token_env_var(self):
         env = clean_env(CATALOG_STAGING_API_TOKEN="short-but-real-value-123")
         result = self.check(

@@ -27,6 +27,10 @@ _TOKEN_ASSIGNMENT = re.compile(
     ["']?\s*[:=]\s*["']([^"'\s]{16,})["']
     """
 )
+# A bare `token` key is ambiguous (pagination cursors, CSRF), so it needs a value shaped like an issued API token.
+_BARE_TOKEN_ASSIGNMENT = re.compile(
+    r"""(?i)(?<![\w-])token["']?\s*[:=]\s*["']([A-Za-z0-9_\-]{32,})["']"""
+)
 _ENV_ASSIGNMENT = re.compile(
     r"(?m)^\s*(?:export\s+)?CATALOG_[A-Z_]*TOKEN\s*=\s*([^\s#\"']{16,})\s*$"
 )
@@ -81,6 +85,11 @@ def hardcoded_tokens(text: str) -> list[str]:
         _ENV_ASSIGNMENT.finditer(text)
     ):
         if _looks_secret(match.group(1)):
+            line = text.count("\n", 0, match.start()) + 1
+            reasons.append(f"line {line} assigns a literal API token")
+    for match in _BARE_TOKEN_ASSIGNMENT.finditer(text):
+        value = match.group(1)
+        if all(re.search(p, value) for p in (r"[a-z]", r"[A-Z]", r"\d")):
             line = text.count("\n", 0, match.start()) + 1
             reasons.append(f"line {line} assigns a literal API token")
     return reasons
