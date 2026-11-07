@@ -8,7 +8,7 @@
     {
       "name": "catalog",
       "source": "./plugins/catalog",
-      "description": "Tools for the Scientific Dataset Catalog: map metadata to the latest schema and register datasets with catalog-client."
+      "description": "Onboarding for the Scientific Dataset Catalog: learn the concepts, look up fields, search, and get pipeline-safe registration scripts built on catalog-client."
     }
   ]
 }
