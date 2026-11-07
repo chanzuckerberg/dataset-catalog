@@ -11,11 +11,13 @@ import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from _support import TEMPLATE, clean_env
 
 STAGING = "https://datacatalog.staging-sci-data.staging.czi.team"
+PROD = "https://datacatalog.prod-sci-data.prod.czi.team"
 
 
 class CompatibilityError(Exception):
@@ -45,7 +47,7 @@ def run_batch(items, handle, *, key=str, max_workers=4, logger=None):
 
 
 class FakeClient:
-    instances: list["FakeClient"] = []
+    instances: ClassVar[list["FakeClient"]] = []
     compatible = True
 
     def __init__(self, base_url, api_token, retry=None, timeout=30.0):
@@ -137,13 +139,20 @@ def install_stub_sdk() -> None:
 
 
 class FakeRequest:
-    def __init__(self, key: str, valid: bool = True):
+    def __init__(self, key: str, valid: bool = True, location=None):
         self.key, self.valid = key, valid
+        self.location = location or (f"s3://shared-bucket/{key}/", "s3")
 
     def to_dataset_request(self):
         if not self.valid:
             raise ValueError("governance.is_pii: Input should be a valid boolean")
-        return types.SimpleNamespace(model_dump=lambda **kw: {"canonical_id": self.key})
+        uri, platform = self.location
+        asset = types.SimpleNamespace(
+            location_uri=uri, storage_platform=types.SimpleNamespace(value=platform)
+        )
+        return types.SimpleNamespace(
+            locations=[asset], model_dump=lambda **kw: {"canonical_id": self.key}
+        )
 
 
 def load_template():
@@ -168,11 +177,12 @@ class TemplateTest(unittest.TestCase):
         self.config.write_text(json.dumps({"collections": ["col-1"]}))
         self.keys = ["a", "b", "c"]
         self.invalid: set[str] = set()
+        self.locations: dict[str, tuple[str, str]] = {}
         self.mod.discover_records = lambda config: (
             self.mod.Source(key=k) for k in self.keys
         )
         self.mod.build_request = lambda src, config: FakeRequest(
-            src.key, src.key not in self.invalid
+            src.key, src.key not in self.invalid, self.locations.get(src.key)
         )
 
     def run_main(self, *args: str, env: dict | None = None) -> tuple[int, str, str]:
@@ -180,7 +190,7 @@ class TemplateTest(unittest.TestCase):
         environ = (
             env
             if env is not None
-            else clean_env(CATALOG_STAGING_API_TOKEN="tok-staging")
+            else clean_env(CATALOG_API_URL=STAGING, CATALOG_API_TOKEN="tok-staging")
         )
         # basicConfig binds stderr only once per process, so capture the script's logger directly.
         handler = logging.StreamHandler(err)
@@ -204,8 +214,8 @@ class TemplateTest(unittest.TestCase):
             self.mod.log.removeHandler(handler)
         return code, out.getvalue(), err.getvalue()
 
-    def test_defaults_to_staging_with_retry_policy(self):
-        code, out, _ = self.run_main()
+    def test_connects_to_catalog_api_url_with_retry_policy(self):
+        code, out, err = self.run_main()
         self.assertEqual(code, 0)
         client = FakeClient.instances[0]
         self.assertEqual((client.base_url, client.api_token), (STAGING, "tok-staging"))
@@ -214,6 +224,10 @@ class TemplateTest(unittest.TestCase):
             {"max_attempts": 5, "base_delay": 0.5, "max_delay": 30.0, "jitter": True},
         )
         self.assertIn("3 registered, 0 failed", out)
+        self.assertIn(
+            f"env=staging url={STAGING} token=CATALOG_API_TOKEN dry_run=False", err
+        )
+        self.assertNotIn("tok-staging", out + err)
 
     def test_register_is_an_idempotent_upsert_and_adds_collections(self):
         self.run_main()
@@ -232,7 +246,7 @@ class TemplateTest(unittest.TestCase):
         self.assertIn(("plan", "a", True, False), calls)
         self.assertEqual(len(list((self.tmp / "payloads").glob("*.json"))), 3)
         self.assertIn("3 planned, 0 failed", out)
-        self.assertIn("catalog-dry-run: ok env=staging", out)
+        self.assertIn(f"catalog-dry-run: ok env=staging url={STAGING} script=", out)
         self.assertIn(f"config={self.config.resolve()}", out)
         self.assertIn("-> (new dataset)", err)
 
@@ -244,6 +258,18 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("catalog-dry-run: ok", out)
         self.assertNotIn(("plan", "b", True, False), FakeClient.instances[0].calls)
 
+    def test_local_location_fails_its_record_before_any_api_call(self):
+        self.locations = {"b": ("/Users/me/Desktop/run-b/", "other")}
+        code, out, _ = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("2 registered, 1 failed: b (ValueError)", out)
+        self.assertNotIn(("register", "b", True, False), FakeClient.instances[0].calls)
+        handle = self.mod.make_handler(
+            FakeClient("u", "t"), {}, self.mod.parse_args([])
+        )
+        with self.assertRaisesRegex(ValueError, "shared organization storage"):
+            handle(self.mod.Source(key="b"))
+
     def test_limit(self):
         self.run_main("--limit", "1")
         self.assertEqual(
@@ -253,7 +279,13 @@ class TemplateTest(unittest.TestCase):
     def test_missing_token_and_compatibility_exit_2_before_any_record(self):
         code, _, err = self.run_main(env=clean_env())
         self.assertEqual(code, 2)
-        self.assertIn("CATALOG_STAGING_API_TOKEN", err)
+        self.assertIn("set CATALOG_API_URL and CATALOG_API_TOKEN", err)
+        code, _, err = self.run_main(env=clean_env(CATALOG_API_URL=STAGING))
+        self.assertEqual(code, 2)
+        self.assertIn("set CATALOG_API_TOKEN for", err)
+        code, _, err = self.run_main(env=clean_env(CATALOG_API_TOKEN="tok"))
+        self.assertEqual(code, 2)
+        self.assertIn("set CATALOG_API_URL for", err)
         self.assertFalse(FakeClient.instances)
         FakeClient.compatible = False
         code, _, err = self.run_main()
@@ -261,20 +293,19 @@ class TemplateTest(unittest.TestCase):
         self.assertIn("client/API mismatch", err)
         self.assertFalse(FakeClient.instances[-1].calls)
 
-    def test_prod_needs_its_own_token(self):
-        env = clean_env(CATALOG_API_TOKEN="generic", CATALOG_API_URL=STAGING)
-        self.assertEqual(self.run_main("--env", "prod", env=env)[0], 2)
-        env = clean_env(CATALOG_PROD_API_TOKEN="tok-prod")
-        self.assertEqual(self.run_main("--env", "prod", env=env)[0], 0)
-        self.assertEqual(
-            FakeClient.instances[-1].base_url,
-            "https://datacatalog.prod-sci-data.prod.czi.team",
-        )
+    def test_environment_is_named_from_the_url(self):
+        env = clean_env(CATALOG_API_URL=PROD + "/", CATALOG_API_TOKEN="tok-prod")
+        code, out, _ = self.run_main("--dry-run", env=env)
+        self.assertEqual(code, 0)
+        self.assertEqual(FakeClient.instances[-1].base_url, PROD)
+        self.assertIn(f"catalog-dry-run: ok env=prod url={PROD} script=", out)
 
     def test_bad_arguments_and_config(self):
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 self.mod.parse_args(["--workers", "64"])
+            with self.assertRaises(SystemExit):
+                self.mod.parse_args(["--env", "prod"])
         self.config.write_text("{not json")
         self.assertEqual(self.run_main()[0], 2)
 

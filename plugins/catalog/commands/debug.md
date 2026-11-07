@@ -5,7 +5,7 @@ argument-hint: [error text | script path | log path]
 Hand this failure to the `registration-debugger` agent.
 
 1. Collect, without asking for anything already in this conversation: the exact error text or
-   log lines, the command that was run (with `--env` and `--dry-run` flags), the script path, and
+   log lines, the command that was run (with its flags), the environment and URL it targeted (`CATALOG_API_URL`, logged as `env=… url=…`), the script path, and
    its `mapping.json` path. `$ARGUMENTS` may hold any of these. If none of it is available, ask for
    the error text first.
 2. Start the agent with that bundle. Never include token values.

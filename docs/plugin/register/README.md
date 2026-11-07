@@ -1,8 +1,8 @@
 # Registering datasets from Claude Code (`/catalog:register`)
 
 `/catalog:register` turns a conversation about your data into a **registration script you own**:
-a copy of the plugin's template plus a `mapping.json` with your answers, dry-run against staging
-before you see it. You run the script yourself, by hand or from your pipeline. Claude never
+a copy of the plugin's template plus a `mapping.json` with your answers, dry-run against a dev or
+staging catalog before you see it. You run the script yourself, by hand or from your pipeline. Claude never
 registers data on its own.
 
 This page is the human-facing guide. The instructions Claude follows live in the plugin's skills
@@ -13,7 +13,10 @@ This page is the human-facing guide. The instructions Claude follows live in the
 ## Before you start
 
 - The plugin installed ([root README](../../../README.md#claude-code-plugin)).
-- `CATALOG_STAGING_API_TOKEN` set. `/catalog:whoami` shows whether it can write; write permission is
+- `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported for a dev or staging catalog, from your shell
+  init file rather than Claude Code settings ([auth skill](../../../plugins/catalog/skills/auth/SKILL.md#where-the-token-goes)).
+  The script and the plugin use whatever catalog that pair names; there is no default. `/catalog:whoami`
+  shows the environment and whether the token can write; write permission is
   fixed when a token is issued, so reissue it after you are granted write access.
 - `catalog-client` 1.3.0+ installed from a release tag, in a virtual environment. Claude asks
   before installing anything.
@@ -26,11 +29,13 @@ This page is the human-facing guide. The instructions Claude follows live in the
    where to write it.
 2. **A one-screen summary** to confirm, including your token status.
 3. **The `script-writer` agent** copies the template, fills in only the data-specific functions and
-   `mapping.json`, lints the script, and dry-runs it in staging: `--limit 1` first, then everything.
+   `mapping.json`, lints the script, and dry-runs it against your dev or staging catalog: `--limit 1` first, then
+   everything.
 4. **The `metadata-reviewer` agent** checks one dry-run payload for problems a validator can't see
    (granularity, implausible values, guessed governance, duplicates).
-5. **You run it**: `--env staging`, then `--env prod --dry-run` and `--env prod` with a production
-   credential, usually from your pipeline.
+5. **You run it**: a real run against dev or staging, then, with `CATALOG_API_URL` and
+   `CATALOG_API_TOKEN` pointed at prod (a production credential, usually from your pipeline),
+   `--dry-run` and then the real run.
 
 ## What it will not guess
 
@@ -44,15 +49,21 @@ This page is the human-facing guide. The instructions Claude follows live in the
 ## The script
 
 ```bash
-python register.py --dry-run               # staging: validate locally, plan, write payloads; no writes
-python register.py                         # staging: register
-python register.py --env prod --dry-run    # production plan
-python register.py --env prod              # production
+python register.py --dry-run    # validate locally, plan, write payloads; no writes
+python register.py              # register
+```
+
+Both target whatever `CATALOG_API_URL` and `CATALOG_API_TOKEN` name, and the first log line says
+which environment that is (`env=staging url=…`). To target another catalog for one command, prefix
+it, keeping the token value off the command line:
+
+```bash
+CATALOG_API_URL=https://datacatalog.prod-sci-data.prod.czi.team \
+CATALOG_API_TOKEN="$(cat ~/.config/catalog/prod-token)" python register.py --dry-run
 ```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--env` | `staging` | `staging` or `prod`; picks the URL and the token variable |
 | `--dry-run` | off | Read-only plan (`create` / `update` / `skip` per record); payloads go to `--payload-dir` |
 | `--config` | `mapping.json` beside the script | Data-specific values |
 | `--limit N` | all | Process the first N records only |
@@ -71,11 +82,12 @@ plugin flags edits to it, and asking Claude for a change routes it through `scri
 
 ## Safety nets
 
-- A hook refuses `--env prod` (without `--dry-run`) unless a production dry run of the same script
-  and `mapping.json` passed in this Claude Code install; editing either file after the dry run
-  requires a new one.
+- When Claude runs the script against a prod URL, or one whose host names no environment, without
+  `--dry-run`, a hook refuses unless a `--dry-run` of the same script and `mapping.json` against that
+  same URL passed in this Claude Code install; editing either file after the dry run requires a new
+  one. Dev and staging runs are not blocked.
 - A hook refuses to write a literal API token into any file.
-- Recommended project deny rules keep production credentials out of Claude Code entirely: see the
+- Keep production credentials out of Claude Code entirely: see the
   [root README](../../../README.md#keep-production-credentials-out-of-claude-code).
 
 When something fails, `/catalog:debug` with the error text gets a diagnosis and a proposed fix.

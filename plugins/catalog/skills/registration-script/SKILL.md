@@ -12,8 +12,9 @@ only its AGENT-EDITABLE functions and `mapping.json` changed. Field definitions 
 
 ## Order of operations
 
-1. **Check access**: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.py" staging` (what
-   `/catalog:whoami` runs; auth skill). Writes need a write-capable token.
+1. **Check access**: `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"` (what
+   `/catalog:whoami` runs; auth skill). Tell the user the environment it names. Writes need a
+   write-capable token.
 2. **Search for existing records** (search skill): `catalog resolve <uri>` per data location, and
    parents for lineage. An existing record means this run is an update.
 3. **Build** each record: the AGENT-EDITABLE functions.
@@ -29,14 +30,20 @@ only its AGENT-EDITABLE functions and `mapping.json` changed. Field definitions 
 9. **Collections**: `client.collections.add_dataset(collection_id, dataset_id)` after the dataset exists.
 10. **Verify**: find the new record with search, as the user would.
 
-Staging first, always: `--env staging --dry-run`, then `--env staging`, then the same two steps
-against prod. A plugin hook refuses a prod run with no passing prod dry run of the same files.
+The script registers into whatever `CATALOG_API_URL` names (auth skill) and logs
+`env=<env> url=<url>` first; state that environment before every run. Sandbox first, always:
+`--dry-run`, then a real run, against a dev or staging URL; then the same two steps with the
+variables pointed at prod. A plugin hook refuses a non-dry run against a prod or `unknown` URL
+unless a passing `--dry-run` of the same script and config bytes against that same URL was
+recorded; dev and staging runs are not blocked.
 
 ## Installing the client
 
-Python 3.11+. Never install into the system interpreter: ask before creating a virtual environment
-unless one is already active or the repo manages its own (in this monorepo, `uv sync --all-groups`).
-Install a released tag, never `main`:
+Python 3.11+, never the system interpreter. The access check (`check_auth.sh`, auth skill) already
+sets this up: it reuses an active virtual environment or `./.venv`, and otherwise creates `./.venv`
+with uv and installs the latest released client. Install by hand only to upgrade, to use a repo
+that manages its own environment (in this monorepo, `uv sync --all-groups`), or where uv is
+unavailable. Install a released tag, never `main`:
 
 ```bash
 TAG=$(gh release list --repo chanzuckerberg/dataset-catalog --json tagName,publishedAt \
@@ -56,10 +63,11 @@ release has not shipped yet: register against the installed version and tell the
 
 `template/register.py` plus `template/mapping.json`. Copy both next to each other.
 
-**TEMPLATE-OWNED** (do not edit; a PostToolUse hook diffs it against the template): `--env`
-(default `staging`), `--dry-run`, `--config`, `--limit N` (first trial), `--workers` (1-16),
-`--payload-dir`; token lookup by variable name; `RetryPolicy` (exponential backoff with jitter,
-honours 429/`Retry-After`); `check_compatibility()` at startup; per-record local validation;
+**TEMPLATE-OWNED** (do not edit; a PostToolUse hook diffs it against the template): `--dry-run`,
+`--config`, `--limit N` (first trial), `--workers` (1-16), `--payload-dir`;
+`CATALOG_API_URL`/`CATALOG_API_TOKEN` lookup by name (`catalog_connection()`) and the environment
+name from the URL; `RetryPolicy` (exponential backoff with jitter,
+honours 429/`Retry-After`); `check_compatibility()` at startup; per-record local validation, including the shared-storage check on every asset location;
 `run_batch()` with per-record isolation; the summary line (`48 registered, 2 failed: ...`); exit 1
 if any record failed, 2 on configuration or compatibility errors.
 
@@ -91,9 +99,10 @@ writing raw HTTP, which would bypass the dry run and the upsert.
 | Good client | Backoff with jitter, honour 429/`Retry-After`, cap concurrency | `RetryPolicy`; `--workers` capped at 16 |
 | Env drift | Pin the client; check compatibility at startup | PEP 723 pin; `check_compatibility()` |
 | Memory | Stream records and bytes; never load everything | `discover_records` yields; checksums stream |
-| No interactive steps | Credentials from the environment or a secrets manager; no prompts | `resolve_token()`; linter rejects `input()` |
+| No interactive steps | Credentials from the environment or a secrets manager; no prompts | `catalog_connection()`; linter rejects `input()` |
 | Fail fast | Validate locally before any API call | `to_dataset_request()` per record |
-| Safe to try | Dry run; staging before production | `--dry-run`, `--env` default staging, prod guard hook |
+| Shared storage only | Every asset location is on shared organization storage (`concepts`, "What can be registered") | `location_problem()` per asset; `validate_record.py` |
+| Safe to try | Dry run; dev or staging before production | `--dry-run`, environment logged from the URL, prod guard hook |
 
 The linter (`scripts/lint_registration_script.py`, run by the PostToolUse hook and runnable by
 hand) enforces the agent-side half of this table.

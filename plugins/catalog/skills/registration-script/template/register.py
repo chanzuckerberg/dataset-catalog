@@ -9,14 +9,12 @@
 
 Generated from the catalog plugin's registration template. Typical use:
 
-    python register.py --dry-run               # staging: validate + plan, no writes
-    python register.py                         # staging: register
-    python register.py --env prod --dry-run    # production: validate + plan
-    python register.py --env prod              # production: register
+    python register.py --dry-run    # validate + plan, no writes
+    python register.py              # register
 
-Data-specific values live in mapping.json (--config). Credentials are read
-from the environment by name: CATALOG_STAGING_API_TOKEN / CATALOG_PROD_API_TOKEN,
-or CATALOG_API_TOKEN when CATALOG_API_URL names the same environment.
+The catalog is whatever CATALOG_API_URL and CATALOG_API_TOKEN name in the
+environment; the run logs which environment (dev, staging, or prod) that URL
+is. Data-specific values live in mapping.json (--config).
 
 Exit codes: 0 = every record succeeded; 1 = at least one record failed;
 2 = configuration, credential, or client/API compatibility error.
@@ -33,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import urllib.parse
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,13 +51,22 @@ from catalog_client.registration import (
     RegistrationRequest,
 )
 
-ENVIRONMENTS = {
-    "staging": "https://datacatalog.staging-sci-data.staging.czi.team",
-    "prod": "https://datacatalog.prod-sci-data.prod.czi.team",
-}
+URL_VAR = "CATALOG_API_URL"
+TOKEN_VAR = "CATALOG_API_TOKEN"
 MAX_WORKERS = 16
 EXIT_CONFIG = 2
 DRY_RUN_MARKER = "catalog-dry-run: ok"
+# Keep in sync with scripts/validate_record.py (tests/test_shared_rules.py checks both).
+CLUSTER_PLATFORMS = frozenset({"sf_hpc", "chi_hpc", "ny_hpc", "reef", "kelp", "atoll"})
+PERSONAL_PATH_PREFIXES = (
+    "/home/",
+    "/Users/",
+    "/tmp/",
+    "/var/tmp/",
+    "/private/",
+    "/var/folders/",
+    "/Volumes/",
+)
 
 log = logging.getLogger("register")
 
@@ -75,19 +83,44 @@ class ConfigError(Exception):
     pass
 
 
-def resolve_token(env: str) -> tuple[str, str]:
-    specific, generic = f"CATALOG_{env.upper()}_API_TOKEN", "CATALOG_API_TOKEN"
-    if os.environ.get(specific):
-        return specific, os.environ[specific]
-    # The generic variable is trusted only when it is paired with this environment's URL.
-    if (
-        os.environ.get(generic)
-        and (os.environ.get("CATALOG_API_URL") or "").rstrip("/") == ENVIRONMENTS[env]
-    ):
-        return generic, os.environ[generic]
-    raise ConfigError(
-        f"no token for {env}: set {specific} (or {generic} with CATALOG_API_URL={ENVIRONMENTS[env]})"
-    )
+def location_problem(uri: str, platform: str) -> str | None:
+    """Why an asset location may not be registered; None when it is shared organization storage."""
+    if uri.lower().startswith("file:"):
+        return "file:// URIs point at one machine's disk"
+    if "://" in uri:
+        return None
+    if not uri.startswith("/"):
+        return "relative and home-directory paths point at one machine's disk"
+    if platform not in CLUSTER_PLATFORMS:
+        return (
+            f"a bare path is only registrable on shared cluster storage "
+            f"({', '.join(sorted(CLUSTER_PLATFORMS))}), not storage_platform {platform!r}"
+        )
+    if uri.startswith(PERSONAL_PATH_PREFIXES):
+        return "personal or machine-local directory"
+    return None
+
+
+def env_from_url(url: str) -> str:
+    """'dev', 'staging' or 'prod' from the URL's hostname; 'unknown' when it names none or several."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    aliases = {"production": "prod", "stage": "staging", "development": "dev"}
+    labels = {aliases.get(label, label) for label in re.split(r"[.-]", host)}
+    found = labels & {"dev", "staging", "prod"}
+    return found.pop() if len(found) == 1 else "unknown"
+
+
+def catalog_connection() -> tuple[str, str]:
+    url = (os.environ.get(URL_VAR) or "").strip().rstrip("/")
+    token = os.environ.get(TOKEN_VAR) or ""
+    missing = [
+        name for name, value in ((URL_VAR, url), (TOKEN_VAR, token)) if not value
+    ]
+    if missing:
+        raise ConfigError(
+            f"set {' and '.join(missing)} for the catalog to register into"
+        )
+    return url, token
 
 
 def load_config(path: Path) -> dict:
@@ -119,7 +152,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Register datasets with the Scientific Dataset Catalog."
     )
-    parser.add_argument("--env", choices=sorted(ENVIRONMENTS), default="staging")
     parser.add_argument(
         "--dry-run", action="store_true", help="validate and plan only; never writes"
     )
@@ -151,6 +183,14 @@ def make_handler(client: CatalogClient, config: dict, args: argparse.Namespace):
         request = build_request(src, config)
         # Local pydantic validation: a bad record fails here, before any API call.
         payload = request.to_dataset_request()
+        for asset in payload.locations:
+            platform = getattr(asset.storage_platform, "value", asset.storage_platform)
+            problem = location_problem(asset.location_uri, str(platform))
+            if problem:
+                raise ValueError(
+                    f"{asset.location_uri} cannot be registered: {problem}. Register only data "
+                    "on shared organization storage (concepts skill)."
+                )
         collections = collections_for(src, config)
         if args.dry_run:
             plan = client.plan(request, update_if_exists=True, error_on_duplicate=False)
@@ -195,21 +235,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         config = load_config(args.config)
-        token_var, token = resolve_token(args.env)
+        url, token = catalog_connection()
     except ConfigError as exc:
         log.error("%s", exc)
         return EXIT_CONFIG
-    log.info(
-        "env=%s url=%s token=%s dry_run=%s",
-        args.env,
-        ENVIRONMENTS[args.env],
-        token_var,
-        args.dry_run,
-    )
+    env = env_from_url(url)
+    log.info("env=%s url=%s token=%s dry_run=%s", env, url, TOKEN_VAR, args.dry_run)
     retry = RetryPolicy(max_attempts=5, base_delay=0.5, max_delay=30.0, jitter=True)
-    with CatalogClient(
-        base_url=ENVIRONMENTS[args.env], api_token=token, retry=retry
-    ) as client:
+    with CatalogClient(base_url=url, api_token=token, retry=retry) as client:
         try:
             check_compatibility(client)
         except CompatibilityError as exc:
@@ -230,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         # Read by the plugin's PreToolUse guard: a production run needs a passing dry run of these exact files.
         script, mapping = Path(__file__).resolve(), args.config.resolve()
         print(
-            f"{DRY_RUN_MARKER} env={args.env} script={script} script_sha256={_sha256(script)} "
+            f"{DRY_RUN_MARKER} env={env} url={url} script={script} script_sha256={_sha256(script)} "
             f"config={mapping} config_sha256={_sha256(mapping)}"
         )
     return report.exit_code
@@ -252,7 +285,11 @@ from catalog_client.utils.checksum import Algorithm, compute_checksum  # noqa: E
 
 
 def discover_records(config: dict) -> Iterator[Source]:
-    """Yield one Source per dataset. Stream: never collect every record first."""
+    """Yield one Source per dataset. Stream: never collect every record first.
+
+    `root` is shared organization storage (here, a cluster path read from a node that mounts it);
+    for S3, list the prefix with boto3 instead of globbing.
+    """
     data = config["data"]
     for entry in Path(data["root"]).glob(data["dataset_glob"]):
         if entry.is_dir():
@@ -290,7 +327,7 @@ def build_assets(src: Source, config: dict) -> list[DataAssetRequest]:
     file_count = sum(len(files) for _, _, files in os.walk(path))
     return [
         DataAssetRequest(
-            location_uri=os.path.abspath(path),
+            location_uri=str(path),
             asset_type=AssetType.folder,
             storage_platform=StoragePlatform(assets["storage_platform"]),
             file_format=assets.get("file_format"),

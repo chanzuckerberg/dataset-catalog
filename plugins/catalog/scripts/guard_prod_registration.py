@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash): block a production registration run that has no passing production dry run.
+"""PreToolUse(Bash): block a production registration run that has no passing dry run against it.
 
 Matches only a command that runs a file built from the registration template
-(it carries the TEMPLATE-OWNED and AGENT-EDITABLE markers) with `--env prod`
-and without `--dry-run`. It is allowed when ${CLAUDE_PLUGIN_DATA}/dry_runs.json
-records a passing `--env prod --dry-run` of the same script and config bytes
-(written by record_dry_run.py). Everything else, including malformed input, is
-left to the normal permission flow.
+(it carries the TEMPLATE-OWNED and AGENT-EDITABLE markers) without `--dry-run`.
+The target catalog is an inline CATALOG_API_URL=... in the command, else the
+session's CATALOG_API_URL. When that URL names prod, or no recognizable
+environment, the run is allowed only if ${CLAUDE_PLUGIN_DATA}/dry_runs.json
+records a passing dry run of the same script and config bytes against the same
+URL (written by record_dry_run.py). Dev and staging runs, and malformed input,
+are left to the normal permission flow.
 """
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -18,18 +22,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _env import URL_VAR, env_from_url  # noqa: E402
 from _hooklib import deny, is_registration_script, read_input  # noqa: E402
 
-PROD_VALUES = {"prod", "production"}
+GUARDED_ENVS = {"prod", "unknown"}
 
 
-def env_arg(tokens: list[str]) -> str | None:
-    for index, token in enumerate(tokens):
-        if token == "--env" and index + 1 < len(tokens):
-            return tokens[index + 1].lower()
-        if token.startswith("--env="):
-            return token.split("=", 1)[1].lower()
-    return None
+def target_url(tokens: list[str]) -> str | None:
+    inline = [t.split("=", 1)[1] for t in tokens if t.startswith(f"{URL_VAR}=")]
+    url = inline[-1] if inline else os.environ.get(URL_VAR)
+    return (url or "").strip().rstrip("/") or None
 
 
 def config_arg(tokens: list[str], script: Path) -> Path:
@@ -64,7 +66,7 @@ def sha256(path: Path) -> str | None:
         return None
 
 
-def passing_dry_run(script: Path, config: Path) -> bool:
+def passing_dry_run(script: Path, config: Path, url: str) -> bool:
     data_dir = os.environ.get("CLAUDE_PLUGIN_DATA")
     if not data_dir:
         return False
@@ -73,7 +75,7 @@ def passing_dry_run(script: Path, config: Path) -> bool:
     except (OSError, ValueError):
         return False
     per_script = runs.get(str(script)) if isinstance(runs, dict) else None
-    entry = per_script.get("prod") if isinstance(per_script, dict) else None
+    entry = per_script.get(url) if isinstance(per_script, dict) else None
     if not isinstance(entry, dict):
         return False
     return (
@@ -94,17 +96,27 @@ def main() -> int:
         tokens = shlex.split(command)
     except ValueError:
         return 0
-    if env_arg(tokens) not in PROD_VALUES or "--dry-run" in tokens:
+    url = target_url(tokens)
+    if "--dry-run" in tokens or not url:
+        return 0
+    env = env_from_url(url)
+    if env not in GUARDED_ENVS:
         return 0
     cwd = Path(data.get("cwd") or os.getcwd())
     for script in template_scripts(tokens, cwd):
         config = config_arg(tokens, script)
         config = (config if config.is_absolute() else cwd / config).resolve()
-        if not passing_dry_run(script, config):
+        if not passing_dry_run(script, config, url):
+            label = (
+                "production"
+                if env == "prod"
+                else "an unrecognized (treated as production)"
+            )
             deny(
-                f"Blocked: {script.name} --env prod has no passing production dry run for the current script "
-                f"and {config.name}. Run it with --env prod --dry-run first (staging before that), review the "
-                "plan, then rerun. Editing either file after the dry run requires a new one."
+                f"Blocked: {script.name} would write to {label} catalog {url} with no passing dry run "
+                f"there for the current script and {config.name}. Run it with --dry-run against the same "
+                f"{URL_VAR} first (dev or staging before that), review the plan, then rerun. Editing either "
+                "file after the dry run requires a new one."
             )
             return 0
     return 0

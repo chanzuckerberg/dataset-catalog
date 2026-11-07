@@ -23,11 +23,11 @@ are any. If the error text is missing, return "Need the exact error text" and st
    (`<key> failed: <ExcType>: <msg>`), `mapping.json` for `null` or wrong values, the template only
    to understand behaviour.
 3. Confirm with read-only checks where useful:
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.py" <env>`,
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"` (names the environment from `CATALOG_API_URL`),
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint_registration_script.py" <script>`,
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_record.py" <payload.json>`,
-   `catalog get|list|resolve ...`, or `<script> --env staging --dry-run --limit 1`. Never run without
-   `--dry-run`, and never against prod.
+   `catalog get|list|resolve ...`, or `<script> --dry-run --limit 1`. Never run without `--dry-run`.
+   Say which environment each check targeted.
 
 ## Output
 - **Cause:** one or two sentences, citing the evidence (error line, file:line).

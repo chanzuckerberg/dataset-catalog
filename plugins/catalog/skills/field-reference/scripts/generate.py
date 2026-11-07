@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild the field reference from the client models, the live API spec, and examples.json.
 
-    python3 generate.py                      # client models + live spec (staging by default)
+    python3 generate.py                      # client models + live spec from CATALOG_API_URL
     python3 generate.py --spec spec.json     # use a saved OpenAPI document instead
     python3 generate.py --no-client          # spec only (fields then read as API-only)
 
@@ -14,6 +14,8 @@ The spec is fetched with the token sent as the X-catalog-api-token header, read
 from CATALOG_API_TOKEN; it is never printed.
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -24,7 +26,6 @@ import urllib.request
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-STAGING_URL = "https://datacatalog.staging-sci-data.staging.czi.team"
 SPEC_PATHS = ("/api/v1/meta/openapi.json", "/api/meta/openapi.json")
 API_PREFIX = "/api/v1/"
 
@@ -444,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--url",
-        help=f"catalog base URL for the live spec (default: CATALOG_API_URL or {STAGING_URL})",
+        help="catalog base URL for the live spec (default: CATALOG_API_URL)",
     )
     parser.add_argument(
         "--no-client", action="store_true", help="ignore an installed catalog_client"
@@ -468,14 +469,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.spec:
             spec, source = json.loads(Path(args.spec).read_text()), Path(args.spec).name
         else:
+            url = args.url or os.environ.get("CATALOG_API_URL")
             token = os.environ.get("CATALOG_API_TOKEN")
-            if not token:
+            if not url or not token:
                 raise GenerateError(
-                    "CATALOG_API_TOKEN is not set; pass --spec FILE to work offline"
+                    "set CATALOG_API_URL and CATALOG_API_TOKEN (or pass --url), or pass --spec FILE "
+                    "to work offline"
                 )
-            spec, source = fetch_spec(
-                args.url or os.environ.get("CATALOG_API_URL") or STAGING_URL, token
-            )
+            spec, source = fetch_spec(url, token)
         curated = (
             json.loads(args.examples.read_text()) if args.examples.exists() else {}
         )

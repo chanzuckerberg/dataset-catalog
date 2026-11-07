@@ -14,6 +14,10 @@ GUARD_PROD = SCRIPTS / "guard_prod_registration.py"
 RECORD = SCRIPTS / "record_dry_run.py"
 LINT = SCRIPTS / "lint_registration_script.py"
 FAKE_TOKEN = "cat9f2b7c41d0e8a6b3f5d2c1e9a7b4"
+DEV = "https://diverse-oarfish.dev-sci-data.dev.czi.team"
+STAGING = "https://datacatalog.staging-sci-data.staging.czi.team"
+PROD = "https://datacatalog.prod-sci-data.prod.czi.team"
+UNKNOWN = "https://catalog.example.com"
 
 
 def _sha(path: Path) -> str:
@@ -53,14 +57,22 @@ class AllowCatalogReadsTest(unittest.TestCase):
             "catalog resolve s3://bucket/x/",
             "catalog validate payload.json",
             "catalog collections entries abc",
-            'python3 "/p/scripts/check_auth.py" staging',
+            'python3 "/p/scripts/check_auth.py" --report',
             "python3 /p/scripts/validate_record.py rec.json",
         ):
             self.assertEqual(self.check(command), "allow", command)
 
+    def test_stdlib_get_allowed_on_every_catalog_host(self):
+        for host in (DEV, STAGING, PROD):
+            command = (
+                f"python3 -c \"urlopen(Request('{host}/api/v1/datasets/?limit=1', "
+                "headers={'X-catalog-api-token': t}))\""
+            )
+            self.assertEqual(self.check(command), "allow", host)
+
     def test_defers_writes_chains_and_removed_scripts(self):
         for command in (
-            "python register.py --env staging",
+            f"CATALOG_API_URL={STAGING} python register.py",
             "catalog search --q x; rm -rf /",
             "catalog collections create",
             "python3 /p/scripts/preflight.py",
@@ -83,7 +95,7 @@ class GuardSecretsTest(unittest.TestCase):
         for content in (
             f'api_token = "{FAKE_TOKEN}"',
             f'headers = {{"X-catalog-api-token": "{FAKE_TOKEN}"}}',
-            f"export CATALOG_PROD_API_TOKEN={FAKE_TOKEN}\n",
+            f"export CATALOG_API_TOKEN={FAKE_TOKEN}\n",
         ):
             result = self.check({"file_path": "/tmp/x.py", "content": content})
             self.assertEqual(decision(result), "deny", content)
@@ -107,13 +119,13 @@ class GuardSecretsTest(unittest.TestCase):
             )
 
     def test_blocks_value_of_token_env_var(self):
-        env = clean_env(CATALOG_STAGING_API_TOKEN="short-but-real-value-123")
+        env = clean_env(CATALOG_API_TOKEN="short-but-real-value-123")
         result = self.check(
             {"file_path": "/tmp/n.txt", "new_string": "x short-but-real-value-123 y"},
             env=env,
         )
         self.assertEqual(decision(result), "deny")
-        self.assertIn("CATALOG_STAGING_API_TOKEN", result.stdout)
+        self.assertIn("CATALOG_API_TOKEN", result.stdout)
 
     def test_multiedit_edits_are_checked(self):
         result = self.check(
@@ -126,7 +138,7 @@ class GuardSecretsTest(unittest.TestCase):
 
     def test_allows_env_lookups_and_placeholders(self):
         for content in (
-            'token = os.environ["CATALOG_STAGING_API_TOKEN"]',
+            'token = os.environ["CATALOG_API_TOKEN"]',
             "CATALOG_API_TOKEN=\n",
             'api_token="<your-token-here>"',
             'api_token="xxxxxxxxxxxxxxxxxxxxxxxx"',
@@ -150,19 +162,22 @@ class ProdGuardAndRecorderTest(unittest.TestCase):
         shutil.copy(TEMPLATE, self.script)
         self.mapping = self.tmp / "mapping.json"
         self.mapping.write_text("{}\n")
-        self.env = clean_env(CLAUDE_PLUGIN_DATA=str(self.data))
 
-    def guard(self, command: str):
+    def guard(self, command: str, url: str | None = None, data: bool = True):
+        extra = {"CATALOG_API_URL": url} if url else {}
+        if data:
+            extra["CLAUDE_PLUGIN_DATA"] = str(self.data)
         return run_script(
             GUARD_PROD,
             {"tool_input": {"command": command}, "cwd": str(self.tmp)},
-            env=self.env,
+            env=clean_env(**extra),
         )
 
-    def marker(self, env: str = "prod") -> str:
+    def marker(self, url: str = PROD, env: str = "prod") -> str:
         return (
-            f"catalog-dry-run: ok env={env} script={self.script.resolve()} script_sha256={_sha(self.script)} "
-            f"config={self.mapping.resolve()} config_sha256={_sha(self.mapping)}"
+            f"catalog-dry-run: ok env={env} url={url} script={self.script.resolve()} "
+            f"script_sha256={_sha(self.script)} config={self.mapping.resolve()} "
+            f"config_sha256={_sha(self.mapping)}"
         )
 
     def record(self, stdout: str):
@@ -170,48 +185,69 @@ class ProdGuardAndRecorderTest(unittest.TestCase):
             "tool_input": {"command": "python register.py --dry-run"},
             "tool_response": {"stdout": stdout},
         }
-        return run_script(RECORD, payload, env=self.env)
-
-    def test_prod_run_without_dry_run_is_denied(self):
-        self.assertEqual(decision(self.guard("python register.py --env prod")), "deny")
-        self.assertEqual(
-            decision(self.guard("uv run register.py --env=production")), "deny"
+        return run_script(
+            RECORD, payload, env=clean_env(CLAUDE_PLUGIN_DATA=str(self.data))
         )
 
-    def test_non_prod_dry_run_and_non_template_scripts_pass(self):
+    def test_dev_and_staging_runs_need_no_dry_run(self):
+        self.assertIsNone(decision(self.guard("python register.py", DEV)))
+        self.assertIsNone(decision(self.guard("python register.py", STAGING)))
+
+    def test_prod_url_from_hook_env_is_denied(self):
+        result = self.guard("python register.py", PROD)
+        self.assertEqual(decision(result), "deny")
+        reason = json.loads(result.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"
+        ]
+        self.assertIn(PROD, reason)
+        self.assertIn("--dry-run against the same CATALOG_API_URL", reason)
+        self.assertEqual(decision(self.guard("uv run register.py", PROD)), "deny")
+
+    def test_inline_url_overrides_hook_env(self):
+        command = f"CATALOG_API_URL={PROD}/ python register.py"
+        self.assertEqual(decision(self.guard(command, STAGING)), "deny")
+        command = f"CATALOG_API_URL={STAGING} python register.py"
+        self.assertIsNone(decision(self.guard(command, PROD)))
+
+    def test_unknown_host_is_denied(self):
+        self.assertEqual(decision(self.guard("python register.py", UNKNOWN)), "deny")
+
+    def test_dry_run_missing_url_and_non_template_scripts_pass(self):
         self.assertIsNone(decision(self.guard("python register.py")))
-        self.assertIsNone(decision(self.guard("python register.py --env staging")))
-        self.assertIsNone(
-            decision(self.guard("python register.py --env prod --dry-run"))
-        )
+        self.assertIsNone(decision(self.guard("python register.py --dry-run", PROD)))
         (self.tmp / "other.py").write_text("print('hi')\n")
-        self.assertIsNone(decision(self.guard("python other.py --env prod")))
-        self.assertIsNone(decision(self.guard("python 'unterminated --env prod")))
+        self.assertIsNone(decision(self.guard("python other.py", PROD)))
+        self.assertIsNone(decision(self.guard("python 'unterminated", PROD)))
+
+    def test_staging_dry_run_does_not_unlock_prod(self):
+        self.record("12 planned, 0 failed\n" + self.marker(STAGING, "staging") + "\n")
+        runs = json.loads((self.data / "dry_runs.json").read_text())
+        self.assertEqual(list(runs[str(self.script.resolve())]), [STAGING])
+        self.assertEqual(decision(self.guard("python register.py", PROD)), "deny")
 
     def test_recorded_prod_dry_run_allows_until_files_change(self):
-        self.record("12 registered, 0 failed\n" + self.marker("staging") + "\n")
-        self.assertEqual(decision(self.guard("python register.py --env prod")), "deny")
-        self.record(self.marker("prod") + "\n")
-        self.assertIsNone(decision(self.guard("python register.py --env prod")))
+        self.record(self.marker() + "\n")
+        entry = json.loads((self.data / "dry_runs.json").read_text())[
+            str(self.script.resolve())
+        ][PROD]
+        self.assertEqual(entry["env"], "prod")
+        self.assertIsNone(decision(self.guard("python register.py", PROD)))
         self.mapping.write_text('{"changed": true}\n')
-        self.assertEqual(decision(self.guard("python register.py --env prod")), "deny")
+        self.assertEqual(decision(self.guard("python register.py", PROD)), "deny")
+        self.mapping.write_text("{}\n")
+        self.assertIsNone(decision(self.guard("python register.py", PROD)))
+        with self.script.open("a") as handle:
+            handle.write("# edited\n")
+        self.assertEqual(decision(self.guard("python register.py", PROD)), "deny")
 
     def test_recorder_ignores_markers_for_other_bytes(self):
-        stale = self.marker("prod")
+        stale = self.marker()
         self.mapping.write_text('{"edited": 1}\n')
         self.record(stale)
         self.assertFalse((self.data / "dry_runs.json").exists())
 
     def test_missing_plugin_data_denies_prod(self):
-        env = clean_env()
-        result = run_script(
-            GUARD_PROD,
-            {
-                "tool_input": {"command": "python register.py --env prod"},
-                "cwd": str(self.tmp),
-            },
-            env=env,
-        )
+        result = self.guard("python register.py", PROD, data=False)
         self.assertEqual(decision(result), "deny")
 
 
@@ -237,9 +273,11 @@ class LintTest(unittest.TestCase):
     def test_agent_rules(self):
         cases = {
             "x = input('token? ')": "interactive",
-            "tok = os.environ['CATALOG_PROD_API_TOKEN']": "resolve_token",
+            "tok = os.environ['CATALOG_API_TOKEN']": "catalog_connection()",
             "c = CatalogClient('u', 't')": "owns the client",
-            "u = 'https://datacatalog.prod-sci-data.prod.czi.team'": "--env",
+            f"u = '{PROD}'": "comes from CATALOG_API_URL via the template",
+            "u = os.environ['CATALOG_API_URL']": "comes from CATALOG_API_URL",
+            "u = 'https://datacatalog.prod-sci-data.example'": "comes from CATALOG_API_URL",
             "sys.exit(3)": "do not exit",
             "data = open(p).read()": "stream",
             "client.register(req)": "update_if_exists=True",
@@ -296,36 +334,51 @@ class SessionStartTest(unittest.TestCase):
             second = run_script(SCRIPTS / "check_onboarding.sh", env=env)
             self.assertEqual((second.returncode, second.stdout), (0, ""))
 
-    def test_readiness_reports_missing_token(self):
-        result = run_script(SCRIPTS / "check_env.py", env=clean_env())
+    def environment_line(self, **env: str) -> str:
+        result = run_script(SCRIPTS / "check_env.py", env=clean_env(**env))
         self.assertEqual(result.returncode, 0)
-        self.assertIn("CATALOG_STAGING_API_TOKEN", result.stdout)
+        return result.stdout
 
-    def test_readiness_token_lookup_respects_url(self):
-        url = "https://datacatalog.staging-sci-data.staging.czi.team"
-        paired = run_script(
-            SCRIPTS / "check_env.py",
-            env=clean_env(CATALOG_API_TOKEN="t", CATALOG_API_URL=url),
+    def test_environment_line_names_each_env(self):
+        for url, env in ((DEV, "dev"), (STAGING, "staging"), (PROD, "prod")):
+            out = self.environment_line(CATALOG_API_URL=url, CATALOG_API_TOKEN="t")
+            self.assertIn(
+                f"catalog environment: {env} ({url}, from CATALOG_API_URL).", out
+            )
+            self.assertEqual("Writes here are real records" in out, env == "prod")
+            self.assertNotIn("CATALOG_API_TOKEN is not set", out)
+
+    def test_unknown_host_is_treated_as_production(self):
+        out = self.environment_line(CATALOG_API_URL=UNKNOWN, CATALOG_API_TOKEN="t")
+        self.assertIn(f"catalog environment: unknown ({UNKNOWN})", out)
+        self.assertIn("treat it as production", out)
+
+    def test_no_url(self):
+        out = self.environment_line(CATALOG_API_TOKEN="t")
+        self.assertEqual(
+            out.splitlines()[0],
+            "catalog environment: none — CATALOG_API_URL is not set (auth skill).",
         )
-        self.assertNotIn("token", paired.stdout)
-        mismatched = run_script(
-            SCRIPTS / "check_env.py", env=clean_env(CATALOG_API_TOKEN="t")
+
+    def test_readiness_reports_missing_token_for_url(self):
+        out = self.environment_line(CATALOG_API_URL=STAGING)
+        self.assertIn(
+            f"catalog readiness: CATALOG_API_TOKEN is not set for {STAGING}", out
         )
-        self.assertIn("token", mismatched.stdout)
 
 
 class CheckAuthOfflineTest(unittest.TestCase):
-    def test_missing_token_names_variables_and_exits_2(self):
-        result = run_script(SCRIPTS / "check_auth.py", args=["prod"])
+    def test_missing_url_exits_2_with_message(self):
+        result = run_script(
+            SCRIPTS / "check_auth.py", env=clean_env(CATALOG_API_TOKEN="t")
+        )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("CATALOG_PROD_API_TOKEN", result.stdout)
-        self.assertIn("https://datacatalog.prod-sci-data.prod.czi.team", result.stdout)
+        self.assertIn("check_auth: CATALOG_API_URL is not set", result.stderr)
 
     def test_report_mode_exits_zero(self):
-        self.assertEqual(
-            run_script(SCRIPTS / "check_auth.py", args=["--report", "nope"]).returncode,
-            0,
-        )
+        result = run_script(SCRIPTS / "check_auth.py", args=["--report"])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("check_auth: CATALOG_API_URL is not set", result.stdout)
 
 
 if __name__ == "__main__":

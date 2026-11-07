@@ -1,9 +1,13 @@
 import importlib.util
 import io
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from _support import SCRIPTS, clean_env
@@ -16,6 +20,7 @@ _spec.loader.exec_module(check_auth)
 
 TOKEN = "staging-token-value-123"
 STAGING = "https://datacatalog.staging-sci-data.staging.czi.team"
+ENV = clean_env(CATALOG_API_URL=STAGING + "/", CATALOG_API_TOKEN=TOKEN)
 
 
 def fake_get(routes: dict):
@@ -30,9 +35,8 @@ def fake_get(routes: dict):
 class CheckAuthTest(unittest.TestCase):
     def run_check(self, routes: dict, *args: str) -> tuple[int, str]:
         out = io.StringIO()
-        env = clean_env(CATALOG_STAGING_API_TOKEN=TOKEN)
         with (
-            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.dict(os.environ, ENV, clear=True),
             mock.patch.object(check_auth, "get", fake_get(routes)),
             mock.patch.object(check_auth, "client_version", lambda: "1.3.0"),
             redirect_stdout(out),
@@ -62,7 +66,9 @@ class CheckAuthTest(unittest.TestCase):
             {"/api/v1/token/validate": (200, self.validate_body("rw"))}
         )
         self.assertEqual(code, 0)
-        self.assertIn("CATALOG_STAGING_API_TOKEN", out)
+        self.assertRegex(out, r"environment\s+staging \(from CATALOG_API_URL\)")
+        self.assertRegex(out, rf"catalog URL\s+{STAGING}\n")
+        self.assertRegex(out, r"token source\s+CATALOG_API_TOKEN\n")
         self.assertIn("Ada (imaging)", out)
         self.assertRegex(out, r"write\s+yes")
         self.assertIn("2027-01-01", out)
@@ -102,29 +108,82 @@ class CheckAuthTest(unittest.TestCase):
 
         with (
             mock.patch.object(check_auth, "get", boom),
-            mock.patch.dict(
-                os.environ, clean_env(CATALOG_STAGING_API_TOKEN=TOKEN), clear=True
-            ),
+            mock.patch.dict(os.environ, ENV, clear=True),
             redirect_stdout(io.StringIO()),
             mock.patch("sys.stderr", io.StringIO()),
         ):
             self.assertEqual(check_auth.main([]), 1)
 
-    def test_generic_token_needs_matching_url(self):
-        with mock.patch.dict(
-            os.environ, clean_env(CATALOG_API_TOKEN=TOKEN), clear=True
-        ):
-            self.assertEqual(check_auth.resolve_token("staging"), (None, None))
-        with mock.patch.dict(
-            os.environ,
-            clean_env(CATALOG_API_TOKEN=TOKEN, CATALOG_API_URL=STAGING + "/"),
-            clear=True,
-        ):
-            self.assertEqual(
-                check_auth.resolve_token("staging"), ("CATALOG_API_TOKEN", TOKEN)
-            )
-            self.assertEqual(check_auth.resolve_token("prod"), (None, None))
+    def test_missing_token_and_unknown_host(self):
+        with mock.patch.object(check_auth, "client_version", lambda: None):
+            rows, code = check_auth.check("https://catalog.example.com", None, False)
+        rows = dict(rows)
+        self.assertEqual(code, 2)
+        self.assertIn("treated as production", rows["environment"])
+        self.assertEqual(
+            rows["token source"], "none — set CATALOG_API_TOKEN for this catalog"
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckAuthShellTest(unittest.TestCase):
+    """check_auth.sh: credentials first, then a Python environment, then check_auth.py."""
+
+    SCRIPT = SCRIPTS / "check_auth.sh"
+    # Connection refused: proves check_auth.py ran without touching the network.
+    UNREACHABLE = "http://127.0.0.1:9"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def run_sh(self, *args: str, path: str | None = None, **env: str):
+        environ = {k: v for k, v in clean_env(**env).items() if k != "VIRTUAL_ENV"}
+        if path is not None:
+            environ["PATH"] = path
+        return subprocess.run(
+            [str(self.SCRIPT), *args],
+            capture_output=True,
+            text=True,
+            env=environ,
+            cwd=self.tmp,
+            check=False,
+        )
+
+    def test_missing_credentials_stop_before_any_python_setup(self):
+        result = self.run_sh(CATALOG_API_URL=self.UNREACHABLE)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("CATALOG_API_TOKEN not set", result.stderr)
+        self.assertFalse((self.tmp / ".venv").exists())
+        report = self.run_sh("--report")
+        self.assertEqual(report.returncode, 0)
+        self.assertIn("CATALOG_API_URL and CATALOG_API_TOKEN not set", report.stdout)
+
+    def test_existing_venv_is_used(self):
+        bin_dir = self.tmp / ".venv" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "python").symlink_to(sys.executable)
+        result = self.run_sh(
+            CATALOG_API_URL=self.UNREACHABLE, CATALOG_API_TOKEN="fake-token-123"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("could not reach http://127.0.0.1:9", result.stderr)
+        self.assertNotIn("creating", result.stderr)
+
+    def test_without_uv_falls_back_to_system_python(self):
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python3").symlink_to(sys.executable)
+        result = self.run_sh(
+            "--report",
+            path=f"{bin_dir}:/usr/bin:/bin",
+            CATALOG_API_URL=self.UNREACHABLE,
+            CATALOG_API_TOKEN="fake-token-123",
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("uv is not installed", result.stdout)
+        self.assertIn("could not reach", result.stdout)
+        self.assertFalse((self.tmp / ".venv").exists())

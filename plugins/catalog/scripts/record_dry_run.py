@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """PostToolUse(Bash): remember registration dry runs that passed.
 
-A generated script prints `catalog-dry-run: ok env=... script=... script_sha256=...
-config=... config_sha256=...` only when every record planned cleanly. This
+A generated script prints `catalog-dry-run: ok env=... url=... script=...
+script_sha256=... config=... config_sha256=...` only when every record planned
+cleanly. This
 records that line in ${CLAUDE_PLUGIN_DATA}/dry_runs.json, after re-hashing the
 files so a line copied from elsewhere cannot vouch for different bytes.
 guard_prod_registration.py reads it. Silent; malformed input is ignored.
 """
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -59,7 +62,8 @@ def main() -> int:
         per_script = runs.get(m["script"])
         if not isinstance(per_script, dict):
             per_script = runs[m["script"]] = {}
-        per_script[m["env"]] = {
+        per_script[m["url"]] = {
+            "env": m["env"],
             "script_sha256": m["script_sha"],
             "config": m["config"],
             "config_sha256": m["config_sha"],

@@ -178,7 +178,8 @@
           {"data_type": "imaging", "value": "s3://czi-imaging/dynacell/screen-07/plate-03.ome.zarr/"},
           {"data_type": "sequencing", "value": "/hpc/projects/atlas/liver/donor2/counts.h5ad"},
           {"data_type": "mass spec", "value": "s3://czi-ms/plasma/run-14/"}
-        ]
+        ],
+        "common_mistakes": "A path on a laptop, external drive, temp directory, or home/personal directory. Only shared organization storage can be registered (concepts skill, \"What can be registered\")."
       },
       "storage_platform": {
         "decided_by": "Where the bytes live, confirmed with the user when the path alone is ambiguous.",

@@ -1,12 +1,12 @@
 ---
 description: Check which catalog environment you're pointed at and whether your token can read and write.
-argument-hint: [env]
+argument-hint: [--verbose]
 disable-model-invocation: true
 model: haiku
-allowed-tools: Bash(python3 *check_auth.py*)
+allowed-tools: Bash(*check_auth.sh*)
 ---
 ## Token check
-!`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.py" --report $ARGUMENTS`
+!`"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh" --report $ARGUMENTS`
 
-Summarize the result above in a short table. If write access is missing, point to the auth skill's access-request steps.
+Summarize the result above in a short table, starting with the environment and URL (from `CATALOG_API_URL`; `unknown` is treated as production). To switch environments, see the auth skill. If write access is missing, point to the auth skill's access-request steps.
 If the result above is missing (shell injection disabled), run the same script with Bash.

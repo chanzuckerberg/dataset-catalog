@@ -8,7 +8,7 @@ model: sonnet
 
 Every call here is a `GET`. Writing is `registration-script`'s job. The token travels only as the
 `X-catalog-api-token` header, never in a URL, argument, or output. If a call returns 401, check
-access with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.py"` (auth skill).
+access with `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"` (auth skill).
 
 ## Surfaces
 

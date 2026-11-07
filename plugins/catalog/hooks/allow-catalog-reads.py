@@ -45,13 +45,14 @@ mutates = (
     or ".encode(" in cmd
 )
 
-# Hosts the catalog reads target: datacatalog.<env>-sci-data.<env>.czi.team,
-# where <env> is dev, staging, or prod. A URL literal to any OTHER host is a
+# Hosts the catalog reads target: <name>.<env>-sci-data.<env>.czi.team, where
+# <env> is dev, staging, or prod (dev deployments get per-preview names, so the
+# first label is not fixed). A URL literal to any OTHER host is a
 # red flag — a token can only be exfiltrated by shipping it elsewhere, and this
 # substring hook can't vouch for that. The legit stdlib read builds its URL from
 # CATALOG_API_URL / a catalog host, so it carries no foreign literal.
 CATALOG_HOST_RE = re.compile(
-    r"datacatalog\.(dev|staging|prod)-sci-data\.(dev|staging|prod)\.czi\.team(:\d+)?",
+    r"[a-z0-9-]+\.(dev|staging|prod)-sci-data\.(dev|staging|prod)\.czi\.team(:\d+)?",
     re.IGNORECASE,
 )
 # Every `http(s)://` scheme literal must be immediately followed by a catalog

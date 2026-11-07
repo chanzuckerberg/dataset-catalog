@@ -1,5 +1,7 @@
 """Helpers shared by the plugin's hook scripts (stdlib only)."""
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -13,7 +15,7 @@ EDITABLE_MARKER = "# === AGENT-EDITABLE ==="
 END_EDITABLE_MARKER = "# === END AGENT-EDITABLE ==="
 CLIENT_PIN = "catalog-client>=1.3.0,<2"
 DRY_RUN_RE = re.compile(
-    r"catalog-dry-run: ok env=(?P<env>\S+) script=(?P<script>.+?) script_sha256=(?P<script_sha>[0-9a-f]{64}) "
+    r"catalog-dry-run: ok env=(?P<env>\S+) url=(?P<url>\S+) script=(?P<script>.+?) script_sha256=(?P<script_sha>[0-9a-f]{64}) "
     r"config=(?P<config>.+?) config_sha256=(?P<config_sha>[0-9a-f]{64})\s*$",
     re.MULTILINE,
 )

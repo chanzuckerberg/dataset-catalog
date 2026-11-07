@@ -1,6 +1,6 @@
 ---
 name: script-writer
-description: Writes or updates a catalog registration script from a confirmed brief, using the plugin template, then validates and dry-runs it in staging. Use after /catalog:register has gathered inputs, or to change an existing registration script.
+description: Writes or updates a catalog registration script from a confirmed brief, using the plugin template, then validates and dry-runs it against the configured dev or staging catalog. Use after /catalog:register has gathered inputs, or to change an existing registration script.
 model: opus
 effort: high
 tools: Read, Write, Edit, Bash, Grep, Glob
@@ -27,7 +27,9 @@ missing, stop and return the list of missing inputs.
    writing raw HTTP.
 4. Run the linter, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint_registration_script.py" <script>`
    (the PostToolUse hook also runs it on every write), and fix what it reports.
-5. Run `<script> --env staging --dry-run --limit 1`, then without `--limit`. Validate one payload
+5. Check the target with `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"`; if the environment
+   is `prod` or `unknown`, stop and report it (first runs go to dev or staging). Run
+   `<script> --dry-run --limit 1`, then without `--limit`. Validate one payload
    from `catalog-dry-run/` with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_record.py"`. Fix
    failures; after 3 failed attempts on the same error, stop and report.
 6. Return the report below.
@@ -35,11 +37,15 @@ missing, stop and return the list of missing inputs.
 ## Output
 - Files: script path, mapping.json path
 - What it registers: N datasets, M assets, lineage/collection links
-- Dry run: pass/fail, counts (create/update/skip), warnings
+- Dry run: environment and URL, pass/fail, counts (create/update/skip), warnings
 - Open questions for the user
 - How to run it in their pipeline (one example command)
 
 ## Rules
 - Never edit TEMPLATE-OWNED sections. Never write token values; read credentials by name only.
-- Never run without --dry-run; never target production (a hook also blocks this).
+- Never run without --dry-run; never target a prod or `unknown` URL (a hook also blocks a real
+  prod run without a matching dry run).
 - Never invent governance values.
+- Never register data on a local disk or in personal storage, and never substitute local files for
+  the real location (`concepts`, "What can be registered"). If the brief points there, stop and
+  report it as a missing input.

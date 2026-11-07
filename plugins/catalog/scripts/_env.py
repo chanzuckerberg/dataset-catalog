@@ -1,47 +1,34 @@
-"""Catalog environments and credential lookup shared by the plugin scripts.
+"""Catalog connection settings and environment naming shared by the plugin scripts.
 
-The generated registration template carries its own copy of this mapping (it
-must run without the plugin), so keep the two in step.
+There is no built-in default environment: everything uses CATALOG_API_URL and
+CATALOG_API_TOKEN from the environment, and names the environment from the
+URL's hostname. The generated registration template carries its own copy of
+env_from_url() (it must run without the plugin); tests keep the two identical.
 """
 
+from __future__ import annotations
+
 import os
+import re
+import urllib.parse
 
-ENVIRONMENTS = {
-    "staging": "https://datacatalog.staging-sci-data.staging.czi.team",
-    "prod": "https://datacatalog.prod-sci-data.prod.czi.team",
-}
-DEFAULT_ENV = "staging"
-ALIASES = {"production": "prod", "stage": "staging"}
+URL_VAR = "CATALOG_API_URL"
+TOKEN_VAR = "CATALOG_API_TOKEN"
 
 
-def normalize_env(name: str | None) -> str:
-    env = (name or DEFAULT_ENV).strip().lower()
-    env = ALIASES.get(env, env)
-    if env not in ENVIRONMENTS:
-        raise ValueError(
-            f"unknown environment {name!r}; expected one of: {', '.join(ENVIRONMENTS)}"
-        )
-    return env
+def env_from_url(url: str) -> str:
+    """'dev', 'staging' or 'prod' from the URL's hostname; 'unknown' when it names none or several."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    aliases = {"production": "prod", "stage": "staging", "development": "dev"}
+    labels = {aliases.get(label, label) for label in re.split(r"[.-]", host)}
+    found = labels & {"dev", "staging", "prod"}
+    return found.pop() if len(found) == 1 else "unknown"
 
 
-def token_var_names(env: str) -> list[str]:
-    return [f"CATALOG_{env.upper()}_API_TOKEN", "CATALOG_API_TOKEN"]
-
-
-def resolve_token(env: str) -> tuple[str | None, str | None]:
-    """Return (variable name, token) for ``env``, or (None, None).
-
-    ``CATALOG_<ENV>_API_TOKEN`` wins. The generic ``CATALOG_API_TOKEN`` is used
-    only when ``CATALOG_API_URL`` names this same environment, so a token
-    issued for one environment is never sent to another.
-    """
-    specific, generic = token_var_names(env)
-    if os.environ.get(specific):
-        return specific, os.environ[specific]
-    url = (os.environ.get("CATALOG_API_URL") or "").rstrip("/")
-    if os.environ.get(generic) and url == ENVIRONMENTS[env]:
-        return generic, os.environ[generic]
-    return None, None
+def catalog_settings() -> tuple[str | None, str | None]:
+    """(CATALOG_API_URL without trailing slash, CATALOG_API_TOKEN); either may be None."""
+    url = (os.environ.get(URL_VAR) or "").strip().rstrip("/") or None
+    return url, os.environ.get(TOKEN_VAR) or None
 
 
 def client_version() -> str | None:

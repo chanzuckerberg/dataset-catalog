@@ -13,6 +13,8 @@ it reports problems back to Claude with a `block` decision; on anything else
 it stays silent.
 """
 
+from __future__ import annotations
+
 import difflib
 import json
 import re
@@ -40,15 +42,15 @@ AGENT_RULES = [
     ),
     (
         re.compile(r"(os\.environ|os\.getenv|environ\.get)\b.*TOKEN"),
-        "credentials are read by the template's resolve_token(), not by agent code",
+        "credentials are read by the template's catalog_connection(), not by agent code",
     ),
     (
         re.compile(r"\bCatalogClient\s*\("),
         "the template owns the client (retry policy, compatibility check)",
     ),
     (
-        re.compile(r"https?://[^\s\"']*czi\.team|prod-sci-data|staging-sci-data"),
-        "the catalog URL comes from --env; do not hard-code it",
+        re.compile(r"https?://[^\s\"']*czi\.team|-sci-data\.|CATALOG_API_URL"),
+        "the catalog URL comes from CATALOG_API_URL via the template; do not hard-code or read it",
     ),
     (
         re.compile(

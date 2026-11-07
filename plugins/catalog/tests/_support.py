@@ -33,6 +33,7 @@ def run_script(
     command = [sys.executable, str(path)] if path.suffix == ".py" else [str(path)]
     return subprocess.run(
         command + (args or []),
+        check=False,
         input=text,
         capture_output=True,
         text=True,

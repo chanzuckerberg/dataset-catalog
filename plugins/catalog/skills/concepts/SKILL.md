@@ -8,8 +8,8 @@ model: sonnet
 
 The Scientific Dataset Catalog is a registry of scientific data: it records **what** a dataset is,
 **where** its bytes live, **how** it was derived, and **who** may use it. It does not store or
-move data; the bytes stay in S3, on HPC, or wherever they already are. Use it to find data, to
-cite exact inputs, and to trace a result back to its raw source.
+move data; the bytes stay in S3, on HPC, or on the other shared platforms where they already are.
+Use it to find data, to cite exact inputs, and to trace a result back to its raw source.
 
 Field definitions live in the `field-reference` skill. This skill explains the objects.
 
@@ -55,6 +55,23 @@ Each dataset has at least one asset. An asset is a file or a folder at one stora
 (`s3`, one of the HPC sites, an internal platform, or `external`). Prefer one folder asset over
 thousands of file assets when the files are only meaningful together. A dataset copied to a second
 location is a separate dataset linked `copy_of`, not a second asset.
+
+### What can be registered
+
+Only data on **shared organization storage**, where anyone in the organization with access to the
+platform can reach it: an S3 bucket, a project area on an HPC site or CoreWeave cluster, or an
+externally hosted public source. A record that points somewhere only one person or one machine can
+read is a dead link for everyone else.
+
+Never register:
+
+- data on a laptop or workstation disk, an external drive, or a temp directory;
+- data in personal storage: a home directory, personal scratch, or a personal bucket or drive.
+
+If the data is only on local or personal storage, it must first be copied to shared storage by its
+owner; register it there. A sample counts too: to try registration, use a small sample that already
+lives on shared storage. Generated scripts and the validator reject local paths and personal
+directories (`registration-script`); they cannot detect a personal bucket, so ask.
 
 ## Lineage
 

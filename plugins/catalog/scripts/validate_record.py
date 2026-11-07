@@ -5,13 +5,16 @@
 
 Checks the record against skills/field-reference/fields.json: required fields,
 types, allowed values, list minimums, and keys the schema does not have (which
-the API would silently drop). For dataset records, when the `catalog` CLI is
+the API would silently drop), and asset locations outside shared organization
+storage. For dataset records, when the `catalog` CLI is
 installed, also runs `catalog validate` for the client's full pydantic
 validation and merges its findings.
 
 Output matches `catalog validate`: `valid`, or one `<dotted.path>: <message>`
 line per problem. Exit 0 = valid, 1 = invalid, 2 = unreadable input.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -28,6 +31,17 @@ FIELDS_JSON = (
     / "fields.json"
 )
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Keep in sync with the registration template (tests/test_shared_rules.py checks both).
+CLUSTER_PLATFORMS = frozenset({"sf_hpc", "chi_hpc", "ny_hpc", "reef", "kelp", "atoll"})
+PERSONAL_PATH_PREFIXES = (
+    "/home/",
+    "/Users/",
+    "/tmp/",
+    "/var/tmp/",
+    "/private/",
+    "/var/folders/",
+    "/Volumes/",
+)
 TYPE_NAMES = {
     "string": "string",
     "integer": "integer",
@@ -170,10 +184,52 @@ class Validator:
                 )
 
 
+def location_problem(uri: str, platform: str) -> str | None:
+    """Why an asset location may not be registered; None when it is shared organization storage."""
+    if uri.lower().startswith("file:"):
+        return "file:// URIs point at one machine's disk"
+    if "://" in uri:
+        return None
+    if not uri.startswith("/"):
+        return "relative and home-directory paths point at one machine's disk"
+    if platform not in CLUSTER_PLATFORMS:
+        return (
+            f"a bare path is only registrable on shared cluster storage "
+            f"({', '.join(sorted(CLUSTER_PLATFORMS))}), not storage_platform {platform!r}"
+        )
+    if uri.startswith(PERSONAL_PATH_PREFIXES):
+        return "personal or machine-local directory"
+    return None
+
+
+def location_errors(record: object, model: str) -> list[str]:
+    if not isinstance(record, dict):
+        return []
+    assets = record.get("locations") if model == "dataset" else [record]
+    if model not in ("dataset", "asset") or not isinstance(assets, list):
+        return []
+    errors = []
+    for index, asset in enumerate(assets):
+        if not isinstance(asset, dict) or not isinstance(
+            asset.get("location_uri"), str
+        ):
+            continue
+        problem = location_problem(
+            asset["location_uri"], str(asset.get("storage_platform"))
+        )
+        if problem:
+            prefix = f"locations.{index}." if model == "dataset" else ""
+            errors.append(
+                f"{prefix}location_uri: not registrable, {problem}; register only data on "
+                "shared organization storage (concepts skill)"
+            )
+    return errors
+
+
 def stdlib_errors(record: object, model: str, doc: dict) -> list[str]:
     validator = Validator(doc)
     validator.record(record, model)
-    return validator.errors
+    return validator.errors + location_errors(record, model)
 
 
 def cli_errors(text: str) -> list[str] | None:

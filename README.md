@@ -30,39 +30,33 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 
 | Component | Type | What it's for |
 | --- | --- | --- |
-| `onboard` | skill | First-run guide: asks what you want to do, checks your setup, explains the catalog in your terms, and gets you to one success in staging. Offered automatically on your first session. |
+| `onboard` | skill | First-run guide: asks what you want to do, checks your setup, explains the catalog in your terms, and gets you to one success in a dev or staging catalog. Offered automatically on your first session. |
 | `concepts` | skill | Datasets, assets, lineage, collections, and how to decide what one dataset is. |
 | `field-reference` | skill | Every record field: type, required, allowed values, meaning, examples by data type. Generated from the client models and the API spec. |
 | `registration-script` | skill | How to produce correct records from code: order of operations, checksums, governance decisions, the pipeline-safety rules, and the script template. |
 | `search` | skill | Finding data: search, facets, exact lookups, resolving a file path to its dataset, lineage, collections. |
-| `auth` | skill | Tokens per environment, read/write permission, pipeline credentials, rotation. |
+| `auth` | skill | Which catalog you are pointed at, storing the token, read/write permission, pipeline credentials, rotation. |
 | `common-errors` | skill | Exact error text → cause → fix. |
-| `script-writer` | agent | Writes or changes a registration script from the template and dry-runs it in staging. |
+| `script-writer` | agent | Writes or changes a registration script from the template and dry-runs it against a dev or staging catalog. |
 | `metadata-reviewer` | agent | Read-only review of a draft record; returns blocking issues and warnings. |
 | `registration-debugger` | agent | Diagnoses a failed registration and proposes a fix. |
-| hooks | hooks | Session start: onboarding offer and a readiness check (silent unless something is wrong). Before tool use: blocks a production registration run without a passing production dry run, blocks writing a literal API token into a file, and auto-approves read-only catalog commands. After writes: lints generated scripts against the pipeline-safety rules. |
+| hooks | hooks | Session start: onboarding offer and a readiness check that names the catalog environment and flags problems. Before tool use: blocks a registration run against a production (or unrecognized) URL without a passing dry run against that URL, blocks writing a literal API token into a file, and auto-approves read-only catalog commands. After writes: lints generated scripts against the pipeline-safety rules. |
 
 ### Commands
 
 | Command | Does |
 | --- | --- |
 | `/catalog:onboard` | Starts the onboarding guide. |
-| `/catalog:register [path]` | Asks about your data one question at a time, then has `script-writer` produce a script and dry-run it in staging. |
+| `/catalog:register [path]` | Asks about your data one question at a time, then has `script-writer` produce a script and dry-run it against a dev or staging catalog. |
 | `/catalog:validate <file>` | Validates a draft record (JSON) or lints a registration script. |
 | `/catalog:debug [error]` | Hands a failure to `registration-debugger`. |
-| `/catalog:whoami [env]` | Shows environment, identity, read/write permission, and token expiry. Never prints the token. |
+| `/catalog:whoami` | Checks `CATALOG_API_URL`/`CATALOG_API_TOKEN` are set, creates `./.venv` with uv if there is no Python environment, then shows environment (from `CATALOG_API_URL`), identity, read/write permission, and token expiry. Never prints the token. |
 
 ### Prerequisites
 
 - Python 3.11+ (`python3` on your `PATH`; the plugin's own scripts need nothing else).
 - For registration scripts and the `catalog` CLI: `catalog-client` 1.3.0 or newer, installed from a release tag (the `registration-script` skill has the steps).
-- A token per environment, set in your Claude Code environment settings or shell (never typed into chat). Variable names are in [`.env.example`](.env.example):
-
-```text
-CATALOG_STAGING_API_TOKEN   staging token — the plugin defaults to staging everywhere
-CATALOG_PROD_API_TOKEN      production token — give this to your production pipeline, not to Claude Code
-CATALOG_API_URL / CATALOG_API_TOKEN   the pair the catalog CLI and SDK examples read
-```
+- `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported from your shell init file (never typed into chat, never in Claude Code `settings.json`); see the [`auth` skill](plugins/catalog/skills/auth/SKILL.md#where-the-token-goes) for how to store the token. It is the same pair the `catalog` CLI and SDK read, and whatever catalog it names is the one used: there is no default. The environment (`dev`, `staging`, or `prod`) is read from the URL's host; a host naming none is treated as production. Start with a dev or staging URL. Variable names are in [`.env.example`](.env.example).
 
 Issue tokens at `<catalog URL>/tokens` in a logged-in browser.
 
@@ -104,7 +98,7 @@ claude plugin update catalog@dataset-catalog
 
 ### Keep production credentials out of Claude Code
 
-A plugin cannot ship permission rules, so add deny rules to your project's `.claude/settings.json` (or your user settings) to keep Claude from reading or using production credentials. Adjust paths to where you keep secrets, and check the result with `/permissions`:
+A plugin cannot ship permission rules, so add deny rules to your project's `.claude/settings.json` (or your user settings) to keep Claude from reading credential files or dumping the environment. Adjust paths to where you keep secrets, and check the result with `/permissions`:
 
 ```json
 {
@@ -113,16 +107,13 @@ A plugin cannot ship permission rules, so add deny rules to your project's `.cla
       "Read(./.env)",
       "Read(./.env.*)",
       "Bash(printenv *)",
-      "Bash(env)",
-      "Bash(*CATALOG_PROD_API_TOKEN*)",
-      "Bash(*--env prod*)",
-      "Bash(*--env=prod*)"
+      "Bash(env)"
     ]
   }
 }
 ```
 
-With these, Claude can dry-run and register in staging, and production runs happen in your pipeline with `CATALOG_PROD_API_TOKEN` from its secrets store.
+A deny rule cannot tell a production URL from a staging one, so production protection comes from two things: the plugin's guard hook (a real run against a prod or unrecognized URL needs a passing dry run against that URL first) and keeping production tokens out of the shell Claude Code runs in. Point your own `CATALOG_API_URL` at dev or staging; production runs happen in your pipeline with a production credential from its secrets store.
 
 ### Developing the plugin
 
@@ -131,7 +122,7 @@ cd plugins/catalog
 python3 -m unittest discover -s tests -t tests      # stdlib only; CI runs the same
 ```
 
-At each plugin release, regenerate the field reference with the Python that has the released `catalog-client` installed, and commit the result. It reads the API spec from `CATALOG_API_URL` (staging when unset) with `CATALOG_API_TOKEN`:
+At each plugin release, regenerate the field reference with the Python that has the released `catalog-client` installed, and commit the result. It reads the API spec from `CATALOG_API_URL` with `CATALOG_API_TOKEN` (or pass `--url`, or `--spec FILE` to work offline):
 
 ```bash
 python plugins/catalog/skills/field-reference/scripts/generate.py

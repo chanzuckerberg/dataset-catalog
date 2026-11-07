@@ -6,6 +6,8 @@ variable, or a token-named key assigned a literal that looks like a real token.
 Malformed input or anything else is allowed through untouched.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 

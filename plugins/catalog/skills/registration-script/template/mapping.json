@@ -1,7 +1,7 @@
 {
   "_comment": "Data-specific values for register.py. null = not yet answered: governance values come from the data owner, never inferred. Field meanings: field-reference skill.",
   "data": {
-    "root": "/path/to/data",
+    "root": "/hpc/projects/my-project/my-experiment",
     "dataset_glob": "*"
   },
   "dataset": {
