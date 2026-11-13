@@ -17,7 +17,9 @@ Error text or log lines, the command that ran, and the script and `mapping.json`
 are any. If the error text is missing, return "Need the exact error text" and stop.
 
 ## Procedure
-1. Match the exact error text against `common-errors` first. Use its cause and fix when it matches.
+1. Match the exact error text against `common-errors` first: grep a distinctive fragment in
+   `${CLAUDE_PLUGIN_ROOT}/skills/common-errors/reference/` (the preloaded skill holds only the index).
+   Use its cause and fix when it matches.
 2. Otherwise read the full message (the SDK formats HTTP errors as `HTTP <status>: <detail>`) and
    the code path that produced it: the AGENT-EDITABLE function for a per-record failure
    (`<key> failed: <ExcType>: <msg>`), `mapping.json` for `null` or wrong values, the template only

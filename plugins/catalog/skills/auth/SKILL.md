@@ -108,12 +108,16 @@ network call); relay it when the user is about to read or register.
 
 ## Getting write access
 
-Write permission is fixed **when the token is issued**: joining the right group later does not upgrade
-an existing token. After write access is granted, issue a new token and replace the old one.
+Write access comes from membership in the `sci-data-curation` team:
 
-TODO(owner): document the access-request process — who approves write access per environment,
-the request form or channel, and the expected turnaround. Until then, tell the user to ask the
-catalog team and do not invent a process.
+1. In Okta, open **Request access**.
+2. Search for **Teams**, and in Teams find `sci-data-curation`.
+3. Request to be added to that team.
+4. Once you have been added, issue a new token (see "Getting a token") and replace the old one
+   wherever it is stored. Confirm with `/catalog:whoami` that `write` is now `yes`.
+
+Write permission is fixed **when the token is issued**: joining the team does not upgrade an existing
+token, so step 4 is required.
 
 ## Pipelines
 

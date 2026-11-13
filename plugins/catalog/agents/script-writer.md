@@ -23,8 +23,9 @@ missing, stop and return the list of missing inputs.
 2. New script: copy `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/template/register.py` and
    `mapping.json` to the output path. Edit only the AGENT-EDITABLE functions and `mapping.json`.
    Existing script: make the requested change in those same places only.
-3. Use the client for every field it supports; for fields marked API-only, report them instead of
-   writing raw HTTP.
+3. Read `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/reference/fields.md` before filling any
+   field (the preloaded skill does not include it). Use the client for every field it supports; for
+   fields marked API-only, report them instead of writing raw HTTP.
 4. Run the linter, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint_registration_script.py" <script>`
    (the PostToolUse hook also runs it on every write), and fix what it reports.
 5. Check the target with `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"`; if the environment

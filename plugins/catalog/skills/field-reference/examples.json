@@ -3,7 +3,7 @@
   "fields": {
     "dataset": {
       "canonical_id": {
-        "decided_by": "A stable id from the source system (LIMS id, accession, run id). Together with `version` and `project` it is the record's signature, so it must come out identical on every re-run.",
+        "decided_by": "A stable id from the source system (LIMS, accession, run id). Together with `version` and `project` it is the record's signature, so it must come out identical on every re-run.",
         "examples": [
           {"data_type": "imaging", "value": "dynacell/screen-07/plate-03", "note": "composite id, coarsest to finest, `/`-separated"},
           {"data_type": "sequencing", "value": "GSE123456/GSM3511234"},
@@ -50,22 +50,17 @@
         "common_mistakes": "Mapping a source field onto it."
       },
       "description": {
-        "common_mistakes": "Repeating the name. Say what was measured, on what, and how."
+        "common_mistakes": "Say what was measured, on what, and how."
       },
       "governance": {
         "common_mistakes": "Putting access, consent, or compliance values that have no named field here (e.g. `consent`, `data_use_agreement`). The block accepts extra keys, but only the named fields are governance; put the rest under `metadata.additional_metadata`."
       },
       "governance.license": {
-        "decided_by": "The data owner or the source's terms. Ask; never infer.",
-        "examples": [
-          {"data_type": "sequencing", "value": "CC-BY-4.0", "note": "public deposit"},
-          {"data_type": "imaging", "value": "https://example.org/data-use-terms", "note": "a URL to bespoke terms also works"}
-        ],
+        "decided_by": "The data owner or the source's terms. Ask; never infer. A URL to bespoke terms also works.",
         "common_mistakes": "Guessing a license because the dataset is public somewhere."
       },
       "governance.data_sensitivity": {
-        "decided_by": "Leave unset. Records registered through this plugin do not populate it.",
-        "common_mistakes": "Mapping a source sensitivity column onto it, or routing it to custom metadata instead."
+        "decided_by": "Leave unset. Records registered through this plugin do not populate it."
       },
       "governance.access_scope": {
         "decided_by": "Always `internal` for records registered through this plugin. Never mapped from a source field.",

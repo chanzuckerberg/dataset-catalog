@@ -43,25 +43,9 @@ recorded; dev and staging runs are not blocked.
 
 ## Installing the client
 
-Python 3.11+, never the system interpreter. The access check (`check_auth.sh`, auth skill) already
-sets this up: it reuses an active virtual environment or `./.venv`, and otherwise creates `./.venv`
-with uv and installs the latest released client. Install by hand only to upgrade, to use a repo
-that manages its own environment (in this monorepo, `uv sync --all-groups`), or where uv is
-unavailable. Install a released tag, never `main`:
-
-```bash
-TAG=$(gh release list --repo chanzuckerberg/dataset-catalog --json tagName,publishedAt \
-  --jq 'map(select(.tagName | startswith("catalog-client-v"))) | sort_by(.publishedAt) | reverse | .[0].tagName')
-python -m venv .venv && source .venv/bin/activate
-pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
-```
-
-This installs the `catalog_client` package and the `catalog` CLI. Generated scripts need
-`catalog-client>=1.3.0,<2`; the PEP 723 header records that, but because the client is installed from
-git rather than a package index, install it as above rather than relying on `uv run` to resolve it.
-If the installed client's `record_schema_version` is behind the `Current` row in the repo's
-`schema/README.md`, re-run the install with `--upgrade`; if the newest release is still behind, the
-release has not shipped yet: register against the installed version and tell the user.
+The access check (`check_auth.sh`, auth skill) already sets up `./.venv` with the latest released
+client. To install by hand (upgrading, a repo with its own environment, no uv) or when the client's
+schema version is behind, read `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/reference/install.md`.
 
 ## The template
 
@@ -112,58 +96,14 @@ writing raw HTTP, which would bypass the dry run and the upsert.
 The linter (`scripts/lint_registration_script.py`, run by the PostToolUse hook and runnable by
 hand) enforces the agent-side half of this table.
 
-## Computed fields
+## Record field values
 
-- **Size.** `size_bytes` is the asset's total bytes: the file size, or the sum over every file in a
-  folder. Take it from storage metadata (`ChecksumResult.total_size`), not by reading the bytes.
-  Unknown is unset, never `0`.
-- **Checksums.** Prefer the client: `catalog checksum <path|s3://...>` from a shell, or
-  `catalog_client.utils.checksum.compute_checksum(path, algorithm=...)` in code. Both stream in
-  chunks and never load a file whole. Record the algorithm with the digest (`result.content_digest`,
-  `result.algorithm.value`). Algorithm: `blake3` when the `checksum` extra is installed (fastest for
-  very large files, and the default then), else `blake2b` (stdlib); on S3, `crc64nvme`/`crc32` let
-  you reuse what S3 already stores instead of downloading.
-- **Reusing storage checksums.** Check how a stored value was made before reusing it. A multipart S3
-  ETag (`"…-N"`) is not an MD5 and not comparable across uploads; S3 composite (multipart) checksums
-  depend on part size. The client's S3 path reuses only full-object checksums and ignores the rest.
-- **File counts.** `file_count` for folders: count while walking (`os.walk`), not by listing into memory.
+**Never invent a value**: empty is honest; a fabricated value is a data-quality bug. Governance is
+always the user's answer, never yours.
 
-## Judgment fields
-
-**Never invent a value.** Empty is honest; a fabricated value is a data-quality bug. If the source
-lacks something optional (checksum, owner), leave it unset.
-
-**Governance: ask a human; default to asking.** Allowed values and meanings are in `field-reference`.
-
-1. Does the user know the consent terms, data-use agreement, or source license for this data?
-   No → stop and ask who does (the data owner or steward). Do not register.
-2. Is the data derived from human participants (donor tissue, clinical samples, genotypes,
-   identifiable images)? Yes → `is_pii`/`is_phi` come from the consent and the steward, in writing
-   from the user. No (commercial cell lines, model organisms, synthetic data) → still have the user
-   confirm both flags; never set them for the user.
-3. `license` only as the user states it. `data_steward` is a named person or team the user gives.
-4. Record each answer in `mapping.json`. Values that are unknown stay `null` so the record fails
-   validation instead of shipping a guess.
-
-**Data quality.** Each entry in `checks_passed` / `checks_failed` / `checks_skipped` needs evidence
-the user can point to (a QC report, a metrics file, a pipeline step). Put the evidence files in
-`report_assets` / `metrics_assets`. No evidence, no entry.
-
-**Ontology terms.** An `ontology_id` is set only when an ontology lookup returns a term whose label
-or synonym matches the source label exactly (case-insensitive), e.g. via the EBI OLS4 search API
-(`https://www.ebi.ac.uk/ols4/api/search?q=<label>&ontology=<ncbitaxon|uberon|efo|cl|...>`). On no
-confident match, or a failed lookup (retry a 429/5xx/timeout once), keep the label, leave
-`ontology_id` unset, and list the gap for the user. A field may be filled from another column only
-when that value formally determines it (a cell line's ontology ancestors pin its species); if it
-could map to several values, leave it unset. Show the user the derivation rule and the rows it
-leaves unset, and get approval before coding it.
-
-**Fields with no named slot.** Keep them rather than dropping them: sample attributes as extra
-keys on `with_sample(...)` (ontology concepts as `[OntologyEntry(...)]`, not bare strings),
-measurements on `with_data_summary(...)`, experiment details on `with_experiment(...)`, and anything
-else under the single `additional_metadata` key via `with_custom_metadata(additional_metadata={...})`;
-governance is the exception (see its `field-reference` entry). Use custom metadata only when no proper
-field exists.
+Before filling any record field, read `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/reference/fields.md`: computed fields (size, checksums, reusing
+storage checksums, file counts) and judgment fields (governance questions, data quality evidence,
+ontology terms, fields with no named slot).
 
 ## Lineage and collections
 
