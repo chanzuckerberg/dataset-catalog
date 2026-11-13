@@ -39,6 +39,7 @@ from catalog_client.models.dataset import (
     DatasetType,
     DatasetWithRelationsResponse,
     FacetBucket,
+    RecordStatus,
 )
 from catalog_client.models.governance import (
     GovernanceMetadata,
@@ -120,6 +121,7 @@ __all__ = [
     "ObservationUnit",
     "OntologyEntry",
     "PaginatedResponse",
+    "RecordStatus",
     "ResolutionMetadata",
     "SampleMetadata",
     "StoragePlatform",

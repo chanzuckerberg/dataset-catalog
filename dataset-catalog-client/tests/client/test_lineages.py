@@ -10,7 +10,7 @@ from catalog_client.models.lineage import (
 )
 from catalog_client.models.pagination import PaginatedResponse
 
-BASE = "http://test.local/api/"
+BASE = "http://test.local/api/v1/"
 
 EDGE_RESPONSE = {
     "id": "edge-1",

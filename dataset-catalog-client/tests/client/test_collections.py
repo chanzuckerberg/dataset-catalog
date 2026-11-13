@@ -14,7 +14,7 @@ from catalog_client.models.collection import (
 )
 from catalog_client.models.pagination import PaginatedResponse
 
-BASE = "http://test.local/api/"
+BASE = "http://test.local/api/v1/"
 
 COLLECTION_RESPONSE = {
     "id": "col-1",

@@ -31,7 +31,7 @@ class CatalogClient:
 
     def __init__(self, base_url: str, api_token: str, timeout: float = 30.0) -> None:
         self._http = httpx.Client(
-            base_url=base_url.rstrip("/") + "/api/",
+            base_url=base_url.rstrip("/") + "/api/v1/",
             headers={"X-catalog-api-token": api_token},
             timeout=timeout,
         )
@@ -174,7 +174,7 @@ class AsyncCatalogClient:
 
     def __init__(self, base_url: str, api_token: str, timeout: float = 30.0) -> None:
         self._http = httpx.AsyncClient(
-            base_url=base_url.rstrip("/") + "/api/",
+            base_url=base_url.rstrip("/") + "/api/v1/",
             headers={"X-catalog-api-token": api_token},
             timeout=timeout,
         )

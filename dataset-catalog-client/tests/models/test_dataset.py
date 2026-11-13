@@ -18,6 +18,7 @@ from catalog_client.models.dataset import (
     DatasetRequest,
     DatasetResponse,
     DatasetType,
+    RecordStatus,
 )
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.metadata import DatasetMetadata
@@ -137,7 +138,7 @@ def test_dataset_create_is_latest_defaults_false():
 
 
 def test_dataset_defaults_to_current_schema_version():
-    assert _minimal_create().record_schema_version == "v1.7.0"
+    assert _minimal_create().record_schema_version == "v1.8.0"
 
 
 def test_dataset_modality_enum():
@@ -225,3 +226,70 @@ def test_audit_log_carries_resolved_actor_identity():
     )
     assert entry.actor_email == "person@example.com"
     assert entry.actor_team == "data"
+
+
+def test_root_uri_is_optional_and_omitted_when_unset():
+    """Added in v1.8.0: the server derives the root when the writer leaves it out."""
+    assert "root_uri" not in _minimal_create().model_dump(exclude_unset=True)
+    assert _minimal_create(root_uri="s3://bucket/").root_uri == "s3://bucket/"
+
+
+def test_root_uri_rejects_empty_string():
+    with pytest.raises(ValidationError):
+        _minimal_create(root_uri="")
+
+
+@pytest.mark.parametrize("value", ["reef_nonprod", "orca", "shoal"])
+def test_storage_platform_accepts_v180_values(value):
+    assert StoragePlatform(value).value == value
+
+
+def _response_payload(**kwargs: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "id": "uuid-1",
+        "tombstoned": False,
+        "created_at": "2024-01-01T00:00:00Z",
+        "last_modified_at": "2024-01-01T00:00:00Z",
+        "canonical_id": "ds-001",
+        "version": "1.0.0",
+        "project": "atlas",
+        "locations": [],
+        "name": "Test",
+        "modality": "sequencing",
+        "governance": {"data_steward": "team-data", "is_pii": False, "is_phi": False},
+        "metadata": {},
+        "record_version": 1,
+    }
+    data.update(kwargs)
+    return data
+
+
+def test_dataset_response_parses_record_status():
+    ds = DatasetResponse.model_validate(_response_payload(record_status="active"))
+    assert ds.record_status is RecordStatus.active
+
+
+def test_dataset_response_tolerates_missing_record_status():
+    """Deployments older than prod's current API omit it."""
+    assert DatasetResponse.model_validate(_response_payload()).record_status is None
+
+
+def test_data_asset_response_carries_instance_fields():
+    asset = {
+        "id": "asset-1",
+        "tombstoned": False,
+        "created_at": "2024-01-01T00:00:00Z",
+        "last_modified_at": "2024-01-01T00:00:00Z",
+        "dataset_id": "uuid-1",
+        "location_uri": "s3://bucket/run42/cells.parquet",
+        "asset_type": "file",
+        "storage_platform": "s3",
+    }
+    legacy = DataAssetResponse.model_validate(asset)
+    assert legacy.instance_id is None and legacy.relative_path is None
+
+    current = DataAssetResponse.model_validate(
+        {**asset, "instance_id": "inst-1", "relative_path": "cells.parquet"}
+    )
+    assert current.instance_id == "inst-1"
+    assert current.relative_path == "cells.parquet"

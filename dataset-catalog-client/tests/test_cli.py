@@ -105,7 +105,7 @@ def test_deep_offset_exits_usage_with_cursor_hint(capsys):
 def test_list_accepts_sort_and_forwards_it(httpx_mock: HTTPXMock):
     """A cursor walk needs an immutable sort key; the CLI must expose one."""
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/\?.*"),
         json={"limit": 100, "results": [], "total": 0},
     )
     main(["list", "--sort", "newest", "-o", "json"])
@@ -127,7 +127,7 @@ def test_malformed_response_is_not_reported_as_usage_error(httpx_mock: HTTPXMock
     response as the user's mistake and exit 2.
     """
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json={"limit": 10, "results": [{"id": "uuid-1"}]},
     )
     with pytest.raises(PydanticValidationError):
@@ -136,7 +136,7 @@ def test_malformed_response_is_not_reported_as_usage_error(httpx_mock: HTTPXMock
 
 def test_auth_error_exit_code(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         status_code=401,
         json={"detail": "invalid token"},
     )
@@ -148,7 +148,7 @@ def test_auth_error_exit_code(httpx_mock: HTTPXMock, capsys):
 
 def test_not_found_exit_code(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/missing.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/missing.*"),
         status_code=404,
         json={"detail": "no such dataset"},
     )
@@ -161,7 +161,7 @@ def test_not_found_exit_code(httpx_mock: HTTPXMock, capsys):
 
 def test_server_error_exit_code(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         status_code=503,
         json={"detail": "down"},
     )
@@ -172,7 +172,7 @@ def test_server_error_exit_code(httpx_mock: HTTPXMock):
 
 def test_table_output_when_forced(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     main(["search", "--q", "brightfield", "-o", "table"])
@@ -185,7 +185,7 @@ def test_table_output_when_forced(httpx_mock: HTTPXMock, capsys):
 
 def test_table_is_default_on_tty(httpx_mock: HTTPXMock, capsys, monkeypatch):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
@@ -195,7 +195,7 @@ def test_table_is_default_on_tty(httpx_mock: HTTPXMock, capsys, monkeypatch):
 
 def test_facets_table_output(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     main(["facets", "--fields", "organism", "-o", "table"])
@@ -206,7 +206,7 @@ def test_facets_table_output(httpx_mock: HTTPXMock, capsys):
 
 def test_search(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     main(["search", "--q", "brightfield", "--facets", "organism"])
@@ -222,7 +222,7 @@ def test_search(httpx_mock: HTTPXMock, capsys):
 
 def test_search_defaults_to_last_modified_without_q(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     main(["search", "--organism", "Homo sapiens", "--all-versions"])
@@ -239,7 +239,7 @@ def test_search_rejects_bad_modality():
 
 def test_facets(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/search/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/search/\?.*"),
         json=SEARCH_RESPONSE,
     )
     main(["facets", "--fields", "organism"])
@@ -252,7 +252,7 @@ def test_facets(httpx_mock: HTTPXMock, capsys):
 
 def test_get_by_id(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/uuid-1.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/uuid-1.*"),
         json=DATASET_RESPONSE,
     )
     main(["get", "uuid-1"])
@@ -261,11 +261,11 @@ def test_get_by_id(httpx_mock: HTTPXMock, capsys):
 
 def test_get_by_coordinates(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/\?.*"),
         json={"total": 1, "limit": 10, "offset": 0, "results": [DATASET_RESPONSE]},
     )
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/uuid-1.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/uuid-1.*"),
         json=DATASET_RESPONSE,
     )
     main(["get", "ds-001", "--version", "1.0.0", "--project", "atlas"])
@@ -279,7 +279,7 @@ def test_get_coordinates_require_both_parts():
 
 def test_list_summarizes_by_default(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/\?.*"),
         json={"total": 1, "limit": 100, "offset": 0, "results": [DATASET_RESPONSE]},
     )
     main(["list", "--project", "atlas"])
@@ -301,23 +301,23 @@ def test_lineage_walk_up(httpx_mock: HTTPXMock, capsys):
     # Hop 1: uuid-1 has one incoming edge from uuid-parent.
     httpx_mock.add_response(
         url=re.compile(
-            rf"{re.escape(BASE)}/api/lineage/\?.*destination_dataset_id=uuid-1.*"
+            rf"{re.escape(BASE)}/api/v1/lineage/\?.*destination_dataset_id=uuid-1.*"
         ),
         json={"total": 1, "limit": 100, "offset": 0, "results": [LINEAGE_EDGE]},
     )
     # Hop 2: uuid-parent has no further ancestors.
     httpx_mock.add_response(
         url=re.compile(
-            rf"{re.escape(BASE)}/api/lineage/\?.*destination_dataset_id=uuid-parent.*"
+            rf"{re.escape(BASE)}/api/v1/lineage/\?.*destination_dataset_id=uuid-parent.*"
         ),
         json=EMPTY_PAGE,
     )
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/uuid-1.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/uuid-1.*"),
         json=DATASET_RESPONSE,
     )
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/datasets/uuid-parent.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/datasets/uuid-parent.*"),
         json={**DATASET_RESPONSE, "id": "uuid-parent", "canonical_id": "ds-000"},
     )
     main(["lineage", "uuid-1", "--direction", "up"])
@@ -328,7 +328,7 @@ def test_lineage_walk_up(httpx_mock: HTTPXMock, capsys):
 
 def test_collections_entries(httpx_mock: HTTPXMock, capsys):
     httpx_mock.add_response(
-        url=re.compile(rf"{re.escape(BASE)}/api/collections/col-1/entries\?.*"),
+        url=re.compile(rf"{re.escape(BASE)}/api/v1/collections/col-1/entries\?.*"),
         json={
             "total": 1,
             "limit": 100,
