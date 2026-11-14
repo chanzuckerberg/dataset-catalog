@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.7.0](#v170--current) | **Current** — active, default for new registrations |
+| [v1.8.0](#v180--current) | **Current** — active, default for new registrations |
+| [v1.7.0](#v170) | Supported for read |
 | [v1.6.0](#v160) | Supported for read |
 | [v1.5.0](#v150) | Supported for read |
 | [v1.4.0](#v140) | Supported for read |
@@ -20,10 +21,43 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.7.0 — Current
+## v1.8.0 — Current
 
 **Status:** Active. All new registrations default to this version. See
-[`v1.7.0/schema.md`](v1.7.0/schema.md).
+[`v1.8.0/schema.md`](v1.8.0/schema.md).
+
+### Added
+
+- **Dataset:** `root_uri` (request only) — the prefix every location sits under. Each
+  location's URI below it is its `relative_path`, and that path is what pairs a file
+  across copies. Omitted, the server uses the deepest directory the locations share. On
+  update it selects which existing instance `locations` describe, and is a `409` if
+  none matches.
+- **Data asset:** `instance_id` and `relative_path` (read-only, server-owned). Every
+  asset belongs to one *instance* — one copy of the dataset's bytes — and
+  `location_uri == instance.root_uri + relative_path`. Both are null on rows the
+  instance backfill has not reached.
+- **Data asset:** `storage_platform` accepts `reef_nonprod`, `orca` and `shoal`.
+  `storage_platform` is a plain string column, so no migration.
+
+### Changed
+
+- **Dataset:** `locations` must all name one `storage_platform` and may not repeat a
+  `location_uri`; either is now a `422`.
+- **Data asset:** `location_uri` is stored without a `file://` prefix, so
+  `/hpc/x/f.h5ad` and `file:///hpc/x/f.h5ad` name one address.
+- **Dataset:** `record_schema_version` now defaults to `v1.8.0`.
+
+**Migration note.** A writer sending `locations` on more than one `storage_platform`,
+or the same `location_uri` twice, now gets a `422` and must split or dedupe the list.
+Stored rows are not rewritten, so the first update echoing a row stored as `file:///…` replaces that
+asset under a new id.
+
+---
+
+## v1.7.0
+
+**Status:** Supported for read. See [`v1.7.0/schema.md`](v1.7.0/schema.md).
 
 ### Added
 

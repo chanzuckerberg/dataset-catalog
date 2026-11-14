@@ -40,7 +40,7 @@ from catalog_client.models.pagination import (
     PaginatedResponse,
 )
 
-BASE = "http://test.local/api/"
+BASE = "http://test.local/api/v1/"
 TOKEN = "tok"
 
 DATASET_RESPONSE = {

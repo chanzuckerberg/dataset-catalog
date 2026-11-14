@@ -18,6 +18,7 @@ from catalog_client.models.dataset import (
     DatasetRequest,
     DatasetResponse,
     DatasetType,
+    RecordStatus,
 )
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.metadata import DatasetMetadata
@@ -107,6 +108,7 @@ def test_data_asset_response_tolerates_missing_storage_platform():
         }
     )
     assert asset.storage_platform is None
+    assert asset.instance_id is None and asset.relative_path is None
 
 
 def test_dataset_create_project_required():
@@ -137,7 +139,7 @@ def test_dataset_create_is_latest_defaults_false():
 
 
 def test_dataset_defaults_to_current_schema_version():
-    assert _minimal_create().record_schema_version == "v1.7.0"
+    assert _minimal_create().record_schema_version == "v1.8.0"
 
 
 def test_dataset_modality_enum():
@@ -179,6 +181,10 @@ def test_dataset_response_parses_json():
     ds = DatasetResponse.model_validate(data)
     assert ds.id == "uuid-1"
     assert ds.canonical_id == "ds-001"
+    assert ds.record_status is None
+
+    ds = DatasetResponse.model_validate({**data, "record_status": "active"})
+    assert ds.record_status is RecordStatus.active
 
 
 def test_dataset_response_tolerates_missing_data_steward():
@@ -225,3 +231,32 @@ def test_audit_log_carries_resolved_actor_identity():
     )
     assert entry.actor_email == "person@example.com"
     assert entry.actor_team == "data"
+
+
+def test_root_uri_is_optional_and_omitted_when_unset():
+    """Added in v1.8.0: the server derives the root when the writer leaves it out."""
+    assert "root_uri" not in _minimal_create().model_dump(exclude_unset=True)
+
+
+def test_root_uri_rejects_empty_string():
+    with pytest.raises(ValidationError):
+        _minimal_create(root_uri="")
+
+
+def test_data_asset_response_carries_instance_fields():
+    asset = DataAssetResponse.model_validate(
+        {
+            "id": "asset-1",
+            "tombstoned": False,
+            "created_at": "2024-01-01T00:00:00Z",
+            "last_modified_at": "2024-01-01T00:00:00Z",
+            "dataset_id": "uuid-1",
+            "location_uri": "s3://bucket/run42/cells.parquet",
+            "asset_type": "file",
+            "storage_platform": "s3",
+            "instance_id": "inst-1",
+            "relative_path": "cells.parquet",
+        }
+    )
+    assert asset.instance_id == "inst-1"
+    assert asset.relative_path == "cells.parquet"

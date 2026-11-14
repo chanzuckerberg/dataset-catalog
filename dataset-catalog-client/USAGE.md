@@ -4,8 +4,9 @@ Python client library for the Scientific Dataset Catalog API.
 
 ## Setup
 
-All `/api/` endpoints require an `X-catalog-api-token` header. Obtain a token from your
-catalog administrator, then pass it when constructing the client.
+All `/api/v1/` endpoints require an `X-catalog-api-token` header. Obtain a token from your
+catalog administrator, then pass it when constructing the client. Pass the bare host as
+`base_url`; the client adds the `/api/v1/` prefix.
 
 ```python
 from catalog_client import CatalogClient
@@ -123,6 +124,12 @@ code you can branch on in scripts:
 
 `DatasetRequest` requires `canonical_id`, `name`, `version`, `project`, `modality`, `locations` (≥ 1 asset),
 `governance`, and `metadata`. Everything else is optional.
+
+All `locations` in one request must share a single `storage_platform` and may not repeat a
+`location_uri`; the API rejects either with a `422`. `root_uri` (optional) names the prefix
+every location sits under — the server derives it when omitted, and on update it selects
+which existing copy of the dataset `locations` describe. Each returned `DataAssetResponse`
+carries the server-owned `instance_id` and `relative_path` (its path below `root_uri`).
 
 ```python
 from catalog_client import (
@@ -609,6 +616,9 @@ updated = client.datasets.update(
 print(updated.id)  # may differ if signature fields changed
 ```
 
+Responses carry `record_status` — `active`, `tombstoned` or `draft` — alongside the
+boolean `tombstoned`. It is `None` when talking to a deployment that predates it.
+
 ### Delete (soft-delete) a dataset
 
 ```python
@@ -791,9 +801,9 @@ assets = [
         storage_platform=StoragePlatform.s3,
     ),
     DataAssetRequest(
-        location_uri="/sf_hpc/shared/data/file2.txt",
+        location_uri="s3://my-bucket/file2.txt",
         asset_type=AssetType.file,
-        storage_platform=StoragePlatform.sf_hpc,
+        storage_platform=StoragePlatform.s3,
     ),
 ]
 
@@ -1116,7 +1126,8 @@ sensitivity unknown.
 | `DatasetModality` | `imaging`, `sequencing`, `mass_spec`, `text`, `unknown` |
 | `DatasetType` | `raw`, `processed`, `analysis` |
 | `AssetType` | `file`, `folder` |
-| `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `external`, `other` |
+| `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `reef_nonprod`, `orca`, `shoal`, `external`, `other` |
+| `RecordStatus` | `draft`, `active`, `tombstoned` — `DatasetResponse.record_status` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
 | `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |

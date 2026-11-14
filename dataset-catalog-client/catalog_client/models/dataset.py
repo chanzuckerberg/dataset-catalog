@@ -44,6 +44,14 @@ class AuditLogEventType(str, enum.Enum):
     lineage_removed = "lineage_removed"
 
 
+class RecordStatus(str, enum.Enum):
+    """Lifecycle state of a dataset record, set by the catalog."""
+
+    draft = "draft"
+    active = "active"
+    tombstoned = "tombstoned"
+
+
 class DatasetSortOption(str, enum.Enum):
     """Sort orders accepted by dataset search."""
 
@@ -118,7 +126,7 @@ class _DatasetBase(BaseModel):
         default=True, description="Whether this is the latest version of the dataset"
     )
     record_schema_version: str | None = Field(
-        default="v1.7.0",
+        default="v1.8.0",
         description="Version of the record schema used for this dataset",
     )
     metadata_schema: list[str] | None = Field(
@@ -131,7 +139,13 @@ class _DatasetBase(BaseModel):
 
 class DatasetRequest(_DatasetBase):
     locations: list[DataAssetRequest] = Field(
-        min_length=1, description="List of data assets that comprise this dataset"
+        min_length=1,
+        description="Data assets that comprise this dataset, all on one storage_platform",
+    )
+    root_uri: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Prefix every location sits under; the server derives it when omitted. On update it selects which existing instance the locations describe",
     )
 
     @field_validator("cross_db_references", mode="before")
@@ -169,6 +183,10 @@ class DatasetResponse(_DatasetBase):
     )
     id: str = Field(description="Unique system-generated ID for this dataset")
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
+    record_status: RecordStatus | None = Field(
+        default=None,
+        description="Lifecycle state (draft, active or tombstoned), or None when the deployment did not report one",
+    )
     created_at: datetime.datetime = Field(
         description="Timestamp when the dataset was first created"
     )

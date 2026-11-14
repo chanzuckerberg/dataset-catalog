@@ -31,6 +31,9 @@ class StoragePlatform(str, enum.Enum):
     reef = "reef"
     kelp = "kelp"
     atoll = "atoll"
+    reef_nonprod = "reef_nonprod"
+    orca = "orca"
+    shoal = "shoal"
     external = "external"
     other = "other"
 
@@ -106,3 +109,11 @@ class DataAssetResponse(DataAssetRequest):
         description="Timestamp when the data asset was last updated"
     )
     dataset_id: str = Field(description="ID of the dataset that this asset belongs to")
+    instance_id: str | None = Field(
+        default=None,
+        description="ID of the dataset instance (copy of its bytes) this asset belongs to",
+    )
+    relative_path: str | None = Field(
+        default=None,
+        description="Path below the instance's root_uri; equal paths across instances are the same content",
+    )
