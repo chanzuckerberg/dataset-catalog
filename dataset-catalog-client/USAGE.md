@@ -4,9 +4,9 @@ Python client library for the Scientific Dataset Catalog API.
 
 ## Setup
 
-All `/api/` endpoints require an `X-catalog-api-token` header. Obtain a token from your
-catalog administrator, then pass it when constructing the client. The client calls the
-versioned `/api/v1/` routes; pass the bare host as `base_url`.
+All `/api/v1/` endpoints require an `X-catalog-api-token` header. Obtain a token from your
+catalog administrator, then pass it when constructing the client. Pass the bare host as
+`base_url`; the client adds the `/api/v1/` prefix.
 
 ```python
 from catalog_client import CatalogClient
