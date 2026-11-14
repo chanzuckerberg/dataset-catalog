@@ -28,6 +28,13 @@
   algorithm labels, file hashes, and existing checksummed assets remain unchanged.
   Recompute older nested-folder checksums before comparing them with new values.
 
+## [1.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.2.0...catalog-client-v1.3.0) (2026-11-14)
+
+
+### Features
+
+* adopt dataset schema v1.8.0 and /api/v1/ routes in client ([#100](https://github.com/chanzuckerberg/dataset-catalog/issues/100)) ([297b93c](https://github.com/chanzuckerberg/dataset-catalog/commit/297b93c291d6e42ff8e667625044d565f3496050))
+
 ## [1.2.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.1.0...catalog-client-v1.2.0) (2026-11-02)
 
 
