@@ -24,7 +24,7 @@ missing=()
 if [ "${#missing[@]}" -gt 0 ]; then
   names="${missing[0]}"
   [ "${#missing[@]}" -eq 2 ] && names="${missing[0]} and ${missing[1]}"
-  say "check_auth: $names not set. Export CATALOG_API_URL and CATALOG_API_TOKEN for the catalog you want (auth skill), then restart Claude Code."
+  say "check_auth: $names not set. Export CATALOG_API_URL and CATALOG_API_TOKEN for the catalog you want (catalog-guide skill), then restart Claude Code."
   finish 2
 fi
 

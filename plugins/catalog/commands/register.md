@@ -8,14 +8,14 @@ the user has already answered or that `$ARGUMENTS` settles.
 
 1. **Data location and type**: path(s) or URI(s) on shared organization storage, storage platform
    (confirm which HPC site), data type and file formats. If the data is on a local disk or in
-   personal storage, stop: explain `concepts` "What can be registered" and continue only once it is
-   on shared storage. Look at the location read-only (names, counts, sizes) to ground later questions.
-2. **Granularity**: propose what one dataset is, using the `concepts` skill's "Is this a dataset?"
-   guide, and get the user's confirmation.
+   personal storage, stop: explain the shared-storage rule (`catalog-guide`, rules) and continue only
+   once it is on shared storage. Look at the location read-only (names, counts, sizes) to ground later questions.
+2. **Granularity**: propose what one dataset is, using the docs' "Is this a dataset?" guide, and get
+   the user's confirmation.
 3. **Governance**: ask for `is_pii`, `is_phi`, `license`, `data_steward`, and `data_owner`. Never infer
    or default them; "not sure" means it stays unanswered and the script will not register (see
    `registration-script`, governance).
-4. **Collections and lineage parents**: search for them (`search` skill), show what you found, and
+4. **Collections and lineage parents**: search for them (`registration-script`, search patterns), show what you found, and
    confirm each id with the user.
 5. **Where it runs**: notebook, cron, Nextflow, Snakemake, Airflow, or by hand.
 6. **Output path** for the new script and `mapping.json`, or the existing script path plus the
@@ -23,7 +23,7 @@ the user has already answered or that `$ARGUMENTS` settles.
 
 Then run `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"` (the `/catalog:whoami` check) and
 tell the user the environment it names. If it is `prod` or `unknown`, ask them to point
-`CATALOG_API_URL`/`CATALOG_API_TOKEN` at a dev or staging catalog for the trial (auth skill) and
+`CATALOG_API_URL`/`CATALOG_API_TOKEN` at a dev or staging catalog for the trial (`catalog-guide`) and
 rerun the check. Show a one-screen summary (location, granularity, N datasets expected, governance
 answers, parents, collections, runtime, output path, environment and URL, token status) and ask the
 user to confirm. On confirmation, start `script-writer` with that summary as its brief.

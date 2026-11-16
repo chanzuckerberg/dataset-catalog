@@ -1,6 +1,6 @@
 # Installing the client
 
-Python 3.11+, never the system interpreter. The access check (`check_auth.sh`, auth skill) already
+Python 3.11+, never the system interpreter. The access check (`check_auth.sh`) already
 sets this up: it reuses an active virtual environment or `./.venv`, and otherwise creates `./.venv`
 with uv and installs the latest released client. Install by hand only to upgrade, to use a repo
 that manages its own environment (in this monorepo, `uv sync --all-groups`), or where uv is

@@ -9,8 +9,8 @@ from pathlib import Path
 
 from _support import PLUGIN_ROOT
 
-GENERATE = PLUGIN_ROOT / "skills" / "field-reference" / "scripts" / "generate.py"
-_spec = importlib.util.spec_from_file_location("field_reference_generate", GENERATE)
+GENERATE = PLUGIN_ROOT / "scripts" / "generate_fields.py"
+_spec = importlib.util.spec_from_file_location("generate_fields", GENERATE)
 assert _spec and _spec.loader
 generate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(generate)
@@ -135,7 +135,7 @@ STAMP = {
 
 class GenerateTest(unittest.TestCase):
     def test_merge_marks_drift_and_shapes_fields(self):
-        doc = generate.build(fixture_client(), fixture_spec(), {}, STAMP)
+        doc = generate.build(fixture_client(), fixture_spec(), STAMP)
         dataset = doc["models"]["dataset"]["fields"]
         self.assertEqual(dataset["canonical_id"]["source"], "both")
         self.assertTrue(dataset["canonical_id"]["required"])
@@ -162,45 +162,11 @@ class GenerateTest(unittest.TestCase):
         self.assertNotIn("SummaryResponse", generate.reachable_schemas(fixture_spec()))
         self.assertIn("GovernanceMetadata", generate.reachable_schemas(fixture_spec()))
 
-    def test_curated_examples_merge_and_stale_keys_fail(self):
-        curated = {
-            "fields": {
-                "dataset": {
-                    "governance.is_pii": {
-                        "decided_by": "Consent.",
-                        "examples": [
-                            {
-                                "data_type": "imaging",
-                                "value": False,
-                                "note": "cell line",
-                            }
-                        ],
-                    }
-                }
-            }
-        }
-        doc = generate.build(fixture_client(), fixture_spec(), curated, STAMP)
-        markdown = generate.render_model(
-            "dataset", doc["models"]["dataset"]["fields"], STAMP
-        )
-        self.assertIn("### governance.is_pii", markdown)
-        self.assertIn("- Decided by: Consent.", markdown)
-        self.assertIn("  - Imaging: `false` — cell line", markdown)
-        self.assertIn("**API-only**", markdown)
-        self.assertIn("catalog-client 9.9.9", markdown)
-        with self.assertRaises(generate.GenerateError):
-            generate.build(
-                fixture_client(),
-                fixture_spec(),
-                {"fields": {"dataset": {"gone": {}}}},
-                STAMP,
-            )
-
     def test_main_writes_snapshot_from_saved_spec(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = Path(tmp, "spec.json")
             spec.write_text(json.dumps(fixture_spec()))
-            out = Path(tmp, "out")
+            out = Path(tmp, "fields.json")
             with redirect_stdout(io.StringIO()):
                 code = generate.main(
                     [
@@ -209,36 +175,25 @@ class GenerateTest(unittest.TestCase):
                         "--no-client",
                         "--out",
                         str(out),
-                        "--examples",
-                        str(Path(tmp, "none.json")),
                         "--date",
                         "2026-01-01",
                     ]
                 )
             self.assertEqual(code, 0)
-            for name in ("dataset", "asset", "collection", "lineage"):
-                self.assertTrue((out / "fields" / f"{name}.md").is_file())
-            doc = json.loads((out / "fields.json").read_text())
+            doc = json.loads(out.read_text())
             self.assertEqual(
                 doc["models"]["dataset"]["fields"]["canonical_id"]["source"], "api-only"
             )
 
-    def test_committed_snapshot_matches_examples(self):
-        doc = json.loads(
-            (PLUGIN_ROOT / "skills" / "field-reference" / "fields.json").read_text()
-        )
-        curated = json.loads(
-            (PLUGIN_ROOT / "skills" / "field-reference" / "examples.json").read_text()
-        )
-        for model, entries in curated["fields"].items():
-            for path, extra in entries.items():
-                self.assertIn(path, doc["models"][model]["fields"], f"{model}:{path}")
-                for key, value in extra.items():
-                    self.assertEqual(
-                        doc["models"][model]["fields"][path].get(key),
-                        value,
-                        f"{model}:{path}:{key}",
-                    )
+    def test_committed_snapshot_has_every_model_and_a_stamp(self):
+        doc = json.loads(generate.FIELDS_JSON.read_text())
+        self.assertTrue(doc["stamp"]["client_version"])
+        self.assertEqual(set(doc["models"]), set(generate.MODELS))
+        for model in doc["models"].values():
+            for path, field in model["fields"].items():
+                self.assertIn(
+                    field["source"], {"both", "api-only", "client-only"}, path
+                )
 
 
 if __name__ == "__main__":

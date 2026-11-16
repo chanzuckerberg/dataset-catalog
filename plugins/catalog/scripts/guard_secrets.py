@@ -33,7 +33,7 @@ def main() -> int:
         path = data["tool_input"].get("file_path", "the file")
         deny(
             f"Blocked: {path} would contain a catalog API token ({'; '.join(reasons)}). "
-            "Read credentials from the environment by variable name (see the auth skill); never write the value."
+            "Read credentials from the environment by variable name (see the catalog-guide skill); never write the value."
         )
     return 0
 

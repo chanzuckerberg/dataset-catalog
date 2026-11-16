@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "catalog-docs": {
+      "type": "http",
+      "url": "https://docs.biohub.ai/authed/mcp"
+    }
+  }
+}

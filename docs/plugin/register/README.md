@@ -7,14 +7,14 @@ registers data on its own.
 
 This page is the human-facing guide. The instructions Claude follows live in the plugin's skills
 ([`registration-script`](../../../plugins/catalog/skills/registration-script/SKILL.md),
-[`field-reference`](../../../plugins/catalog/skills/field-reference/SKILL.md),
-[`concepts`](../../../plugins/catalog/skills/concepts/SKILL.md)); you do not need to read them.
+[`catalog-guide`](../../../plugins/catalog/skills/catalog-guide/SKILL.md)) and the
+[catalog docs](https://docs.biohub.ai); you do not need to read the skills.
 
 ## Before you start
 
 - The plugin installed ([root README](../../../README.md#claude-code-plugin)).
 - `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported for a dev or staging catalog, from your shell
-  init file rather than Claude Code settings ([auth skill](../../../plugins/catalog/skills/auth/SKILL.md#where-the-token-goes)).
+  init file rather than Claude Code settings (see the [catalog docs](https://docs.biohub.ai) auth pages).
   The script and the plugin use whatever catalog that pair names; there is no default. `/catalog:whoami`
   shows the environment and whether the token can write; write permission is
   fixed when a token is issued, so reissue it after you are granted write access.

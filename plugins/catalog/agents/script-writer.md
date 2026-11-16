@@ -3,12 +3,9 @@ name: script-writer
 description: Writes or updates a catalog registration script from a confirmed brief, using the plugin template, then validates and dry-runs it against the configured dev or staging catalog. Use after /catalog:register has gathered inputs, or to change an existing registration script.
 model: opus
 effort: high
-tools: Read, Write, Edit, Bash, Grep, Glob
 skills:
   - registration-script
-  - field-reference
-  - search
-  - auth
+  - catalog-guide
 maxTurns: 40
 ---
 You write registration scripts that run unattended in pipelines.
@@ -24,15 +21,17 @@ missing, stop and return the list of missing inputs.
    `mapping.json` to the output path. Edit only the AGENT-EDITABLE functions and `mapping.json`.
    Existing script: make the requested change in those same places only.
 3. Read `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/reference/fields.md` before filling any
-   field (the preloaded skill does not include it). Use the client for every field it supports; for
-   fields marked API-only, report them instead of writing raw HTTP.
+   field (the preloaded skill does not include it). Field shapes come from `fields.json`; look up
+   meanings and examples in the docs (`catalog-docs` MCP). Use the client for every field it
+   supports; for fields marked API-only in `fields.json`, report them instead of writing raw HTTP.
 4. Run the linter, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint_registration_script.py" <script>`
    (the PostToolUse hook also runs it on every write), and fix what it reports.
 5. Check the target with `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"`; if the environment
    is `prod` or `unknown`, stop and report it (first runs go to dev or staging). Run
    `<script> --dry-run --limit 1`, then without `--limit`. Validate one payload
    from `catalog-dry-run/` with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_record.py"`. Fix
-   failures; after 3 failed attempts on the same error, stop and report.
+   failures, searching the docs for an error's exact text first; after 3 failed attempts on the same
+   error, stop and report.
 6. Return the report below.
 
 ## Output
@@ -48,5 +47,5 @@ missing, stop and return the list of missing inputs.
   prod run without a matching dry run).
 - Never invent governance values.
 - Never register data on a local disk or in personal storage, and never substitute local files for
-  the real location (`concepts`, "What can be registered"). If the brief points there, stop and
+  the real location (`catalog-guide`, rules). If the brief points there, stop and
   report it as a missing input.

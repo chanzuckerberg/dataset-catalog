@@ -21,7 +21,7 @@
 **Never invent a value.** Empty is honest; a fabricated value is a data-quality bug. If the source
 lacks something optional (checksum, owner), leave it unset.
 
-**Governance: ask a human; default to asking.** Allowed values and meanings are in `field-reference`.
+**Governance: ask a human; default to asking.** Allowed values are in `fields.json`; meanings in the docs.
 
 1. Does the user know the consent terms, data-use agreement, or source license for this data?
    No → stop and ask who does (the data owner or steward). Do not register.
@@ -50,5 +50,7 @@ leaves unset, and get approval before coding it.
 keys on `with_sample(...)` (ontology concepts as `[OntologyEntry(...)]`, not bare strings),
 measurements on `with_data_summary(...)`, experiment details on `with_experiment(...)`, and anything
 else under the single `additional_metadata` key via `with_custom_metadata(additional_metadata={...})`;
-governance is the exception (see its `field-reference` entry). Use custom metadata only when no proper
+governance is the exception: the `governance` block accepts extra keys, but access, consent or
+compliance values with no named field (e.g. `consent`, `data_use_agreement`) go under
+`additional_metadata`, not there. Use custom metadata only when no proper
 field exists.

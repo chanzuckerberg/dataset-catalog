@@ -188,7 +188,7 @@ def run(args: argparse.Namespace) -> int:
     if not url:
         print(
             f"check_auth: {URL_VAR} is not set, so there is no catalog to check. Export {URL_VAR} "
-            f"and {TOKEN_VAR} for the catalog you want (auth skill).",
+            f"and {TOKEN_VAR} for the catalog you want (catalog-guide skill).",
             file=err,
         )
         return EXIT_AUTH

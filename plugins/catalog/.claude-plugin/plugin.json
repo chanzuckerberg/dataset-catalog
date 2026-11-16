@@ -1,6 +1,6 @@
 {
   "name": "catalog",
-  "description": "Onboarding and registration help for the Scientific Dataset Catalog: guided first run, catalog concepts, a generated field reference, search, auth checks, and registration scripts built from a pipeline-safe template, with hooks that block unsafe production runs and hardcoded tokens.",
+  "description": "Onboarding and registration help for the Scientific Dataset Catalog: a guided first run, answers from the catalog docs (via its MCP server), auth checks, and registration scripts built from a pipeline-safe template, with hooks that block unsafe production runs and hardcoded tokens.",
   "version": "1.2.0",
   "author": {
     "name": "Manasa Venkatakrishnan",

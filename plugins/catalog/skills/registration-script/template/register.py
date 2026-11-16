@@ -199,7 +199,7 @@ def make_handler(
             if problem:
                 raise ValueError(
                     f"{asset.location_uri} cannot be registered: {problem}. Register only data "
-                    "on shared organization storage (concepts skill)."
+                    "on shared organization storage (catalog-guide skill)."
                 )
         collections = collections_for(src, config)
         if args.dry_run:

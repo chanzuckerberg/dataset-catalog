@@ -328,7 +328,7 @@ class SessionStartTest(unittest.TestCase):
             env = clean_env(CLAUDE_PLUGIN_DATA=data)
             first = run_script(SCRIPTS / "check_onboarding.sh", env=env)
             self.assertEqual(first.returncode, 0)
-            self.assertIn("onboard", first.stdout)
+            self.assertIn("catalog-guide", first.stdout)
             self.assertIn(os.path.join(data, "onboarding.json"), first.stdout)
             Path(data, "onboarding.json").write_text('{"status":"declined"}')
             second = run_script(SCRIPTS / "check_onboarding.sh", env=env)
@@ -357,7 +357,7 @@ class SessionStartTest(unittest.TestCase):
         out = self.environment_line(CATALOG_API_TOKEN="t")
         self.assertEqual(
             out.splitlines()[0],
-            "catalog environment: none — CATALOG_API_URL is not set (auth skill).",
+            "catalog environment: none — CATALOG_API_URL is not set (catalog-guide skill).",
         )
 
     def test_readiness_reports_missing_token_for_url(self):

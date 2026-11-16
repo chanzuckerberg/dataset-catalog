@@ -12,5 +12,5 @@ Validate `$ARGUMENTS`.
 - No path given: ask which file.
 
 Report the result as-is: `valid`/`ok`, or each `<path>: <message>` line. For each problem, cite the
-`field-reference` entry (or the `registration-script` rule) and say what to change; do not edit the
+`fields.json` entry (or the `registration-script` rule) and say what to change; do not edit the
 file unless the user asks. For a deeper review of a valid record, offer the `metadata-reviewer` agent.

@@ -30,13 +30,9 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 
 | Component | Type | What it's for |
 | --- | --- | --- |
-| `onboard` | skill | First-run guide: asks what you want to do, checks your setup, explains the catalog in your terms, and gets you to one success in a dev or staging catalog. Offered automatically on your first session. |
-| `concepts` | skill | Datasets, assets, lineage, collections, and how to decide what one dataset is. |
-| `field-reference` | skill | Every record field: type, required, allowed values, meaning, examples by data type. Generated from the client models and the API spec. |
-| `registration-script` | skill | How to produce correct records from code: order of operations, checksums, governance decisions, the pipeline-safety rules, and the script template. |
-| `search` | skill | Finding data: search, facets, exact lookups, resolving a file path to its dataset, lineage, collections. |
-| `auth` | skill | Which catalog you are pointed at, storing the token, read/write permission, pipeline credentials, rotation. |
-| `common-errors` | skill | Exact error text → cause → fix. |
+| `catalog-docs` | MCP server | The [catalog docs](https://docs.biohub.ai) (Mintlify), installed with the plugin: concepts, field meanings, troubleshooting, auth how-to. Claude looks facts up here. |
+| `catalog-guide` | skill | First-run guide (asks what you want to do, checks your setup, explains the catalog in your terms, gets you to one success in a dev or staging catalog; offered automatically on your first session), the rules that apply to every catalog task, and how to use the docs. |
+| `registration-script` | skill | How to produce correct records from code: order of operations, search patterns for duplicates and lineage parents, checksums, governance decisions, the pipeline-safety rules, the script template, and `fields.json` (field types and allowed values, generated from the client models and the API spec). |
 | `script-writer` | agent | Writes or changes a registration script from the template and dry-runs it against a dev or staging catalog. |
 | `metadata-reviewer` | agent | Read-only review of a draft record; returns blocking issues and warnings. |
 | `registration-debugger` | agent | Diagnoses a failed registration and proposes a fix. |
@@ -46,7 +42,7 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 
 | Command | Does |
 | --- | --- |
-| `/catalog:onboard` | Starts the onboarding guide. |
+| `/catalog:onboard` | Starts the onboarding steps in `catalog-guide`. |
 | `/catalog:register [path]` | Asks about your data one question at a time, then has `script-writer` produce a script and dry-run it against a dev or staging catalog. |
 | `/catalog:validate <file>` | Validates a draft record (JSON) or lints a registration script. |
 | `/catalog:debug [error]` | Hands a failure to `registration-debugger`. |
@@ -55,8 +51,9 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 ### Prerequisites
 
 - Python 3.11+ (`python3` on your `PATH`; the plugin's own scripts need nothing else).
+- Access to the catalog docs MCP (`https://docs.biohub.ai/authed/mcp`); it requires login, so authenticate it from `/mcp` on first use. Without it (for example on an HPC node with no internet) the plugin still works and points you to the docs URL.
 - For registration scripts and the `catalog` CLI: `catalog-client` 1.3.0 or newer, installed from a release tag (the `registration-script` skill has the steps).
-- `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported from your shell init file (never typed into chat, never in Claude Code `settings.json`); see the [`auth` skill](plugins/catalog/skills/auth/SKILL.md#where-the-token-goes) for how to store the token. It is the same pair the `catalog` CLI and SDK read, and whatever catalog it names is the one used: there is no default. The environment (`dev`, `staging`, or `prod`) is read from the URL's host; a host naming none is treated as production. Start with a dev or staging URL. Variable names are in [`.env.example`](.env.example).
+- `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported from your shell init file (never typed into chat, never in Claude Code `settings.json`); see the [catalog docs](https://docs.biohub.ai) auth pages for how to store the token. It is the same pair the `catalog` CLI and SDK read, and whatever catalog it names is the one used: there is no default. The environment (`dev`, `staging`, or `prod`) is read from the URL's host; a host naming none is treated as production. Start with a dev or staging URL. Variable names are in [`.env.example`](.env.example).
 
 Issue tokens at `<catalog URL>/tokens` in a logged-in browser.
 
@@ -122,13 +119,11 @@ cd plugins/catalog
 python3 -m unittest discover -s tests -t tests      # stdlib only; CI runs the same
 ```
 
-At each plugin release, regenerate the field reference with the Python that has the released `catalog-client` installed, and commit the result. It reads the API spec from `CATALOG_API_URL` with `CATALOG_API_TOKEN` (or pass `--url`, or `--spec FILE` to work offline):
+At each plugin release, regenerate `skills/registration-script/fields.json` with the Python that has the released `catalog-client` installed, and commit the result. It reads the API spec from `CATALOG_API_URL` with `CATALOG_API_TOKEN` (or pass `--url`, or `--spec FILE` to work offline). The file is generated; do not edit it by hand. Field meanings and examples live in the catalog docs.
 
 ```bash
-python plugins/catalog/skills/field-reference/scripts/generate.py
+python plugins/catalog/scripts/generate_fields.py
 ```
-
-Hand edits go in `skills/field-reference/examples.json` only; `fields/*.md` and `fields.json` are generated.
 
 ## Quick Start
 

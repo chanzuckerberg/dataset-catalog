@@ -26,14 +26,16 @@ from _env import (  # noqa: E402
     version_tuple,
 )
 
-FIELDS_JSON = PLUGIN_ROOT / "skills" / "field-reference" / "fields.json"
+FIELDS_JSON = PLUGIN_ROOT / "skills" / "registration-script" / "fields.json"
 MIN_CLIENT = "1.3.0"
 
 
 def environment_line() -> str:
     url, _ = catalog_settings()
     if not url:
-        return f"catalog environment: none — {URL_VAR} is not set (auth skill)."
+        return (
+            f"catalog environment: none — {URL_VAR} is not set (catalog-guide skill)."
+        )
     env = env_from_url(url)
     if env == "unknown":
         return (
@@ -50,7 +52,7 @@ def problems() -> list[str]:
     found = []
     url, token = catalog_settings()
     if url and not token:
-        found.append(f"{TOKEN_VAR} is not set for {url} (auth skill).")
+        found.append(f"{TOKEN_VAR} is not set for {url} (catalog-guide skill).")
     installed = client_version()
     if not installed:
         found.append(
@@ -69,8 +71,8 @@ def problems() -> list[str]:
             stamp = None
         if stamp and version_tuple(installed) > version_tuple(stamp):
             found.append(
-                f"the field reference was generated from catalog-client {stamp} but {installed} is installed; "
-                "fields may be missing — see the field-reference skill on staleness."
+                f"fields.json was generated from catalog-client {stamp} but {installed} is installed; "
+                "fields may be missing — see the registration-script skill on staleness."
             )
     return found
 

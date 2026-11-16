@@ -3,7 +3,7 @@
 
     validate_record.py PATH|-  [--model dataset|asset|collection|lineage]
 
-Checks the record against skills/field-reference/fields.json: required fields,
+Checks the record against skills/registration-script/fields.json: required fields,
 types, allowed values, list minimums, and keys the schema does not have (which
 the API would silently drop), and asset locations outside shared organization
 storage. For dataset records, when the `catalog` CLI is
@@ -27,7 +27,7 @@ from pathlib import Path
 FIELDS_JSON = (
     Path(__file__).resolve().parent.parent
     / "skills"
-    / "field-reference"
+    / "registration-script"
     / "fields.json"
 )
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -221,7 +221,7 @@ def location_errors(record: object, model: str) -> list[str]:
             prefix = f"locations.{index}." if model == "dataset" else ""
             errors.append(
                 f"{prefix}location_uri: not registrable, {problem}; register only data on "
-                "shared organization storage (concepts skill)"
+                "shared organization storage (catalog-guide skill)"
             )
     return errors
 
