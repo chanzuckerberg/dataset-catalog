@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import enum
 import warnings
-from typing import TYPE_CHECKING, Generic, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, NamedTuple, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -50,6 +50,9 @@ class RecordStatus(str, enum.Enum):
     draft = "draft"
     active = "active"
     tombstoned = "tombstoned"
+
+
+WritableRecordStatus = Literal[RecordStatus.draft, RecordStatus.active]
 
 
 class DatasetSortOption(str, enum.Enum):
@@ -146,6 +149,10 @@ class DatasetRequest(_DatasetBase):
         default=None,
         min_length=1,
         description="Prefix every location sits under; the server derives it when omitted. On update it selects which existing instance the locations describe",
+    )
+    record_status: WritableRecordStatus | None = Field(
+        default=None,
+        description="draft or active. A draft dataset is listed and searchable, but the catalog hides its locations until the draft is promoted to active. If this param is omitted, we default to active. Use delete() to tombstone.",
     )
 
     @field_validator("cross_db_references", mode="before")

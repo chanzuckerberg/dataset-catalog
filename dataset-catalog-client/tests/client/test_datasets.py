@@ -33,12 +33,14 @@ from catalog_client.models.dataset import (
     DatasetSearchHit,
     DatasetSearchResponse,
     DatasetType,
+    RecordStatus,
 )
 from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import (
     CursorPaginatedResponse,
     PaginatedResponse,
 )
+from tests.models.test_dataset import _minimal_create
 
 BASE = "http://test.local/api/v1/"
 TOKEN = "tok"
@@ -841,3 +843,49 @@ def test_copy_entry_is_a_data_asset_without_the_glob_fields():
     assert not shared & {"includes_pattern", "excludes_pattern"}
     assert "includes_pattern" not in CopyEntry.model_fields
     assert "excludes_pattern" not in CopyEntry.model_fields
+
+
+@pytest.mark.parametrize(
+    ("method", "record_status", "sent"),
+    [
+        ("create", RecordStatus.draft, "draft"),
+        ("update", RecordStatus.active, "active"),
+        ("update", None, "absent"),
+    ],
+    ids=["create-draft", "promote", "update-omitted"],
+)
+def test_record_status_reaches_the_wire_only_when_set(
+    httpx_mock: HTTPXMock, method: str, record_status: RecordStatus | None, sent: str
+):
+    """An omitted status must not be sent on update, so a client edit never publishes a draft."""
+    httpx_mock.add_response(json={**DATASET_RESPONSE, "record_status": "draft"})
+    request = (
+        _minimal_create()
+        if record_status is None
+        else _minimal_create(record_status=record_status)
+    )
+    client = _sync_client()
+    if method == "create":
+        client.create(request)
+    else:
+        client.update("uuid-1", request)
+    body = json.loads(httpx_mock.get_request().content)
+    assert body.get("record_status", "absent") == sent
+
+
+def test_copy_of_a_draft_is_a_typed_copy_error(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=409,
+        json={
+            "detail": {
+                "code": "SOURCE_IS_DRAFT",
+                "message": "is a draft, so it cannot be copied",
+                "retryable": False,
+            }
+        },
+    )
+    with pytest.raises(CopyError) as excinfo:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
+    assert excinfo.value.code is CopyErrorCode.SOURCE_IS_DRAFT
+    assert excinfo.value.retryable is False
