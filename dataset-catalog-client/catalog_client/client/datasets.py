@@ -2,6 +2,7 @@
 
 import datetime
 from collections.abc import AsyncIterator, Iterator
+from typing import Literal, overload
 
 from catalog_client.client._base import _AsyncBase, _SyncBase
 from catalog_client.exceptions import CatalogError, CatalogUsageError, NotFoundError
@@ -19,12 +20,23 @@ from catalog_client.models.dataset import (
     DatasetRef,
     DatasetRequest,
     DatasetResponse,
+    DatasetResponseV2,
     DatasetSearchHit,
     DatasetSearchPage,
+    DatasetSearchPageV2,
     DatasetSearchResponse,
+    DatasetShape,
     DatasetSortOption,
     DatasetType,
     DatasetWithRelationsResponse,
+    DatasetWithRelationsResponseV2,
+)
+from catalog_client.models.instance import (
+    DatasetInstanceListResponse,
+    DatasetInstanceResponse,
+    DatasetInstanceUpdate,
+    DatasetInstanceWithLocationsResponse,
+    InstanceView,
 )
 from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import CursorPaginatedResponse, PaginatedResponse
@@ -59,7 +71,9 @@ def _check_limit(limit: int, maximum: int, route: str) -> None:
         raise CatalogUsageError(f"limit must be <= {maximum} on {route}, got {limit}")
 
 
-def _validate_search_page(payload: object, hydrate: bool) -> DatasetSearchPage:
+def _validate_search_page(
+    payload: object, hydrate: bool, shape: DatasetShape
+) -> DatasetSearchPage | DatasetSearchPageV2:
     """Parse a search page against the shape `hydrate` actually asked for.
 
     Validating the branch explicitly rather than against a union is what
@@ -68,6 +82,8 @@ def _validate_search_page(payload: object, hydrate: bool) -> DatasetSearchPage:
     half-built `DatasetResponse` as a hit and hand the caller lightweight
     results they never asked for.
     """
+    if hydrate and shape is DatasetShape.v2:
+        return DatasetSearchResponse[DatasetResponseV2].model_validate(payload)
     if hydrate:
         return DatasetSearchResponse[DatasetResponse].model_validate(payload)
     return DatasetSearchResponse[DatasetSearchHit].model_validate(payload)
@@ -273,7 +289,147 @@ def _build_history_params(
     return params
 
 
+def _shape_params(shape: DatasetShape) -> dict:
+    # v1 is the server default; leaving it off keeps v1 requests unchanged.
+    return {"shape": "v2"} if DatasetShape(shape) is DatasetShape.v2 else {}
+
+
+def _build_view_params(
+    shape: DatasetShape,
+    instance: InstanceView | None,
+    root_uri: str | None,
+    storage_platform: StoragePlatform | str | None,
+    *,
+    send_platform: bool,
+) -> dict:
+    """Query params choosing the dataset body and which instances it carries.
+
+    `send_platform` is False on search and resolve, where `storage_platform`
+    is already sent as the location filter and doubles as the instance
+    filter; on get and list it only selects instances, so it is sent here.
+    Misuse is rejected locally with the message the server's 422 carries.
+    """
+    shape = DatasetShape(shape)
+    filtering = instance is InstanceView.filter
+    if filtering and root_uri is None and storage_platform is None:
+        raise CatalogUsageError(
+            "instance=InstanceView.filter needs storage_platform, root_uri, or both"
+        )
+    if not filtering and root_uri is not None:
+        raise CatalogUsageError(
+            "root_uri selects instances only with instance=InstanceView.filter"
+        )
+    if send_platform and not filtering and storage_platform is not None:
+        raise CatalogUsageError(
+            "storage_platform selects instances only with instance=InstanceView.filter"
+        )
+    params = _shape_params(shape)
+    if instance is not None:
+        params["instance"] = instance.value
+    if root_uri is not None:
+        params["root_uri"] = root_uri
+    if send_platform and storage_platform is not None:
+        params["storage_platform"] = StoragePlatform(storage_platform).value
+    return params
+
+
+def _build_instance_list_params(
+    storage_platform: StoragePlatform | None,
+    is_primary: bool | None,
+    include_tombstoned: bool,
+) -> dict:
+    params: dict = {}
+    if storage_platform is not None:
+        params["storage_platform"] = storage_platform.value
+    if is_primary is not None:
+        params["is_primary"] = is_primary
+    if include_tombstoned:
+        params["include_tombstoned"] = True
+    return params
+
+
+def _dataset_model(shape: DatasetShape) -> type[DatasetResponse | DatasetResponseV2]:
+    return DatasetResponseV2 if shape is DatasetShape.v2 else DatasetResponse
+
+
+def _list_page_model(
+    shape: DatasetShape,
+) -> type[
+    CursorPaginatedResponse[DatasetWithRelationsResponse]
+    | CursorPaginatedResponse[DatasetWithRelationsResponseV2]
+]:
+    if shape is DatasetShape.v2:
+        return CursorPaginatedResponse[DatasetWithRelationsResponseV2]
+    return CursorPaginatedResponse[DatasetWithRelationsResponse]
+
+
+def _resolve_page_model(
+    shape: DatasetShape,
+) -> type[
+    DatasetSearchResponse[DatasetResponse] | DatasetSearchResponse[DatasetResponseV2]
+]:
+    if shape is DatasetShape.v2:
+        return DatasetSearchResponse[DatasetResponseV2]
+    return DatasetSearchResponse[DatasetResponse]
+
+
+def _dataset_with_relations_model(
+    shape: DatasetShape,
+) -> type[DatasetWithRelationsResponse | DatasetWithRelationsResponseV2]:
+    if shape is DatasetShape.v2:
+        return DatasetWithRelationsResponseV2
+    return DatasetWithRelationsResponse
+
+
 class DatasetClient(_SyncBase):
+    @overload
+    def list(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        cursor: str | None = ...,
+        offset: int | None = ...,
+        limit: int = ...,
+        include_total: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> CursorPaginatedResponse[DatasetWithRelationsResponse]: ...
+
+    @overload
+    def list(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        cursor: str | None = ...,
+        offset: int | None = ...,
+        limit: int = ...,
+        include_total: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> CursorPaginatedResponse[DatasetWithRelationsResponseV2]: ...
+
     def list(
         self,
         *,
@@ -291,7 +447,14 @@ class DatasetClient(_SyncBase):
         offset: int | None = None,
         limit: int = 100,
         include_total: bool = True,
-    ) -> CursorPaginatedResponse[DatasetWithRelationsResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> (
+        CursorPaginatedResponse[DatasetWithRelationsResponse]
+        | CursorPaginatedResponse[DatasetWithRelationsResponseV2]
+    ):
         """List datasets, one page at a time.
 
         Pages either by keyset `cursor` or by `offset`, never both. Offset
@@ -304,6 +467,11 @@ class DatasetClient(_SyncBase):
         with; changing either mid-walk raises `RecordValidationError` (422).
         Pass `include_total=False` to skip the count query, which leaves
         `total` as None on the response.
+
+        `shape=DatasetShape.v2` returns `DatasetWithRelationsResponseV2`,
+        which drops the flat `locations`. `instance` picks which copies each
+        record carries; `storage_platform` and `root_uri` narrow them and
+        need `instance=InstanceView.filter` — they do not filter datasets.
         """
         params = _build_list_params(
             canonical_id,
@@ -321,10 +489,55 @@ class DatasetClient(_SyncBase):
             limit,
             include_total,
         )
-        response = self._get(f"{_PREFIX}/", params=params)
-        return CursorPaginatedResponse[DatasetWithRelationsResponse].model_validate(
-            response.json()
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=True
+            )
         )
+        response = self._get(f"{_PREFIX}/", params=params)
+        return _list_page_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    def iter_all(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> Iterator[DatasetWithRelationsResponse]: ...
+
+    @overload
+    def iter_all(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> Iterator[DatasetWithRelationsResponseV2]: ...
 
     def iter_all(
         self,
@@ -340,7 +553,11 @@ class DatasetClient(_SyncBase):
         include_collections: bool = False,
         sort: DatasetListSortOption | None = None,
         limit: int = 100,
-    ) -> Iterator[DatasetWithRelationsResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> Iterator[DatasetWithRelationsResponse | DatasetWithRelationsResponseV2]:
         """Walk every matching dataset, following cursors until exhausted.
 
         Skips the total count, since the walk does not need it. Leaves
@@ -351,7 +568,7 @@ class DatasetClient(_SyncBase):
         """
         cursor: str | None = None
         while True:
-            page = self.list(
+            page = self.list(  # type: ignore[call-overload, misc]
                 canonical_id=canonical_id,
                 version=version,
                 modality=modality,
@@ -365,12 +582,82 @@ class DatasetClient(_SyncBase):
                 cursor=cursor,
                 limit=limit,
                 include_total=False,
+                shape=shape,
+                instance=instance,
+                storage_platform=storage_platform,
+                root_uri=root_uri,
             )
             yield from page.results
             following = _next_cursor(page.next_cursor, cursor, len(page.results))
             if following is None:
                 return
             cursor = following
+
+    @overload
+    def search(
+        self,
+        *,
+        q: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        is_latest: bool | None = ...,
+        access_scope: str | None = ...,
+        organism: str | None = ...,
+        tissue: str | None = ...,
+        sub_modality: str | None = ...,
+        assay: str | None = ...,
+        disease: str | None = ...,
+        development_stage: str | None = ...,
+        cohort: str | None = ...,
+        file_format: str | None = ...,
+        storage_platform: str | None = ...,
+        dataset_type: DatasetType | None = ...,
+        observation_unit: ObservationUnit | None = ...,
+        is_combined: bool | None = ...,
+        uri_prefix: str | None = ...,
+        facets: _FacetList | None = ...,
+        fields: _FacetList | None = ...,
+        sort: DatasetSortOption | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        hydrate: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchPage: ...
+
+    @overload
+    def search(
+        self,
+        *,
+        q: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        is_latest: bool | None = ...,
+        access_scope: str | None = ...,
+        organism: str | None = ...,
+        tissue: str | None = ...,
+        sub_modality: str | None = ...,
+        assay: str | None = ...,
+        disease: str | None = ...,
+        development_stage: str | None = ...,
+        cohort: str | None = ...,
+        file_format: str | None = ...,
+        storage_platform: str | None = ...,
+        dataset_type: DatasetType | None = ...,
+        observation_unit: ObservationUnit | None = ...,
+        is_combined: bool | None = ...,
+        uri_prefix: str | None = ...,
+        facets: _FacetList | None = ...,
+        fields: _FacetList | None = ...,
+        sort: DatasetSortOption | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        hydrate: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchPageV2: ...
 
     def search(
         self,
@@ -399,7 +686,10 @@ class DatasetClient(_SyncBase):
         cursor: str | None = None,
         limit: int = 10,
         hydrate: bool = False,
-    ) -> DatasetSearchPage:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> DatasetSearchPage | DatasetSearchPageV2:
         """Full-text and faceted search over the dataset index.
 
         Paging is by cursor only — there is no offset. Pass the previous
@@ -412,6 +702,11 @@ class DatasetClient(_SyncBase):
         `fields=[...]` to add individual dataset fields to each hit, or
         `hydrate=True` to get full `DatasetResponse` records instead (one
         extra query per page, and `limit` is capped at 100).
+
+        `shape`, `instance` and `root_uri` only shape hydrated records —
+        `DatasetResponseV2` under `shape=DatasetShape.v2`. With
+        `instance=InstanceView.filter`, `storage_platform` narrows the
+        instances as well as the matches.
         """
         params = _build_search_params(
             q,
@@ -439,13 +734,36 @@ class DatasetClient(_SyncBase):
             limit,
             hydrate,
         )
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=False
+            )
+        )
         response = self._get(f"{_PREFIX}/search/", params=params)
-        return _validate_search_page(response.json(), hydrate)
+        return _validate_search_page(response.json(), hydrate, DatasetShape(shape))
+
+    @overload
+    def iter_search(
+        self,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+        **kwargs: object,
+    ) -> Iterator[DatasetResponse | DatasetSearchHit]: ...
+
+    @overload
+    def iter_search(
+        self,
+        *,
+        shape: Literal[DatasetShape.v2],
+        **kwargs: object,
+    ) -> Iterator[DatasetResponseV2 | DatasetSearchHit]: ...
 
     def iter_search(
         self,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
         **kwargs: object,
-    ) -> Iterator[DatasetResponse | DatasetSearchHit]:
+    ) -> Iterator[DatasetResponse | DatasetResponseV2 | DatasetSearchHit]:
         """Walk every search hit, following cursors until exhausted.
 
         Accepts the same keyword arguments as `search()`, except `cursor`,
@@ -455,12 +773,40 @@ class DatasetClient(_SyncBase):
             raise CatalogUsageError("iter_search() manages the cursor; do not pass one")
         cursor: str | None = None
         while True:
-            page = self.search(cursor=cursor, **kwargs)  # type: ignore[arg-type]
+            page = self.search(cursor=cursor, shape=shape, **kwargs)  # type: ignore[call-overload]
             yield from page.results
             following = _next_cursor(page.next_cursor, cursor, len(page.results))
             if following is None:
                 return
             cursor = following
+
+    @overload
+    def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchResponse[DatasetResponse]: ...
+
+    @overload
+    def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchResponse[DatasetResponseV2]: ...
 
     def resolve(
         self,
@@ -470,7 +816,13 @@ class DatasetClient(_SyncBase):
         storage_platform: StoragePlatform | None = None,
         cursor: str | None = None,
         limit: int = 50,
-    ) -> DatasetSearchResponse[DatasetResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> (
+        DatasetSearchResponse[DatasetResponse]
+        | DatasetSearchResponse[DatasetResponseV2]
+    ):
         """Resolve a file or directory URI to the dataset(s) registered at it.
 
         By default the match is the URI itself. `scope=ancestor` walks *up*,
@@ -486,13 +838,48 @@ class DatasetClient(_SyncBase):
         identical for the whole walk, or use `iter_resolve()`, which manages
         the cursor for you.
 
+        Each record carries the instances the URI matched through, unless
+        `instance` says otherwise; `shape=DatasetShape.v2` returns
+        `DatasetResponseV2`.
+
         A deployment predating this route answers `NotFoundError: Dataset
         'resolve' not found` — the path falls through to the by-id route.
         That is a missing endpoint, not an unregistered URI.
         """
         params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=False
+            )
+        )
         response = self._get(f"{_PREFIX}/resolve", params=params)
-        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+        return _resolve_page_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> Iterator[DatasetResponse]: ...
+
+    @overload
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> Iterator[DatasetResponseV2]: ...
 
     def iter_resolve(
         self,
@@ -501,16 +888,22 @@ class DatasetClient(_SyncBase):
         scope: LocationScope = LocationScope.exact,
         storage_platform: StoragePlatform | None = None,
         limit: int = 50,
-    ) -> Iterator[DatasetResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> Iterator[DatasetResponse | DatasetResponseV2]:
         """Walk every dataset the URI resolves to, following cursors until exhausted."""
         cursor: str | None = None
         while True:
-            page = self.resolve(
+            page = self.resolve(  # type: ignore[call-overload]
                 uri,
                 scope=scope,
                 storage_platform=storage_platform,
                 cursor=cursor,
                 limit=limit,
+                shape=shape,
+                instance=instance,
+                root_uri=root_uri,
             )
             yield from page.results
             following = _next_cursor(page.next_cursor, cursor, len(page.results))
@@ -527,15 +920,17 @@ class DatasetClient(_SyncBase):
     ) -> DatasetCopyResponse:
         """Register the catalog side of a completed transfer of `dataset_id`.
 
-        Writes the destination and the `copy_of` edge tying it to the source
-        in one transaction, so a copy and the record of whose copy it is are
-        never written apart. `copy_type` is required — the catalog never
-        infers it from the destination or the body.
+        `copy_type` is required — the catalog never infers it from the
+        destination or the body. A `fork` becomes a dataset of its own,
+        written in one transaction with the `copy_of` edge tying it to the
+        source (`lineage_edge_id` on the response). A `mirror` becomes
+        another instance of the same dataset, with no edge (`instance_id`
+        on the response); its identity fields must equal the source's.
 
         Replaying is safe: the destination identity is the idempotency key,
         so a replay returns the same ids and writes nothing, whatever its
-        entries now say. Correct a registered copy with `update()`, not by
-        replaying with changed entries.
+        entries now say. Correct a fork with `update()` and a mirror with
+        `update_instance()`, not by replaying with changed entries.
 
         A refusal raises `CopyError`, whose `code` says why and whose
         `retryable` says whether retrying the same request can help.
@@ -543,11 +938,78 @@ class DatasetClient(_SyncBase):
         response = self._post(
             f"{_PREFIX}/{dataset_id}/copy",
             params={"copy_type": copy_type.value},
-            # exclude_none: lineage_metadata lands on the edge untouched, so a
-            # null the caller never set would be stored as one.
+            # exclude_none: lineage_metadata is stored untouched, so a null
+            # the caller never set would be stored as one.
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return DatasetCopyResponse.model_validate(response.json())
+
+    def list_instances(
+        self,
+        dataset_id: str,
+        *,
+        storage_platform: StoragePlatform | None = None,
+        is_primary: bool | None = None,
+        include_tombstoned: bool = False,
+    ) -> DatasetInstanceListResponse:
+        """Every copy of a dataset's bytes, primary first, each with its assets.
+
+        Not paginated. Pass `include_tombstoned=True` when tracing where a
+        copy came from: `copied_from_instance_id` keeps pointing at an
+        instance after it is removed.
+        """
+        params = _build_instance_list_params(
+            storage_platform, is_primary, include_tombstoned
+        )
+        response = self._get(f"{_PREFIX}/{dataset_id}/instances", params=params)
+        return DatasetInstanceListResponse.model_validate(response.json())
+
+    def get_instance(
+        self, dataset_id: str, instance_id: str
+    ) -> DatasetInstanceWithLocationsResponse:
+        response = self._get(f"{_PREFIX}/{dataset_id}/instances/{instance_id}")
+        return DatasetInstanceWithLocationsResponse.model_validate(response.json())
+
+    def update_instance(
+        self, dataset_id: str, instance_id: str, update: DatasetInstanceUpdate
+    ) -> DatasetInstanceWithLocationsResponse:
+        """Fill in a partial mirror or fix a copy in place.
+
+        Locations are matched by `location_uri`; omitted assets stay — remove
+        one with `delete_instance_asset()`.
+        """
+        response = self._patch(
+            f"{_PREFIX}/{dataset_id}/instances/{instance_id}",
+            json=update.model_dump(mode="json", exclude_unset=True),
+        )
+        return DatasetInstanceWithLocationsResponse.model_validate(response.json())
+
+    def delete_instance(self, dataset_id: str, instance_id: str) -> None:
+        """Tombstone one copy and its assets.
+
+        The server refuses the primary with HTTP 409: promote another
+        instance first, or delete the dataset.
+        """
+        self._delete(f"{_PREFIX}/{dataset_id}/instances/{instance_id}")
+
+    def promote_instance(
+        self, dataset_id: str, instance_id: str
+    ) -> DatasetInstanceResponse:
+        """Make this instance the authoritative copy, demoting the current primary."""
+        response = self._post(f"{_PREFIX}/{dataset_id}/instances/{instance_id}/promote")
+        return DatasetInstanceResponse.model_validate(response.json())
+
+    def delete_instance_asset(
+        self, dataset_id: str, instance_id: str, asset_id: str
+    ) -> None:
+        """Tombstone one asset of one copy.
+
+        The server refuses an instance's last live asset with HTTP 409.
+        Removing a primary asset does not cascade to the mirrors.
+        """
+        self._delete(
+            f"{_PREFIX}/{dataset_id}/instances/{instance_id}/assets/{asset_id}"
+        )
 
     def history(
         self,
@@ -582,6 +1044,34 @@ class DatasetClient(_SyncBase):
             raise NotFoundError(404, f"Multiple datasets found for {ref}")
         return result[0].id
 
+    @overload
+    def get(
+        self,
+        ref: str | DatasetRef,
+        *,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetWithRelationsResponse: ...
+
+    @overload
+    def get(
+        self,
+        ref: str | DatasetRef,
+        *,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetWithRelationsResponseV2: ...
+
     def get(
         self,
         ref: str | DatasetRef,
@@ -589,9 +1079,22 @@ class DatasetClient(_SyncBase):
         exclude_tombstoned: bool = True,
         include_lineage: bool = False,
         include_collections: bool = False,
-    ) -> DatasetWithRelationsResponse:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> DatasetWithRelationsResponse | DatasetWithRelationsResponseV2:
+        """Fetch one dataset.
+
+        `shape=DatasetShape.v2` returns `DatasetWithRelationsResponseV2`,
+        which drops the flat `locations`. `instance` picks which copies the
+        record carries; `storage_platform` and `root_uri` need
+        `instance=InstanceView.filter`.
+        """
+        params = _build_view_params(
+            shape, instance, root_uri, storage_platform, send_platform=True
+        )
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
-        params: dict = {}
         if not exclude_tombstoned:
             params["exclude_tombstoned"] = False
         if include_lineage:
@@ -599,19 +1102,71 @@ class DatasetClient(_SyncBase):
         if include_collections:
             params["include_collections"] = True
         response = self._get(f"{_PREFIX}/{dataset_id}", params=params)
-        return DatasetWithRelationsResponse.model_validate(response.json())
+        return _dataset_with_relations_model(DatasetShape(shape)).model_validate(
+            response.json()
+        )
 
-    def create(self, dataset: DatasetRequest) -> DatasetResponse:
-        response = self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
-        return DatasetResponse.model_validate(response.json())
+    @overload
+    def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+    ) -> DatasetResponse: ...
 
-    def update(self, ref: str | DatasetRef, dataset: DatasetRequest) -> DatasetResponse:
+    @overload
+    def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v2],
+    ) -> DatasetResponseV2: ...
+
+    def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
+    ) -> DatasetResponse | DatasetResponseV2:
+        response = self._post(
+            f"{_PREFIX}/",
+            params=_shape_params(shape),
+            json=dataset.model_dump(mode="json"),
+        )
+        return _dataset_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    def update(
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+    ) -> DatasetResponse: ...
+
+    @overload
+    def update(
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v2],
+    ) -> DatasetResponseV2: ...
+
+    def update(
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
+    ) -> DatasetResponse | DatasetResponseV2:
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
         response = self._patch(
             f"{_PREFIX}/{dataset_id}",
+            params=_shape_params(shape),
             json=dataset.model_dump(mode="json", exclude_unset=True),
         )
-        return DatasetResponse.model_validate(response.json())
+        return _dataset_model(DatasetShape(shape)).model_validate(response.json())
 
     def delete(self, ref: str | DatasetRef) -> None:
         dataset_id = ref if isinstance(ref, str) else self._resolve(ref)
@@ -619,6 +1174,54 @@ class DatasetClient(_SyncBase):
 
 
 class AsyncDatasetClient(_AsyncBase):
+    @overload
+    async def list(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        cursor: str | None = ...,
+        offset: int | None = ...,
+        limit: int = ...,
+        include_total: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> CursorPaginatedResponse[DatasetWithRelationsResponse]: ...
+
+    @overload
+    async def list(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        cursor: str | None = ...,
+        offset: int | None = ...,
+        limit: int = ...,
+        include_total: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> CursorPaginatedResponse[DatasetWithRelationsResponseV2]: ...
+
     async def list(
         self,
         *,
@@ -636,7 +1239,14 @@ class AsyncDatasetClient(_AsyncBase):
         offset: int | None = None,
         limit: int = 100,
         include_total: bool = True,
-    ) -> CursorPaginatedResponse[DatasetWithRelationsResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> (
+        CursorPaginatedResponse[DatasetWithRelationsResponse]
+        | CursorPaginatedResponse[DatasetWithRelationsResponseV2]
+    ):
         """List datasets, one page at a time.
 
         Pages either by keyset `cursor` or by `offset`, never both. Offset
@@ -649,6 +1259,11 @@ class AsyncDatasetClient(_AsyncBase):
         with; changing either mid-walk raises `RecordValidationError` (422).
         Pass `include_total=False` to skip the count query, which leaves
         `total` as None on the response.
+
+        `shape=DatasetShape.v2` returns `DatasetWithRelationsResponseV2`,
+        which drops the flat `locations`. `instance` picks which copies each
+        record carries; `storage_platform` and `root_uri` narrow them and
+        need `instance=InstanceView.filter` — they do not filter datasets.
         """
         params = _build_list_params(
             canonical_id,
@@ -666,10 +1281,55 @@ class AsyncDatasetClient(_AsyncBase):
             limit,
             include_total,
         )
-        response = await self._get(f"{_PREFIX}/", params=params)
-        return CursorPaginatedResponse[DatasetWithRelationsResponse].model_validate(
-            response.json()
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=True
+            )
         )
+        response = await self._get(f"{_PREFIX}/", params=params)
+        return _list_page_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    def iter_all(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> AsyncIterator[DatasetWithRelationsResponse]: ...
+
+    @overload
+    def iter_all(
+        self,
+        *,
+        canonical_id: str | None = ...,
+        version: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        access_scope: str | None = ...,
+        is_latest: bool | None = ...,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        sort: DatasetListSortOption | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> AsyncIterator[DatasetWithRelationsResponseV2]: ...
 
     async def iter_all(
         self,
@@ -685,7 +1345,11 @@ class AsyncDatasetClient(_AsyncBase):
         include_collections: bool = False,
         sort: DatasetListSortOption | None = None,
         limit: int = 100,
-    ) -> AsyncIterator[DatasetWithRelationsResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> AsyncIterator[DatasetWithRelationsResponse | DatasetWithRelationsResponseV2]:
         """Walk every matching dataset, following cursors until exhausted.
 
         Skips the total count, since the walk does not need it. Leaves
@@ -696,7 +1360,7 @@ class AsyncDatasetClient(_AsyncBase):
         """
         cursor: str | None = None
         while True:
-            page = await self.list(
+            page = await self.list(  # type: ignore[call-overload, misc]
                 canonical_id=canonical_id,
                 version=version,
                 modality=modality,
@@ -710,6 +1374,10 @@ class AsyncDatasetClient(_AsyncBase):
                 cursor=cursor,
                 limit=limit,
                 include_total=False,
+                shape=shape,
+                instance=instance,
+                storage_platform=storage_platform,
+                root_uri=root_uri,
             )
             for result in page.results:
                 yield result
@@ -717,6 +1385,72 @@ class AsyncDatasetClient(_AsyncBase):
             if following is None:
                 return
             cursor = following
+
+    @overload
+    async def search(
+        self,
+        *,
+        q: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        is_latest: bool | None = ...,
+        access_scope: str | None = ...,
+        organism: str | None = ...,
+        tissue: str | None = ...,
+        sub_modality: str | None = ...,
+        assay: str | None = ...,
+        disease: str | None = ...,
+        development_stage: str | None = ...,
+        cohort: str | None = ...,
+        file_format: str | None = ...,
+        storage_platform: str | None = ...,
+        dataset_type: DatasetType | None = ...,
+        observation_unit: ObservationUnit | None = ...,
+        is_combined: bool | None = ...,
+        uri_prefix: str | None = ...,
+        facets: _FacetList | None = ...,
+        fields: _FacetList | None = ...,
+        sort: DatasetSortOption | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        hydrate: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchPage: ...
+
+    @overload
+    async def search(
+        self,
+        *,
+        q: str | None = ...,
+        modality: DatasetModality | None = ...,
+        project: str | None = ...,
+        is_latest: bool | None = ...,
+        access_scope: str | None = ...,
+        organism: str | None = ...,
+        tissue: str | None = ...,
+        sub_modality: str | None = ...,
+        assay: str | None = ...,
+        disease: str | None = ...,
+        development_stage: str | None = ...,
+        cohort: str | None = ...,
+        file_format: str | None = ...,
+        storage_platform: str | None = ...,
+        dataset_type: DatasetType | None = ...,
+        observation_unit: ObservationUnit | None = ...,
+        is_combined: bool | None = ...,
+        uri_prefix: str | None = ...,
+        facets: _FacetList | None = ...,
+        fields: _FacetList | None = ...,
+        sort: DatasetSortOption | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        hydrate: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchPageV2: ...
 
     async def search(
         self,
@@ -745,7 +1479,10 @@ class AsyncDatasetClient(_AsyncBase):
         cursor: str | None = None,
         limit: int = 10,
         hydrate: bool = False,
-    ) -> DatasetSearchPage:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> DatasetSearchPage | DatasetSearchPageV2:
         """Full-text and faceted search over the dataset index.
 
         Paging is by cursor only — there is no offset. Pass the previous
@@ -758,6 +1495,11 @@ class AsyncDatasetClient(_AsyncBase):
         `fields=[...]` to add individual dataset fields to each hit, or
         `hydrate=True` to get full `DatasetResponse` records instead (one
         extra query per page, and `limit` is capped at 100).
+
+        `shape`, `instance` and `root_uri` only shape hydrated records —
+        `DatasetResponseV2` under `shape=DatasetShape.v2`. With
+        `instance=InstanceView.filter`, `storage_platform` narrows the
+        instances as well as the matches.
         """
         params = _build_search_params(
             q,
@@ -785,13 +1527,36 @@ class AsyncDatasetClient(_AsyncBase):
             limit,
             hydrate,
         )
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=False
+            )
+        )
         response = await self._get(f"{_PREFIX}/search/", params=params)
-        return _validate_search_page(response.json(), hydrate)
+        return _validate_search_page(response.json(), hydrate, DatasetShape(shape))
+
+    @overload
+    def iter_search(
+        self,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+        **kwargs: object,
+    ) -> AsyncIterator[DatasetResponse | DatasetSearchHit]: ...
+
+    @overload
+    def iter_search(
+        self,
+        *,
+        shape: Literal[DatasetShape.v2],
+        **kwargs: object,
+    ) -> AsyncIterator[DatasetResponseV2 | DatasetSearchHit]: ...
 
     async def iter_search(
         self,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
         **kwargs: object,
-    ) -> AsyncIterator[DatasetResponse | DatasetSearchHit]:
+    ) -> AsyncIterator[DatasetResponse | DatasetResponseV2 | DatasetSearchHit]:
         """Walk every search hit, following cursors until exhausted.
 
         Accepts the same keyword arguments as `search()`, except `cursor`,
@@ -801,13 +1566,41 @@ class AsyncDatasetClient(_AsyncBase):
             raise CatalogUsageError("iter_search() manages the cursor; do not pass one")
         cursor: str | None = None
         while True:
-            page = await self.search(cursor=cursor, **kwargs)  # type: ignore[arg-type]
+            page = await self.search(cursor=cursor, shape=shape, **kwargs)  # type: ignore[call-overload]
             for result in page.results:
                 yield result
             following = _next_cursor(page.next_cursor, cursor, len(page.results))
             if following is None:
                 return
             cursor = following
+
+    @overload
+    async def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchResponse[DatasetResponse]: ...
+
+    @overload
+    async def resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        cursor: str | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetSearchResponse[DatasetResponseV2]: ...
 
     async def resolve(
         self,
@@ -817,7 +1610,13 @@ class AsyncDatasetClient(_AsyncBase):
         storage_platform: StoragePlatform | None = None,
         cursor: str | None = None,
         limit: int = 50,
-    ) -> DatasetSearchResponse[DatasetResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> (
+        DatasetSearchResponse[DatasetResponse]
+        | DatasetSearchResponse[DatasetResponseV2]
+    ):
         """Resolve a file or directory URI to the dataset(s) registered at it.
 
         By default the match is the URI itself. `scope=ancestor` walks *up*,
@@ -833,13 +1632,48 @@ class AsyncDatasetClient(_AsyncBase):
         identical for the whole walk, or use `iter_resolve()`, which manages
         the cursor for you.
 
+        Each record carries the instances the URI matched through, unless
+        `instance` says otherwise; `shape=DatasetShape.v2` returns
+        `DatasetResponseV2`.
+
         A deployment predating this route answers `NotFoundError: Dataset
         'resolve' not found` — the path falls through to the by-id route.
         That is a missing endpoint, not an unregistered URI.
         """
         params = _build_resolve_params(uri, scope, storage_platform, cursor, limit)
+        params.update(
+            _build_view_params(
+                shape, instance, root_uri, storage_platform, send_platform=False
+            )
+        )
         response = await self._get(f"{_PREFIX}/resolve", params=params)
-        return DatasetSearchResponse[DatasetResponse].model_validate(response.json())
+        return _resolve_page_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> AsyncIterator[DatasetResponse]: ...
+
+    @overload
+    def iter_resolve(
+        self,
+        uri: str,
+        *,
+        scope: LocationScope = ...,
+        storage_platform: StoragePlatform | None = ...,
+        limit: int = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        root_uri: str | None = ...,
+    ) -> AsyncIterator[DatasetResponseV2]: ...
 
     async def iter_resolve(
         self,
@@ -848,16 +1682,22 @@ class AsyncDatasetClient(_AsyncBase):
         scope: LocationScope = LocationScope.exact,
         storage_platform: StoragePlatform | None = None,
         limit: int = 50,
-    ) -> AsyncIterator[DatasetResponse]:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        root_uri: str | None = None,
+    ) -> AsyncIterator[DatasetResponse | DatasetResponseV2]:
         """Walk every dataset the URI resolves to, following cursors until exhausted."""
         cursor: str | None = None
         while True:
-            page = await self.resolve(
+            page = await self.resolve(  # type: ignore[call-overload]
                 uri,
                 scope=scope,
                 storage_platform=storage_platform,
                 cursor=cursor,
                 limit=limit,
+                shape=shape,
+                instance=instance,
+                root_uri=root_uri,
             )
             for result in page.results:
                 yield result
@@ -875,15 +1715,17 @@ class AsyncDatasetClient(_AsyncBase):
     ) -> DatasetCopyResponse:
         """Register the catalog side of a completed transfer of `dataset_id`.
 
-        Writes the destination and the `copy_of` edge tying it to the source
-        in one transaction, so a copy and the record of whose copy it is are
-        never written apart. `copy_type` is required — the catalog never
-        infers it from the destination or the body.
+        `copy_type` is required — the catalog never infers it from the
+        destination or the body. A `fork` becomes a dataset of its own,
+        written in one transaction with the `copy_of` edge tying it to the
+        source (`lineage_edge_id` on the response). A `mirror` becomes
+        another instance of the same dataset, with no edge (`instance_id`
+        on the response); its identity fields must equal the source's.
 
         Replaying is safe: the destination identity is the idempotency key,
         so a replay returns the same ids and writes nothing, whatever its
-        entries now say. Correct a registered copy with `update()`, not by
-        replaying with changed entries.
+        entries now say. Correct a fork with `update()` and a mirror with
+        `update_instance()`, not by replaying with changed entries.
 
         A refusal raises `CopyError`, whose `code` says why and whose
         `retryable` says whether retrying the same request can help.
@@ -891,11 +1733,80 @@ class AsyncDatasetClient(_AsyncBase):
         response = await self._post(
             f"{_PREFIX}/{dataset_id}/copy",
             params={"copy_type": copy_type.value},
-            # exclude_none: lineage_metadata lands on the edge untouched, so a
-            # null the caller never set would be stored as one.
+            # exclude_none: lineage_metadata is stored untouched, so a null
+            # the caller never set would be stored as one.
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return DatasetCopyResponse.model_validate(response.json())
+
+    async def list_instances(
+        self,
+        dataset_id: str,
+        *,
+        storage_platform: StoragePlatform | None = None,
+        is_primary: bool | None = None,
+        include_tombstoned: bool = False,
+    ) -> DatasetInstanceListResponse:
+        """Every copy of a dataset's bytes, primary first, each with its assets.
+
+        Not paginated. Pass `include_tombstoned=True` when tracing where a
+        copy came from: `copied_from_instance_id` keeps pointing at an
+        instance after it is removed.
+        """
+        params = _build_instance_list_params(
+            storage_platform, is_primary, include_tombstoned
+        )
+        response = await self._get(f"{_PREFIX}/{dataset_id}/instances", params=params)
+        return DatasetInstanceListResponse.model_validate(response.json())
+
+    async def get_instance(
+        self, dataset_id: str, instance_id: str
+    ) -> DatasetInstanceWithLocationsResponse:
+        response = await self._get(f"{_PREFIX}/{dataset_id}/instances/{instance_id}")
+        return DatasetInstanceWithLocationsResponse.model_validate(response.json())
+
+    async def update_instance(
+        self, dataset_id: str, instance_id: str, update: DatasetInstanceUpdate
+    ) -> DatasetInstanceWithLocationsResponse:
+        """Fill in a partial mirror or fix a copy in place.
+
+        Locations are matched by `location_uri`; omitted assets stay — remove
+        one with `delete_instance_asset()`.
+        """
+        response = await self._patch(
+            f"{_PREFIX}/{dataset_id}/instances/{instance_id}",
+            json=update.model_dump(mode="json", exclude_unset=True),
+        )
+        return DatasetInstanceWithLocationsResponse.model_validate(response.json())
+
+    async def delete_instance(self, dataset_id: str, instance_id: str) -> None:
+        """Tombstone one copy and its assets.
+
+        The server refuses the primary with HTTP 409: promote another
+        instance first, or delete the dataset.
+        """
+        await self._delete(f"{_PREFIX}/{dataset_id}/instances/{instance_id}")
+
+    async def promote_instance(
+        self, dataset_id: str, instance_id: str
+    ) -> DatasetInstanceResponse:
+        """Make this instance the authoritative copy, demoting the current primary."""
+        response = await self._post(
+            f"{_PREFIX}/{dataset_id}/instances/{instance_id}/promote"
+        )
+        return DatasetInstanceResponse.model_validate(response.json())
+
+    async def delete_instance_asset(
+        self, dataset_id: str, instance_id: str, asset_id: str
+    ) -> None:
+        """Tombstone one asset of one copy.
+
+        The server refuses an instance's last live asset with HTTP 409.
+        Removing a primary asset does not cascade to the mirrors.
+        """
+        await self._delete(
+            f"{_PREFIX}/{dataset_id}/instances/{instance_id}/assets/{asset_id}"
+        )
 
     async def history(
         self,
@@ -917,18 +1828,46 @@ class AsyncDatasetClient(_AsyncBase):
         )
 
     async def _resolve(self, ref: DatasetRef) -> str:
-        results = await self.list(
+        response = await self.list(
             canonical_id=ref.canonical_id,
             project=ref.project,
             version=ref.version,
             limit=10,
         )
-        matches = results.results
-        if len(matches) == 0:
+        result = response.results
+        if len(result) == 0:
             raise NotFoundError(404, f"No dataset found for {ref}")
-        if len(matches) > 1:
+        if len(result) > 1:
             raise NotFoundError(404, f"Multiple datasets found for {ref}")
-        return matches[0].id
+        return result[0].id
+
+    @overload
+    async def get(
+        self,
+        ref: str | DatasetRef,
+        *,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        shape: Literal[DatasetShape.v1] = ...,
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetWithRelationsResponse: ...
+
+    @overload
+    async def get(
+        self,
+        ref: str | DatasetRef,
+        *,
+        exclude_tombstoned: bool = ...,
+        include_lineage: bool = ...,
+        include_collections: bool = ...,
+        shape: Literal[DatasetShape.v2],
+        instance: InstanceView | None = ...,
+        storage_platform: StoragePlatform | None = ...,
+        root_uri: str | None = ...,
+    ) -> DatasetWithRelationsResponseV2: ...
 
     async def get(
         self,
@@ -937,9 +1876,22 @@ class AsyncDatasetClient(_AsyncBase):
         exclude_tombstoned: bool = True,
         include_lineage: bool = False,
         include_collections: bool = False,
-    ) -> DatasetWithRelationsResponse:
+        shape: DatasetShape = DatasetShape.v1,
+        instance: InstanceView | None = None,
+        storage_platform: StoragePlatform | None = None,
+        root_uri: str | None = None,
+    ) -> DatasetWithRelationsResponse | DatasetWithRelationsResponseV2:
+        """Fetch one dataset.
+
+        `shape=DatasetShape.v2` returns `DatasetWithRelationsResponseV2`,
+        which drops the flat `locations`. `instance` picks which copies the
+        record carries; `storage_platform` and `root_uri` need
+        `instance=InstanceView.filter`.
+        """
+        params = _build_view_params(
+            shape, instance, root_uri, storage_platform, send_platform=True
+        )
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
-        params: dict = {}
         if not exclude_tombstoned:
             params["exclude_tombstoned"] = False
         if include_lineage:
@@ -947,21 +1899,71 @@ class AsyncDatasetClient(_AsyncBase):
         if include_collections:
             params["include_collections"] = True
         response = await self._get(f"{_PREFIX}/{dataset_id}", params=params)
-        return DatasetWithRelationsResponse.model_validate(response.json())
+        return _dataset_with_relations_model(DatasetShape(shape)).model_validate(
+            response.json()
+        )
 
-    async def create(self, dataset: DatasetRequest) -> DatasetResponse:
-        response = await self._post(f"{_PREFIX}/", json=dataset.model_dump(mode="json"))
-        return DatasetResponse.model_validate(response.json())
+    @overload
+    async def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+    ) -> DatasetResponse: ...
+
+    @overload
+    async def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v2],
+    ) -> DatasetResponseV2: ...
+
+    async def create(
+        self,
+        dataset: DatasetRequest,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
+    ) -> DatasetResponse | DatasetResponseV2:
+        response = await self._post(
+            f"{_PREFIX}/",
+            params=_shape_params(shape),
+            json=dataset.model_dump(mode="json"),
+        )
+        return _dataset_model(DatasetShape(shape)).model_validate(response.json())
+
+    @overload
+    async def update(
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v1] = ...,
+    ) -> DatasetResponse: ...
+
+    @overload
+    async def update(
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: Literal[DatasetShape.v2],
+    ) -> DatasetResponseV2: ...
 
     async def update(
-        self, ref: str | DatasetRef, dataset: DatasetRequest
-    ) -> DatasetResponse:
+        self,
+        ref: str | DatasetRef,
+        dataset: DatasetRequest,
+        *,
+        shape: DatasetShape = DatasetShape.v1,
+    ) -> DatasetResponse | DatasetResponseV2:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)
         response = await self._patch(
             f"{_PREFIX}/{dataset_id}",
+            params=_shape_params(shape),
             json=dataset.model_dump(mode="json", exclude_unset=True),
         )
-        return DatasetResponse.model_validate(response.json())
+        return _dataset_model(DatasetShape(shape)).model_validate(response.json())
 
     async def delete(self, ref: str | DatasetRef) -> None:
         dataset_id = ref if isinstance(ref, str) else await self._resolve(ref)

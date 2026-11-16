@@ -14,7 +14,12 @@ from catalog_client.exceptions import (
     CopyError,
     NotFoundError,
 )
-from catalog_client.models.asset import AssetType, LocationScope, StoragePlatform
+from catalog_client.models.asset import (
+    AssetType,
+    DataAssetRequest,
+    LocationScope,
+    StoragePlatform,
+)
 from catalog_client.models.copy import (
     CopyEntry,
     CopyErrorCode,
@@ -29,10 +34,21 @@ from catalog_client.models.dataset import (
     DatasetListSortOption,
     DatasetModality,
     DatasetRef,
+    DatasetRequest,
     DatasetResponse,
+    DatasetResponseV2,
     DatasetSearchHit,
     DatasetSearchResponse,
+    DatasetShape,
     DatasetType,
+    DatasetWithRelationsResponse,
+    DatasetWithRelationsResponseV2,
+)
+from catalog_client.models.instance import (
+    DatasetInstanceResponse,
+    DatasetInstanceUpdate,
+    DatasetInstanceWithLocationsResponse,
+    InstanceView,
 )
 from catalog_client.models.metadata import ObservationUnit
 from catalog_client.models.pagination import (
@@ -645,7 +661,7 @@ def test_copy_sends_copy_type_as_query_param(httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=COPY_URL, status_code=201, json=COPY_RESPONSE)
     result = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
     assert isinstance(result, DatasetCopyResponse)
-    assert result.model_dump(mode="json") == COPY_RESPONSE
+    assert result.model_dump(mode="json", exclude_none=True) == COPY_RESPONSE
     request = httpx_mock.get_request()
     assert request.url.params["copy_type"] == "fork"
     body = json.loads(request.content)
@@ -663,7 +679,7 @@ def test_copy_replay_parses_the_200_the_same_way_as_the_201(httpx_mock: HTTPXMoc
     """
     httpx_mock.add_response(url=COPY_URL, status_code=200, json=COPY_RESPONSE)
     replayed = _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
-    assert replayed.model_dump(mode="json") == COPY_RESPONSE
+    assert replayed.model_dump(mode="json", exclude_none=True) == COPY_RESPONSE
 
 
 def test_copy_refusal_raises_copy_error_with_code(httpx_mock: HTTPXMock):
@@ -841,3 +857,336 @@ def test_copy_entry_is_a_data_asset_without_the_glob_fields():
     assert not shared & {"includes_pattern", "excludes_pattern"}
     assert "includes_pattern" not in CopyEntry.model_fields
     assert "excludes_pattern" not in CopyEntry.model_fields
+
+
+# --- Instances and shape=v2 ---
+
+INSTANCE = {
+    "id": "inst-1",
+    "created_at": "2024-01-01T00:00:00Z",
+    "last_modified_at": "2024-01-01T00:00:00Z",
+    "tombstoned": False,
+    "dataset_id": "uuid-1",
+    "root_uri": "s3://bkt/ds/",
+    "storage_platform": "s3",
+    "is_primary": True,
+    "metadata": {},
+}
+ASSET = {
+    "id": "asset-1",
+    "created_at": "2024-01-01T00:00:00Z",
+    "last_modified_at": "2024-01-01T00:00:00Z",
+    "tombstoned": False,
+    "location_uri": "s3://bkt/ds/a.h5ad",
+    "asset_type": "file",
+    "storage_platform": "s3",
+    "dataset_id": "uuid-1",
+    "instance_id": "inst-1",
+    "relative_path": "a.h5ad",
+}
+INSTANCE_WITH_LOCATIONS = {**INSTANCE, "locations": [ASSET]}
+DATASET_V1_WITH_INSTANCES = {
+    **DATASET_RESPONSE,
+    "locations": [ASSET],
+    "instances": [INSTANCE_WITH_LOCATIONS],
+}
+DATASET_V2 = {
+    **{k: v for k, v in DATASET_RESPONSE.items() if k != "locations"},
+    "instances": [INSTANCE_WITH_LOCATIONS],
+}
+INSTANCES_URL = f"{BASE}datasets/uuid-1/instances"
+
+
+def _dataset_request() -> DatasetRequest:
+    return DatasetRequest.model_validate(
+        {
+            "canonical_id": "ds-001",
+            "name": "Test",
+            "project": "atlas",
+            "modality": "sequencing",
+            "governance": {
+                "data_steward": "team-data",
+                "is_pii": False,
+                "is_phi": False,
+            },
+            "metadata": {},
+            "locations": [
+                {
+                    "location_uri": "s3://bkt/ds/a.h5ad",
+                    "asset_type": "file",
+                    "storage_platform": "s3",
+                }
+            ],
+        }
+    )
+
+
+def test_get_default_sends_no_shape_or_instance_params(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=f"{BASE}datasets/uuid-1", json=DATASET_V1_WITH_INSTANCES
+    )
+    result = _sync_client().get("uuid-1")
+    assert isinstance(result, DatasetWithRelationsResponse)
+    assert result.locations[0].instance_id == "inst-1"
+    assert result.instances[0].locations[0].relative_path == "a.h5ad"
+
+
+def test_get_shape_v2_parses_instances_without_flat_locations(
+    httpx_mock: HTTPXMock,
+):
+    httpx_mock.add_response(json=DATASET_V2)
+    result = _sync_client().get(
+        "uuid-1", shape=DatasetShape.v2, instance=InstanceView.all
+    )
+    assert isinstance(result, DatasetWithRelationsResponseV2)
+    assert not hasattr(result, "locations")
+    assert result.instances[0].is_primary is True
+    params = httpx_mock.get_request().url.params
+    assert params["shape"] == "v2"
+    assert params["instance"] == "all"
+
+
+def test_get_instance_filter_sends_platform_and_root(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(json=DATASET_V1_WITH_INSTANCES)
+    _sync_client().get(
+        "uuid-1",
+        instance=InstanceView.filter,
+        storage_platform=StoragePlatform.s3,
+        root_uri="s3://bkt/",
+    )
+    params = httpx_mock.get_request().url.params
+    assert params["instance"] == "filter"
+    assert params["storage_platform"] == "s3"
+    assert params["root_uri"] == "s3://bkt/"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"instance": InstanceView.filter},
+        {"root_uri": "s3://bkt/"},
+        {"storage_platform": StoragePlatform.s3},
+        {"instance": InstanceView.all, "root_uri": "s3://bkt/"},
+    ],
+)
+def test_get_and_list_reject_misused_instance_filters(kwargs):
+    """Each of these is a 422 server-side; none should cost a round trip."""
+    with pytest.raises(CatalogUsageError):
+        _sync_client().get("uuid-1", **kwargs)
+    with pytest.raises(CatalogUsageError):
+        _sync_client().list(**kwargs)
+
+
+def test_list_shape_v2_parses_v2_records(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=DATASETS_LIST_URL, json={**PAGINATED_RESPONSE, "results": [DATASET_V2]}
+    )
+    page = _sync_client().list(shape=DatasetShape.v2)
+    assert isinstance(page.results[0], DatasetWithRelationsResponseV2)
+
+
+def test_iter_all_keeps_shape_on_every_page(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        json={"limit": 1, "results": [DATASET_V2], "next_cursor": "c1"}
+    )
+    httpx_mock.add_response(json={"limit": 1, "results": [DATASET_V2]})
+    results = list(_sync_client().iter_all(shape=DatasetShape.v2, limit=1))
+    assert len(results) == 2
+    assert all(r.url.params["shape"] == "v2" for r in httpx_mock.get_requests())
+
+
+def test_search_hydrated_shape_v2_parses_v2_records(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(json={"total": 1, "limit": 10, "results": [DATASET_V2]})
+    page = _sync_client().search(hydrate=True, shape=DatasetShape.v2)
+    assert isinstance(page.results[0], DatasetResponseV2)
+
+
+def test_search_instance_filter_is_satisfied_by_the_platform_filter(
+    httpx_mock: HTTPXMock,
+):
+    """On search, storage_platform is the location filter and the instance filter."""
+    httpx_mock.add_response(json={"total": 0, "limit": 10, "results": []})
+    _sync_client().search(storage_platform="s3", instance=InstanceView.filter)
+    params = httpx_mock.get_request().url.params
+    assert params.get_list("storage_platform") == ["s3"]
+    assert params["instance"] == "filter"
+
+
+def test_search_rejects_root_uri_without_instance_filter():
+    with pytest.raises(CatalogUsageError):
+        _sync_client().search(root_uri="s3://bkt/")
+
+
+def test_resolve_shape_v2_parses_v2_records(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(json={"total": 1, "limit": 50, "results": [DATASET_V2]})
+    page = _sync_client().resolve(
+        "s3://bkt/ds/a.h5ad", shape=DatasetShape.v2, instance=InstanceView.all
+    )
+    assert isinstance(page.results[0], DatasetResponseV2)
+    params = httpx_mock.get_request().url.params
+    assert params["shape"] == "v2"
+    assert params["instance"] == "all"
+
+
+def test_create_and_update_shape_v2_return_v2(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="POST", json=DATASET_V2, status_code=201)
+    httpx_mock.add_response(method="PATCH", json=DATASET_V2)
+    request = _dataset_request()
+    client = _sync_client()
+    assert isinstance(client.create(request, shape=DatasetShape.v2), DatasetResponseV2)
+    assert isinstance(
+        client.update("uuid-1", request, shape=DatasetShape.v2), DatasetResponseV2
+    )
+    assert all(r.url.params["shape"] == "v2" for r in httpx_mock.get_requests())
+
+
+def test_create_default_sends_no_shape(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(method="POST", json=DATASET_RESPONSE, status_code=201)
+    result = _sync_client().create(_dataset_request())
+    assert isinstance(result, DatasetResponse)
+    assert "shape" not in httpx_mock.get_request().url.params
+
+
+def test_list_instances_sends_filters(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        json={"dataset_id": "uuid-1", "results": [INSTANCE_WITH_LOCATIONS]}
+    )
+    result = _sync_client().list_instances(
+        "uuid-1",
+        storage_platform=StoragePlatform.s3,
+        is_primary=False,
+        include_tombstoned=True,
+    )
+    assert result.results[0].locations[0].id == "asset-1"
+    request = httpx_mock.get_request()
+    assert request.url.path == "/api/v1/datasets/uuid-1/instances"
+    assert dict(request.url.params) == {
+        "storage_platform": "s3",
+        "is_primary": "false",
+        "include_tombstoned": "true",
+    }
+
+
+def test_get_instance(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f"{INSTANCES_URL}/inst-1", json=INSTANCE_WITH_LOCATIONS)
+    result = _sync_client().get_instance("uuid-1", "inst-1")
+    assert isinstance(result, DatasetInstanceWithLocationsResponse)
+    assert result.root_uri == "s3://bkt/ds/"
+
+
+def test_update_instance_sends_only_the_fields_set(httpx_mock: HTTPXMock):
+    """A null the caller never set would clear a known asset's checksum."""
+    httpx_mock.add_response(
+        method="PATCH", url=f"{INSTANCES_URL}/inst-1", json=INSTANCE_WITH_LOCATIONS
+    )
+    update = DatasetInstanceUpdate(
+        locations=[
+            DataAssetRequest(
+                location_uri="s3://bkt/ds/b.h5ad",
+                asset_type=AssetType.file,
+                storage_platform=StoragePlatform.s3,
+            )
+        ]
+    )
+    _sync_client().update_instance("uuid-1", "inst-1", update)
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {
+        "locations": [
+            {
+                "location_uri": "s3://bkt/ds/b.h5ad",
+                "asset_type": "file",
+                "storage_platform": "s3",
+            }
+        ]
+    }
+
+
+def test_instance_update_requires_a_location():
+    with pytest.raises(PydanticValidationError):
+        DatasetInstanceUpdate(locations=[])
+
+
+def test_promote_and_delete_instance_routes(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="POST", url=f"{INSTANCES_URL}/inst-2/promote", json=INSTANCE
+    )
+    httpx_mock.add_response(
+        method="DELETE", url=f"{INSTANCES_URL}/inst-1", status_code=204
+    )
+    httpx_mock.add_response(
+        method="DELETE",
+        url=f"{INSTANCES_URL}/inst-2/assets/asset-9",
+        status_code=204,
+    )
+    client = _sync_client()
+    assert isinstance(
+        client.promote_instance("uuid-1", "inst-2"), DatasetInstanceResponse
+    )
+    assert client.delete_instance("uuid-1", "inst-1") is None
+    assert client.delete_instance_asset("uuid-1", "inst-2", "asset-9") is None
+
+
+MIRROR_RESPONSE = {
+    "copy_type": "mirror",
+    "dataset_id": "uuid-1",
+    "project": "CryoET Data Portal",
+    "canonical_id": "DS-10053",
+    "version": "2.0.0",
+    "instance_id": "inst-2",
+}
+
+
+def test_copy_mirror_returns_instance_and_no_edge(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=COPY_URL, status_code=201, json=MIRROR_RESPONSE)
+    request = COPY_REQUEST.model_copy(
+        update={"lineage_metadata": None, "copied_from_instance_id": "inst-1"}
+    )
+    result = _sync_client().copy("uuid-1", request, copy_type=CopyType.mirror)
+    assert result.instance_id == "inst-2"
+    assert result.lineage_edge_id is None
+    body = json.loads(httpx_mock.get_request().content)
+    assert "lineage_metadata" not in body
+    assert body["copied_from_instance_id"] == "inst-1"
+
+
+def test_copy_identity_mismatch_is_a_known_code(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        url=COPY_URL,
+        status_code=400,
+        json={
+            "detail": {
+                "code": "IDENTITY_MISMATCH",
+                "message": "mirror identity differs from the source",
+                "retryable": False,
+            }
+        },
+    )
+    with pytest.raises(CopyError) as exc_info:
+        _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.mirror)
+    assert exc_info.value.code is CopyErrorCode.IDENTITY_MISMATCH
+
+
+async def test_async_get_shape_v2_and_list_instances(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f"{BASE}datasets/uuid-1?shape=v2", json=DATASET_V2)
+    httpx_mock.add_response(
+        url=INSTANCES_URL,
+        json={"dataset_id": "uuid-1", "results": [INSTANCE_WITH_LOCATIONS]},
+    )
+    async with _async_client() as client:
+        dataset = await client.get("uuid-1", shape=DatasetShape.v2)
+        instances = await client.list_instances("uuid-1")
+    assert isinstance(dataset, DatasetWithRelationsResponseV2)
+    assert instances.results[0].id == "inst-1"
+
+
+async def test_async_iter_resolve_keeps_shape(httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        json={"total": 1, "limit": 50, "results": [DATASET_V2], "next_cursor": "c"}
+    )
+    httpx_mock.add_response(json={"total": 1, "limit": 50, "results": []})
+    async with _async_client() as client:
+        results = [
+            r async for r in client.iter_resolve("s3://bkt/", shape=DatasetShape.v2)
+        ]
+    assert isinstance(results[0], DatasetResponseV2)
+    assert all(r.url.params["shape"] == "v2" for r in httpx_mock.get_requests())

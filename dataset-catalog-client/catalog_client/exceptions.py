@@ -94,7 +94,7 @@ class CopyValidationError(CopyError, ValidationError):
 
 
 class CopyServerError(CopyError, CatalogServerError):
-    """5xx — includes the retryable LINEAGE_WRITE_FAILED and 501 mirror refusal."""
+    """5xx — includes the retryable LINEAGE_WRITE_FAILED, and the 501 a pre-mirror deployment sends."""
 
 
 def _copy_error(status_code: int, detail: dict) -> CopyError:
