@@ -52,7 +52,6 @@ class RecordStatus(str, enum.Enum):
     tombstoned = "tombstoned"
 
 
-# What a write may set; tombstoning is delete()'s alone.
 WritableRecordStatus = Literal[RecordStatus.draft, RecordStatus.active]
 
 
@@ -153,7 +152,7 @@ class DatasetRequest(_DatasetBase):
     )
     record_status: WritableRecordStatus | None = Field(
         default=None,
-        description="draft or active. A draft is listed and searchable, but the catalog returns its locations empty until it is set to active. Omitted, a new dataset is active and an update keeps the current status. Use delete() to tombstone",
+        description="draft or active. A draft dataset is listed and searchable, but the catalog hides its locations until the draft is promoted to active. If this param is omitted, we default to active. Use delete() to tombstone.",
     )
 
     @field_validator("cross_db_references", mode="before")
