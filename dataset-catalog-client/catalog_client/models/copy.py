@@ -18,8 +18,10 @@ class CopyType(str, enum.Enum):
 class CopyErrorCode(str, enum.Enum):
     """Why a copy was refused. Only LINEAGE_WRITE_FAILED is worth retrying."""
 
+    # Sent only by deployments that predate mirror support.
     COPY_TYPE_NOT_ENABLED = "COPY_TYPE_NOT_ENABLED"
     IDENTITY_UNCHANGED = "IDENTITY_UNCHANGED"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
     IDENTITY_TAKEN = "IDENTITY_TAKEN"
     IDENTITY_TOMBSTONED = "IDENTITY_TOMBSTONED"
     SOURCE_NOT_FOUND = "SOURCE_NOT_FOUND"
@@ -32,9 +34,9 @@ class CopyErrorCode(str, enum.Enum):
 class CopyProvenance(BaseModel):
     """How the transfer was performed, as far as the caller cares to say.
 
-    Lands on the lineage edge rather than the dataset: it describes the act
-    of copying, which happened once, not the data, which outlives the job
-    that moved it. Extra keys are sent through untouched; `_catalog` is
+    Lands on the lineage edge for a fork and on the instance for a mirror,
+    never on the dataset: it describes the act of copying, which happened
+    once, not the data, which outlives the job that moved it. Extra keys are sent through untouched; `_catalog` is
     reserved and the server overwrites it.
     """
 
@@ -90,6 +92,8 @@ class DatasetCopyRequest(BaseModel):
 
     No field names the source — the path does — and none carries
     `governance`, which a copy inherits: a transfer does not widen access.
+    For a mirror, `project`, `canonical_id` and `version` must equal the
+    source's: they assert which record is being mirrored.
     Extras are forbidden here as they are server-side, so a stray key fails
     locally instead of coming back as a 422.
     """
@@ -109,8 +113,13 @@ class DatasetCopyRequest(BaseModel):
         min_length=1,
         description="One entry per asset at the destination. The set need not cover the source",
     )
-    lineage_metadata: CopyProvenance = Field(
-        description="Transfer provenance, recorded on the lineage edge"
+    lineage_metadata: CopyProvenance | None = Field(
+        default=None,
+        description="Transfer provenance, recorded on the edge for a fork and on the instance for a mirror",
+    )
+    copied_from_instance_id: str | None = Field(
+        default=None,
+        description="Live instance of the source the bytes were read from; defaults to its serving instance",
     )
 
 
@@ -122,8 +131,12 @@ class DatasetCopyResponse(BaseModel):
     project: str = Field(description="The copy's project")
     canonical_id: str = Field(description="The copy's canonical id")
     version: str = Field(description="The copy's version")
-    lineage_edge_id: str = Field(
-        description="The copy_of edge from the source to the copy"
+    lineage_edge_id: str | None = Field(
+        default=None,
+        description="Fork only: the copy_of edge from the source to the copy",
+    )
+    instance_id: str | None = Field(
+        default=None, description="Mirror only: the instance registered for the copy"
     )
 
 

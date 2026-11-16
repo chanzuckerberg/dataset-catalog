@@ -502,13 +502,17 @@ for dataset in client.datasets.iter_resolve("s3://bucket/proj", scope=LocationSc
 ### Register a copy of a dataset
 
 Records the catalog side of a transfer that has *already happened* — the catalog
-never moves bytes. The destination record and the `copy_of` lineage edge tying it
-to the source are written in one transaction, so a copy and the record of whose
-copy it is are never stored apart.
+never moves bytes. `copy_type` is required and never inferred:
 
-`copy_type` is required and never inferred. `fork` gives the copy an identity of
-its own; `mirror` (another location of the same dataset) is not enabled yet and
-returns `COPY_TYPE_NOT_ENABLED`.
+- **`fork`** — the copy becomes a dataset of its own, written in one transaction
+  with the `copy_of` lineage edge tying it to the source. The response carries
+  `lineage_edge_id`.
+- **`mirror`** — the copy is another *instance* of the same dataset: no second
+  record, no edge. `project`, `canonical_id` and `version` must equal the source's
+  (a mismatch is `IDENTITY_MISMATCH`), and the response carries `instance_id`. See
+  [Dataset instances](#dataset-instances-and-shapev2).
+
+Deployments that predate mirror support refuse it with `501 COPY_TYPE_NOT_ENABLED`.
 
 ```python
 from catalog_client import (
@@ -547,6 +551,39 @@ result = client.datasets.copy(
 print(result.dataset_id, result.lineage_edge_id)
 ```
 
+A mirror takes the same request, with the source's own identity. `lineage_metadata`
+is optional for both types (on a mirror it is recorded on the instance), and
+`copied_from_instance_id` names the instance the bytes were read from when it is not
+the source's primary:
+
+```python
+result = client.datasets.copy(
+    source.id,
+    DatasetCopyRequest(
+        project=source.project,
+        canonical_id=source.canonical_id,
+        version=source.version,
+        storage_platform=StoragePlatform.sf_hpc,
+        root_uri="/hpc/projects/cryoet/10053/",
+        entries=[
+            CopyEntry(
+                location_uri="/hpc/projects/cryoet/10053/tomogram.zarr",
+                relative_path="tomogram.zarr",
+                source_relative_path="tomogram.zarr",
+                asset_type=AssetType.folder,
+                storage_platform=StoragePlatform.sf_hpc,
+            )
+        ],
+    ),
+    copy_type=CopyType.mirror,
+)
+print(result.instance_id)   # lineage_edge_id is None for a mirror
+```
+
+A mirror is idempotent on `(dataset, storage_platform, root_uri)`. Entries need not
+cover the source: register a partial mirror and fill it in later with
+`datasets.update_instance()`.
+
 There is no `governance` field: a copy inherits the source's, because a transfer
 does not widen access. Sending one is a `422`.
 
@@ -557,8 +594,8 @@ transfer wrote. Naming a path the source lacks is an error, so a typo does not
 quietly become destination-only content.
 
 **Replaying is safe.** The destination identity is the idempotency key, so a replay
-returns the same ids and writes nothing. Correct a registered copy with
-`datasets.update()`, not by replaying with changed entries.
+returns the same ids and writes nothing. Correct a fork with `datasets.update()` and a
+mirror with `datasets.update_instance()`, not by replaying with changed entries.
 
 A refusal raises `CopyError`, which carries the code to branch on and says whether
 retrying can help:
@@ -578,7 +615,7 @@ except CopyError as exc:
 A refusal is still the status code it arrived as. `CopyAuthenticationError` (401) is
 also an `AuthenticationError`, `CopyNotFoundError` (404) a `NotFoundError`,
 `CopyValidationError` (422) a `ValidationError`, and `CopyServerError` (5xx, including
-the retryable `LINEAGE_WRITE_FAILED` and the `501` mirror refusal) a
+the retryable `LINEAGE_WRITE_FAILED` and a pre-mirror deployment's `501`) a
 `CatalogServerError` — so existing handlers and retry wrappers built on those keep
 working, and `CopyError` is there when you want the code:
 
@@ -591,6 +628,125 @@ except CatalogServerError as exc:
     if getattr(exc, "retryable", False):
         ...          # LINEAGE_WRITE_FAILED — nothing was written, retry as-is
 ```
+
+### Dataset instances and `shape=v2`
+
+An *instance* is one copy of a dataset's bytes: a `root_uri` on one
+`storage_platform`, holding its own assets. Every dataset has a **primary** instance
+(the one a dataset write rewrites); mirrors registered through `copy()` add more.
+Equal `relative_path`s across instances are the same content in different places.
+
+**Choosing the body.** The dataset reads — `get`, `list`, `iter_all`, `resolve`,
+`iter_resolve`, hydrated `search`/`iter_search` — and `create`/`update` take
+`shape=`. The default `DatasetShape.v1` is unchanged: a flat `locations` list, plus
+`instances`. `DatasetShape.v2` drops `locations` and returns the `…V2` models, whose
+assets live only under `instances`. The return type follows `shape`, so type
+checkers see the right model without a cast:
+
+```python
+from catalog_client import DatasetShape, InstanceView, StoragePlatform
+
+ds = client.datasets.get(dataset_id, shape=DatasetShape.v2)   # DatasetWithRelationsResponseV2
+for inst in ds.instances:                                     # primary first
+    print(inst.storage_platform, inst.root_uri, inst.is_primary, len(inst.locations))
+```
+
+**Choosing the instances.** `instance=` picks which copies a body carries, in either
+shape: `InstanceView.default` (the primary — or, on search/resolve, the instances a
+location filter matched through), `.all`, or `.filter`. A filter needs
+`storage_platform`, `root_uri` (a prefix), or both:
+
+```python
+ds = client.datasets.get(
+    dataset_id,
+    instance=InstanceView.filter,
+    storage_platform=StoragePlatform.sf_hpc,
+)
+```
+
+On `get` and `list`, `storage_platform` and `root_uri` select instances only — they
+do not filter datasets — so passing either without `instance=InstanceView.filter`
+raises `CatalogUsageError` (the server would `422`). On `search` and `resolve`,
+`storage_platform` stays the location filter and narrows the instances too when
+`instance=InstanceView.filter`; only `root_uri` is new there.
+
+**Managing instances.** These routes are not paginated — a dataset has a handful of
+copies.
+
+```python
+# GET /datasets/{id}/instances — primary first, each with its assets
+listing = client.datasets.list_instances(
+    dataset_id,
+    storage_platform=StoragePlatform.s3,   # optional
+    is_primary=False,                      # optional: only mirrors
+    include_tombstoned=True,               # optional: removed copies too
+)
+
+# GET /datasets/{id}/instances/{instance_id}
+inst = client.datasets.get_instance(dataset_id, instance_id)
+
+# PATCH — matched by location_uri: new URIs are added, known ones updated.
+# Assets you omit stay; only fields you set are sent.
+from catalog_client import DataAssetRequest, DatasetInstanceUpdate
+
+inst = client.datasets.update_instance(
+    dataset_id,
+    instance_id,
+    DatasetInstanceUpdate(locations=[
+        DataAssetRequest(
+            location_uri="/hpc/projects/cryoet/10053/annotations/",
+            asset_type=AssetType.folder,
+            storage_platform=StoragePlatform.sf_hpc,
+        ),
+    ]),
+)
+
+# POST …/promote — make this copy the primary; the old primary is demoted
+client.datasets.promote_instance(dataset_id, instance_id)
+
+# DELETE — tombstone one asset of one copy, or the whole copy
+client.datasets.delete_instance_asset(dataset_id, instance_id, asset_id)
+client.datasets.delete_instance(dataset_id, instance_id)
+```
+
+`list_instances()` returns a `DatasetInstanceListResponse`:
+
+```json
+{
+  "dataset_id": "01a1d90d-81de-7bc2-92d4-e88de833c93f",
+  "results": [
+    {
+      "id": "01a1d90d-81df-7faf-a03f-ca1b9a45dbed",
+      "dataset_id": "01a1d90d-81de-7bc2-92d4-e88de833c93f",
+      "root_uri": "s3://cryoet-data-portal-public/10463/",
+      "storage_platform": "s3",
+      "is_primary": true,
+      "metadata": {},
+      "tombstoned": false,
+      "created_at": "2026-11-14T07:55:03.520347Z",
+      "last_modified_at": "2026-11-14T07:55:03.520347Z",
+      "locations": [
+        {
+          "id": "01a1d90d-81de-7322-8440-e5e71fa947d1",
+          "location_uri": "s3://cryoet-data-portal-public/10463/25jan16a_Position_103_3/",
+          "relative_path": "25jan16a_Position_103_3/",
+          "instance_id": "01a1d90d-81df-7faf-a03f-ca1b9a45dbed",
+          "asset_type": "folder",
+          "storage_platform": "s3"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`get_instance()` and `update_instance()` return one entry of `results`
+(`DatasetInstanceWithLocationsResponse`); `promote_instance()` returns it without
+`locations` (`DatasetInstanceResponse`). The server refuses two deletes with HTTP
+`409` — the primary instance (promote another first, or delete the dataset), and an
+instance's last live asset. The SDK does not map `409` to a `CatalogError`, so it
+surfaces as `httpx.HTTPStatusError`. Removing a primary asset does not cascade to the
+mirrors.
 
 ### Update a dataset
 
@@ -1097,6 +1253,11 @@ sensitivity unknown.
 | `DatasetCreate`                | **Deprecated** — alias for `DatasetRequest`, will be removed           |
 | `DatasetResponse`              | Return value from create / update                                      |
 | `DatasetWithRelationsResponse` | Return value from get / list (includes optional lineage + collections) |
+| `DatasetResponseV2` / `DatasetWithRelationsResponseV2` | The same, under `shape=DatasetShape.v2`: no `locations`, assets only under `instances` |
+| `DatasetInstanceResponse`      | One copy of a dataset — `root_uri`, `storage_platform`, `is_primary`   |
+| `DatasetInstanceWithLocationsResponse` | An instance with its `locations`; the entries of a dataset's `instances` |
+| `DatasetInstanceListResponse`  | `datasets.list_instances()` result — `dataset_id`, `results` (not paginated) |
+| `DatasetInstanceUpdate`        | `datasets.update_instance()` body — `locations` to add or update       |
 | `DataAssetRequest`             | Asset entry inside `DatasetRequest.locations`                          |
 | `DataAssetResponse`            | Asset entry inside response `locations`                                |
 | `GovernanceMetadata`           | Access control and ownership info; `data_steward`, `is_pii` and `is_phi` are required |
@@ -1117,6 +1278,7 @@ sensitivity unknown.
 | `CursorPaginatedResponse[T]`   | Wrapper for `datasets.list()` — adds `next_cursor`; `total` and `offset` are nullable |
 | `DatasetSearchResponse[T]`     | `datasets.search()` result — `total` (nullable), `limit`, `next_cursor`, `results`, `facets` (no `offset`). Generic over the hit type, so `hydrate` is validated rather than guessed |
 | `DatasetSearchPage`            | What `search()` returns: `DatasetSearchResponse[DatasetResponse]` when `hydrate=True`, `DatasetSearchResponse[DatasetSearchHit]` otherwise |
+| `DatasetSearchPageV2`          | What `search(shape=DatasetShape.v2)` returns — the hydrated arm holds `DatasetResponseV2` |
 | `DatasetSearchHit`             | Lightweight search hit; extra `fields=` land in `model_extra`          |
 
 ### Enums
@@ -1132,7 +1294,9 @@ sensitivity unknown.
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
 | `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |
 | `LocationScope` | `exact`, `ancestor`, `descendant` — `datasets.resolve()` |
-| `CopyType` | `fork`, `mirror` — `datasets.copy()`; `mirror` is not enabled yet |
-| `CopyErrorCode` | the nine refusal codes on `CopyError.code` |
+| `CopyType` | `fork`, `mirror` — `datasets.copy()` |
+| `CopyErrorCode` | the refusal codes on `CopyError.code`; `COPY_TYPE_NOT_ENABLED` comes only from pre-mirror deployments |
+| `DatasetShape` | `v1` (default), `v2` — the `shape=` of dataset reads and writes |
+| `InstanceView` | `default`, `all`, `filter` — the `instance=` of dataset reads |
 | `DatasetSortOption` | `relevance`, `alphabetical`, `last_modified`, `newest`, `oldest` — `datasets.search()`; unset omits the param |
 | `DatasetListSortOption` | `last_modified`, `newest`, `oldest` — `datasets.list()`; unset omits the param |

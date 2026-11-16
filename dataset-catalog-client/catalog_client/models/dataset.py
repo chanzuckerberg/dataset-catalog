@@ -14,6 +14,7 @@ from catalog_client.models.governance import (
     GovernanceMetadata,
     GovernanceMetadataResponse,
 )
+from catalog_client.models.instance import DatasetInstanceWithLocationsResponse
 from catalog_client.models.metadata import DatasetMetadata
 from catalog_client.models.quality import DataQualityChecks
 
@@ -50,6 +51,17 @@ class RecordStatus(str, enum.Enum):
     draft = "draft"
     active = "active"
     tombstoned = "tombstoned"
+
+
+class DatasetShape(str, enum.Enum):
+    """Which dataset body a read returns.
+
+    `v1` carries the selected instances' assets in a flat `locations` list
+    as well as under `instances`; `v2` drops `locations`.
+    """
+
+    v1 = "v1"
+    v2 = "v2"
 
 
 class DatasetSortOption(str, enum.Enum):
@@ -170,7 +182,7 @@ class DatasetCreate(DatasetRequest):
         super().__init__(**data)
 
 
-class DatasetResponse(_DatasetBase):
+class _DatasetResponseBase(_DatasetBase):
     governance: GovernanceMetadataResponse = Field(  # type: ignore[assignment]
         description="Access control and compliance metadata"
     )
@@ -193,12 +205,12 @@ class DatasetResponse(_DatasetBase):
     last_modified_at: datetime.datetime = Field(
         description="Timestamp when the dataset was last updated"
     )
-    locations: list[DataAssetResponse] = Field(
-        default_factory=list,
-        description="List of data assets that comprise this dataset",
-    )
     record_version: int = Field(
         description="Internal version number for tracking changes to the record"
+    )
+    instances: list[DatasetInstanceWithLocationsResponse] = Field(
+        default_factory=list,
+        description="The copies the instance view selected (default: the primary), primary first, each with its locations",
     )
 
     @field_validator("cross_db_references", mode="before")
@@ -210,9 +222,20 @@ class DatasetResponse(_DatasetBase):
         return v
 
 
-class DatasetWithRelationsResponse(DatasetResponse):
-    """DatasetResponse extended with optional sideloaded relations."""
+class DatasetResponse(_DatasetResponseBase):
+    """A dataset in the default `shape=v1` body."""
 
+    locations: list[DataAssetResponse] = Field(
+        default_factory=list,
+        description="Assets of the selected instances, flattened",
+    )
+
+
+class DatasetResponseV2(_DatasetResponseBase):
+    """A dataset in the `shape=v2` body: assets live only under `instances`."""
+
+
+class _DatasetRelations(BaseModel):
     incoming_lineage: list[LineageEdgeResponse] | None = Field(
         default=None,
         description="Lineage edges where this dataset is the destination (what this dataset was derived from)",
@@ -226,16 +249,25 @@ class DatasetWithRelationsResponse(DatasetResponse):
     )
 
 
-DatasetWithRelationsResponse.model_rebuild(
-    _types_namespace={
-        "LineageEdgeResponse": __import__(
-            "catalog_client.models.lineage", fromlist=["LineageEdgeResponse"]
-        ).LineageEdgeResponse,
-        "CollectionResponse": __import__(
-            "catalog_client.models.collection", fromlist=["CollectionResponse"]
-        ).CollectionResponse,
-    }
-)
+# The mixin comes first so its fields serialise after the dataset's own.
+class DatasetWithRelationsResponse(_DatasetRelations, DatasetResponse):
+    """DatasetResponse extended with optional sideloaded relations."""
+
+
+class DatasetWithRelationsResponseV2(_DatasetRelations, DatasetResponseV2):
+    """DatasetResponseV2 extended with optional sideloaded relations."""
+
+
+_RELATION_TYPES = {
+    "LineageEdgeResponse": __import__(
+        "catalog_client.models.lineage", fromlist=["LineageEdgeResponse"]
+    ).LineageEdgeResponse,
+    "CollectionResponse": __import__(
+        "catalog_client.models.collection", fromlist=["CollectionResponse"]
+    ).CollectionResponse,
+}
+DatasetWithRelationsResponse.model_rebuild(_types_namespace=_RELATION_TYPES)
+DatasetWithRelationsResponseV2.model_rebuild(_types_namespace=_RELATION_TYPES)
 
 
 class DatasetSearchHit(BaseModel):
@@ -323,6 +355,9 @@ class DatasetSearchResponse(BaseModel, Generic[_SearchResultT]):
 # literal can narrow on it without an isinstance check.
 DatasetSearchPage = (
     DatasetSearchResponse[DatasetResponse] | DatasetSearchResponse[DatasetSearchHit]
+)
+DatasetSearchPageV2 = (
+    DatasetSearchResponse[DatasetResponseV2] | DatasetSearchResponse[DatasetSearchHit]
 )
 
 
