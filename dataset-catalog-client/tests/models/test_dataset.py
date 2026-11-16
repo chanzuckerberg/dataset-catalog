@@ -260,3 +260,21 @@ def test_data_asset_response_carries_instance_fields():
     )
     assert asset.instance_id == "inst-1"
     assert asset.relative_path == "cells.parquet"
+
+
+@pytest.mark.parametrize("status", ["draft", RecordStatus.active])
+def test_request_record_status_accepts_draft_and_active(status):
+    assert (
+        _minimal_create(record_status=status).model_dump(mode="json")["record_status"]
+        == RecordStatus(status).value
+    )
+
+
+def test_request_record_status_rejects_tombstoned():
+    """The server 422s it too; delete() is the only way to tombstone."""
+    with pytest.raises(ValidationError):
+        _minimal_create(record_status=RecordStatus.tombstoned)
+
+
+def test_request_record_status_is_omitted_when_unset():
+    assert "record_status" not in _minimal_create().model_dump(exclude_unset=True)

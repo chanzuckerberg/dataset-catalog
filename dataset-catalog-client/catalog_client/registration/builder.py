@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from catalog_client.models.asset import AssetType, DataAssetRequest, StoragePlatform
-from catalog_client.models.dataset import DatasetModality, DatasetRef, DatasetType
+from catalog_client.models.dataset import (
+    DatasetModality,
+    DatasetRef,
+    DatasetType,
+    RecordStatus,
+)
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
 from catalog_client.models.metadata import (
@@ -64,6 +69,13 @@ class RegistrationBuilder:
 
     def as_latest(self, value: bool = True) -> RegistrationBuilder:
         self._request.is_latest = value
+        return self
+
+    def as_draft(self, value: bool = True) -> RegistrationBuilder:
+        """Register as a draft, whose locations stay hidden until it is set to active."""
+        self._request.record_status = (
+            RecordStatus.draft if value else RecordStatus.active
+        )
         return self
 
     def of_type(self, dataset_type: DatasetType) -> RegistrationBuilder:

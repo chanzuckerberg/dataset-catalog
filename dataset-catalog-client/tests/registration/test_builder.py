@@ -265,3 +265,22 @@ def test_builder_without_governance_fails_at_request_conversion():
     )
     with pytest.raises(ValidationError, match="data_steward"):
         req.to_dataset_request()
+
+
+@pytest.mark.parametrize(
+    ("as_draft", "expected"),
+    [((), None), ((True,), "draft"), ((False,), "active")],
+    ids=["unset", "draft", "active"],
+)
+def test_builder_as_draft_sets_record_status(as_draft, expected):
+    builder = (
+        _builder()
+        .with_location(
+            "s3://x", asset_type=AssetType.file, storage_platform=StoragePlatform.s3
+        )
+        .with_governance(data_steward="team-data", is_pii=False, is_phi=False)
+    )
+    if as_draft:
+        builder = builder.as_draft(*as_draft)
+    request = builder.build().to_dataset_request()
+    assert request.model_dump(mode="json")["record_status"] == expected

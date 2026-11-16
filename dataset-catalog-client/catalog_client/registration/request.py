@@ -8,6 +8,7 @@ from catalog_client.models.dataset import (
     DatasetRef,
     DatasetRequest,
     DatasetType,
+    WritableRecordStatus,
 )
 from catalog_client.models.governance import GovernanceMetadata
 from catalog_client.models.lineage import LineageType
@@ -57,6 +58,7 @@ class RegistrationRequest:
     doi: str | None = None
     cross_db_references: list[str] | str | None = None
     metadata_schema: list[str] | None = None
+    record_status: WritableRecordStatus | None = None
     lineage: list[LineageSpec] = field(default_factory=list)
 
     def to_dataset_request(self) -> DatasetRequest:
@@ -82,4 +84,5 @@ class RegistrationRequest:
             doi=self.doi,
             cross_db_references=self.cross_db_references,
             metadata_schema=self.metadata_schema,
+            record_status=self.record_status,
         )
