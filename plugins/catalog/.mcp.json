@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "ols": {
+    "catalog-docs": {
       "type": "http",
-      "url": "https://www.ebi.ac.uk/ols4/api/mcp"
+      "url": "https://docs.biohub.ai/authed/mcp"
     }
   }
 }

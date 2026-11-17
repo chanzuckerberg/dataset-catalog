@@ -1,212 +1,105 @@
-# Registering datasets from Claude Code (`catalog-register`)
+# Registering datasets from Claude Code (`/catalog:register`)
 
-The `catalog-register` skill takes metadata you already have — a CSV row, a LIMS export, a JSON
-blob, a spreadsheet — maps it onto the current catalog schema, and writes a **runnable registration
-script** you keep. You describe your data in a Claude Code session; the mapping code, the schema
-lookup and the ontology ids come back as a file you can read, re-run and commit.
+`/catalog:register` turns a conversation about your data into a **registration script you own**:
+a copy of the plugin's template plus a `mapping.json` with your answers, dry-run against a dev or
+staging catalog before you see it. You run the script yourself, by hand or from your pipeline. Claude never
+registers data on its own.
 
-It is the **only write path** in the `catalog` plugin. Everything read-only — lookups, project
-listings, lineage, facet discovery, ontology-expanded search — goes through the `catalog-read` and
-`catalog-search` skills, which share a `GET`-only operating contract
-([`plugins/catalog/reference/read-contract.md`](../../../plugins/catalog/reference/read-contract.md)).
+This page is the human-facing guide. The instructions Claude follows live in the plugin's skills
+([`registration-script`](../../../plugins/catalog/skills/registration-script/SKILL.md),
+[`catalog-guide`](../../../plugins/catalog/skills/catalog-guide/SKILL.md)) and the
+[catalog docs](https://docs.biohub.ai); you do not need to read the skills.
 
-This page is the human-facing guide. The skill's own instructions live in
-[`plugins/catalog/skills/catalog-register/SKILL.md`](../../../plugins/catalog/skills/catalog-register/SKILL.md);
-you do not need to read them to use it.
+## Before you start
 
-**When it fires.** Ask for any of: "map this metadata onto the catalog schema", "ingest this export
-into the catalog", "fit this to the dataset schema", "fill in the experiment / sample /
-data_summary fields", "write me a script to register this dataset".
+- The plugin installed ([root README](../../../README.md#claude-code-plugin)).
+- `CATALOG_API_URL` and `CATALOG_API_TOKEN` exported for a dev or staging catalog, from your shell
+  init file rather than Claude Code settings (see the [catalog docs](https://docs.biohub.ai) auth pages).
+  The script and the plugin use whatever catalog that pair names; there is no default. `/catalog:whoami`
+  shows the environment and whether the token can write; write permission is
+  fixed when a token is issued, so reissue it after you are granted write access.
+- `catalog-client` 1.3.0+ installed from a release tag, in a virtual environment. Claude asks
+  before installing anything.
 
----
+## What happens
 
-## Prerequisites
+1. **Questions, one at a time.** Where the data is and what it is; what one dataset should be
+   (Claude proposes, you confirm); governance (`is_pii`, `is_phi`, license, data steward, owner);
+   collections and lineage parents (Claude searches, you confirm); where the script will run; and
+   where to write it.
+2. **A one-screen summary** to confirm, including your token status.
+3. **The `script-writer` agent** copies the template, fills in only the data-specific functions and
+   `mapping.json`, lints the script, and dry-runs it against your dev or staging catalog: `--limit 1` first, then
+   everything.
+4. **The `metadata-reviewer` agent** checks one dry-run payload for problems a validator can't see
+   (granularity, implausible values, guessed governance, missing file formats or sizes, duplicates).
+5. **You run it**: a real run against dev or staging, then, with `CATALOG_API_URL` and
+   `CATALOG_API_TOKEN` pointed at prod (a production credential, usually from your pipeline),
+   `--dry-run` and then the real run.
 
-### 1. Token and URL, in your Claude Code environment settings
+## What it will not guess
 
-```text
-CATALOG_API_TOKEN   required — issue one at <base_url>/tokens in a logged-in browser (SSO-gated)
-CATALOG_API_URL     optional — base URL; defaults to production when unset
-```
+| Value | Why |
+| --- | --- |
+| `is_pii`, `is_phi`, `license`, `data_steward` | Decided by consent and data source. Unanswered values stay `null` and the record fails validation instead of shipping a guess. |
+| Storage platform for `/hpc/...` or `https://` paths | Three HPC sites mount the same paths; internal platforms sit behind URLs. |
+| What one dataset is | Your modelling decision (e.g. screen, plate, well, or field of view for an OME-Zarr store). |
+| Ontology ids | Set only on an exact label match from an ontology lookup; otherwise the label is kept and the gap is listed for you. |
+| Zarr format version | Read from the store's metadata (e.g. `ome-zarr v0.4`); asked for when the store doesn't record it. |
 
-The token is read from the environment and is never typed into chat or passed on a command line.
-Write permission is decided by your Okta group membership **at the moment the token is issued** and
-baked in, so a read-only token stays read-only even after you join the group — reissue it.
+File formats reuse the spelling already in the production catalog (you may be asked to paste
+`catalog facets --fields file_format --all-versions` run against prod), are lowercase otherwise,
+and keep compression out of the format: `fastq.gz` is `file_format=fastq`, `encoding=gzip`.
 
-### 2. Python 3.11+ with `catalog_client` installed
-
-The skill's script imports `catalog_client`; the plugin does not bundle it. Install **a tagged
-release, never `main`** — `main` is unreleased and may not match any published schema version. Full
-detail in [`plugins/catalog/reference/install.md`](../../../plugins/catalog/reference/install.md):
+## The script
 
 ```bash
-# resolve the latest released tag (requires the gh CLI):
-TAG=$(gh release list --repo chanzuckerberg/dataset-catalog \
-  --json tagName,publishedAt \
-  --jq 'map(select(.tagName | startswith("catalog-client-v"))) | sort_by(.publishedAt) | reverse | .[0].tagName')
-echo "latest release: $TAG"   # e.g. catalog-client-v0.7.0
-
-# standalone — create and activate a venv FIRST, then install that exact tag:
-python -m venv .venv            # or: uv venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install "git+https://github.com/chanzuckerberg/dataset-catalog.git@${TAG}#subdirectory=dataset-catalog-client"
+python register.py --dry-run    # validate locally, plan, write payloads; no writes
+python register.py              # register
 ```
 
-In this monorepo, `uv sync --all-groups` handles it — then run via `uv run python ...`.
+Both target whatever `CATALOG_API_URL` and `CATALOG_API_TOKEN` name, and the first log line says
+which environment that is (`env=staging url=…`). To target another catalog for one command, prefix
+it, keeping the token value off the command line:
 
-The skill will ask before installing anything and will not install into a system interpreter
-silently.
-
-### 3. The plugin itself
-
-```text
-/plugin marketplace add chanzuckerberg/dataset-catalog
-/plugin install catalog@dataset-catalog
-/reload-plugins        # only needed if you were already in a session
+```bash
+CATALOG_API_URL=https://datacatalog.prod-sci-data.prod.czi.team \
+CATALOG_API_TOKEN="$(cat ~/.config/catalog/prod-token)" python register.py --dry-run
 ```
 
-Terminal equivalents, the update flow and the full component list are in the
-[root README](../../../README.md#claude-code-plugin).
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--dry-run` | off | Read-only plan (`create` / `update` / `skip` per record); payloads go to `--payload-dir` |
+| `--config` | `mapping.json` beside the script | Data-specific values |
+| `--limit N` | all | Process the first N records only |
+| `--workers N` | 4 | Concurrent records, 1–16 |
+| `--payload-dir` | `catalog-dry-run/` | Where `--dry-run` writes each payload |
 
----
+It ends with a summary such as `48 registered, 2 failed: ...`; after a real run it also prints a
+link per registered project to the catalog UI, `<CATALOG_API_URL>/search?sort=last_modified&project=<project>`,
+with the most recently modified records first. It exits 0 when every record
+succeeded, 1 when any failed (the others still went through), and 2 on configuration, credential, or
+client/API compatibility errors. Re-running is safe: existing records are updated, not duplicated.
+An update writes the record's complete current state, so files dropped from the source drop off the
+record too.
 
-## The loop
+Only the functions between the `AGENT-EDITABLE` markers and `mapping.json` are yours to change. The
+rest is shared code (credentials, retries, the compatibility check, batching, the summary); the
+plugin flags edits to it, and asking Claude for a change routes it through `script-writer`.
 
-The skill drives [`register_dataset.py`](../../../plugins/catalog/skills/catalog-register/scripts/register_dataset.py),
-which is both the template you end up with and the harness it iterates in. It takes no `--help`;
-three modes, and the default is the safe one:
+## Safety nets
 
-| Command | What it does |
-| --- | --- |
-| `--fields` | Prints the **live** schema field tree, read off the installed Pydantic models. `*` marks required, `[extra=allow]` marks blocks that accept extra keys. Never stale. |
-| *(no flag)* / `--dry-run` | Validates the mapping with the same Pydantic rules the API enforces, prints the payload, runs the whole submit path against an in-process fake catalog, and reports coverage. No token, no network. |
-| `--submit` | Registers for real. Needs `CATALOG_API_URL` and `CATALOG_API_TOKEN`; exits 2 without them. |
+- When Claude runs the script against a prod URL, or one whose host names no environment, without
+  `--dry-run`, a hook refuses unless a `--dry-run` of the same script and `mapping.json` against that
+  same URL passed in this Claude Code install; editing either file after the dry run requires a new
+  one. Dev and staging runs are not blocked.
+- A hook refuses to write a literal API token into any file.
+- Keep production credentials out of Claude Code entirely: see the
+  [root README](../../../README.md#keep-production-credentials-out-of-claude-code).
 
-What happens in order:
-
-1. **The schema gets resolved, twice over.** The `schema/` folder on GitHub says which version is
-   *current* and what each field *means*; `--fields` says what actually validates. If the installed
-   client's `record_schema_version` default disagrees with the current row, the client is stale and
-   gets upgraded before any mapping — the installed client always wins on conflict.
-2. **The mapping gets written.** Only two functions change: `load_source()` points at your data,
-   `build_request()` maps one source field per builder call. Everything else in the file is harness.
-3. **Dry-run, and iterate until coverage is clean.** This is the step that catches mistakes:
-
-   ```text
-   [mapping valid] schema=v1.6.0  canonical_id=evican-brightfield-batch-01  locations=1
-   [coverage] 26 mapped + 2 dropped of 28 source fields
-     ✓ every source field is mapped or explicitly dropped
-     metadata blocks populated: experiment, sample, data_summary
-   ```
-
-   A field that is neither mapped nor explicitly dropped is reported as **SILENTLY LOST**, by name.
-   That is the point of the report: every field becomes a deliberate decision — mapped, kept as an
-   extra, or `src.drop(...)`-ed. Losing one by accident is not possible without being told.
-4. **Preflight, then submit.** The shared preflight is read-only, auto-approved by the plugin's
-   hook, and confirms the token actually works — so a 401 lands before a full mapping, not halfway
-   through a write:
-
-   ```bash
-   export CATALOG_API_URL=https://your-catalog.example.com CATALOG_API_TOKEN=...
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py"   # 0 = ready, 2 = fix config/token
-   python register_dataset.py --submit
-   ```
-
-`.submit()` runs a duplicate check (`GET /api/datasets/` on the signature) and then creates
-(`POST /api/datasets/`), returning the new `dataset_id`.
-
----
-
-## A worked session
-
-> **You:** I have a LIMS export at `~/exports/batch42.csv`, one row per plate. Map it onto the
-> catalog schema and register it to staging.
-
-What comes back, in order:
-
-- The current schema version, and a note if your installed client is behind it.
-- A **field-by-field mapping proposal** — each source column, the schema slot it lands in, and the
-  builder call that puts it there. Columns with no named slot are called out, not dropped.
-- Questions on anything it will not guess (below).
-- A dry-run: the JSON payload plus the coverage report. Read the payload once — a value at an
-  unexpected nesting level is the signature of a typo'd field name.
-- The script itself, and a `--submit` invocation once you approve.
-
-Ontology labels are resolved through the plugin's `ols` MCP server (EBI OLS4), so `Homo sapiens`
-becomes `NCBITaxon:9606`. A label that does not resolve keeps the label and leaves `ontology_id`
-unset — a CURIE is never fabricated, and unresolved labels are listed for you to fill in by hand.
-
-Fields with no named slot are not thrown away either. Most metadata blocks are `extra="allow"`, so
-sample-ish fields ride along on `.with_sample(...)`, measurements on `.with_data_summary(...)`,
-experiment detail on `.with_experiment(...)`, and anything genuinely homeless lands under the single
-`additional_metadata` key. `governance` is the exception: it is fixed-shape, and access/licence/
-compliance fields that do not match a named governance field go to custom metadata instead.
-
----
-
-## What it will stop and ask you
-
-Being asked is not the skill being unhelpful — each of these is a value that is wrong more often
-than it is right when inferred, and wrong here means a data-quality bug in a shared catalog.
-
-| It asks about | Why it will not guess |
-| --- | --- |
-| `license` | Not derivable from the data. Only a value you confirm gets written. |
-| `is_pii` / `is_phi` | Both are required since schema v1.6.0, with no "unknown" to fall back to. `False` is a claim, not a default. |
-| `storage_platform` | A `/hpc/...` path does not identify which of `sf_hpc` / `chi_hpc` / `ny_hpc`; an `https://` URI is not necessarily `external`. |
-| `.zarr` granularity | One record per screen, plate, well or FOV is your modelling decision, and it also decides what each `location` points at. |
-| Derived `organism` / `tissue` / `disease` | Only filled when *formally entailed* via the OLS hierarchy (e.g. a cell line pinning its species), never by intuition — and the rule is shown to you before it is coded. |
-| Duplicate handling | See the table below; the default raises. |
-| A virtual environment | Before any install, if one is not already active. |
-
-Two values it does *not* ask about: `access_scope` is always `internal`, and
-`record_schema_version` is set by the model.
-
----
-
-## Re-running: duplicate handling
-
-Identity is the signature — `canonical_id` + `version` + `project`, plus each asset's
-`location_uri` / `asset_type` / `size_bytes` / `checksum` / `checksum_alg`. Pick those from stable
-source ids so a re-run updates instead of duplicating. Changing one tombstones the old record and
-mints a new UUID; that is intended, and it is how history is preserved.
-
-| Call | Behaviour |
-| --- | --- |
-| `submit()` | **Error** — raises `DuplicateDatasetError`. The default; use it when each run should be a new record. |
-| `submit(error_on_duplicate=False)` | **Skip** — returns the existing id, writes nothing. |
-| `submit(error_on_duplicate=False, update_if_exists=True)` | **Update** — PATCHes the existing record in place. |
-
-Only one may be `True`; both raises `ValueError`. Note that an update writes exactly what you send —
-omitted fields are not backfilled, and omitted locations are tombstoned. Always send complete state.
-
----
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
-| --- | --- |
-| `KeyError` / `None` in `build_request` | Source data is missing a field the mapping assumes. Use `src.get("x")` for optional fields. |
-| `ValidationError: ... Field required` on `--dry-run` | A required block was not mapped: `governance`, `metadata`, or at least one `location`. |
-| `ValueError: 'x' is not a valid DatasetModality` | Map the source value onto a real enum member: `imaging`, `sequencing`, `mass spec`, `text`, `unknown`. |
-| A value landed at the wrong nesting level in the payload | A typo'd field name, silently kept as an extra because the block is `extra="allow"`. Cross-check against `--fields`. |
-| A block you filled in twice is missing half its content | `with_experiment` / `with_sample` / `with_data_summary` **replace** their block. Build each in a single call. |
-| `DuplicateDatasetError` on `--submit` | A record with the same signature exists. Choose skip or update from the table above. |
-| `ValueError: update_if_exists and error_on_duplicate cannot both be True` | `update_if_exists=True` requires `error_on_duplicate=False`. |
-| `AuthenticationError` (401) | Bad or expired token — reissue at `<base_url>/tokens`. If it says *token owner does not have write permissions*, the token was issued before you had write access; reissue it. |
-| `preflight` exits 2 | `CATALOG_API_TOKEN` unset, or the catalog rejected it. Guidance is on stderr. |
-
----
+When something fails, `/catalog:debug` with the error text gets a diagnosis and a proposed fix.
 
 ## See also
 
-- [Claude Code plugin](../../../README.md#claude-code-plugin) — install, update, and the full
-  component list (three skills, the `catalog-reader` subagent, the `ols` MCP server, the read hook)
-- [`plugins/catalog/reference/read-contract.md`](../../../plugins/catalog/reference/read-contract.md) —
-  the `GET`-only contract the read skills share
-- [`schema/README.md`](../../../schema/README.md) — which schema version is current, and what each
-  field means
-- [`dataset-catalog-client/USAGE.md`](../../../dataset-catalog-client/USAGE.md) — the Python SDK, for
-  writing registration code without the skill
-- [`plugins/catalog/reference/install.md`](../../../plugins/catalog/reference/install.md) — client
-  install detail
+- [`schema/README.md`](../../../schema/README.md): which schema version is current and what each field means
+- [`dataset-catalog-client/USAGE.md`](../../../dataset-catalog-client/USAGE.md): the Python SDK

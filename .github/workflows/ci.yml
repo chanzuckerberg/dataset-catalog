@@ -41,3 +41,22 @@ jobs:
           enable-cache: true
       - name: Run pytest
         run: uv run --python ${{ matrix.python-version }} --group dev --extra checksum pytest
+
+  plugin-test:
+    name: Plugin tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: plugins/catalog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Plugin code is stdlib-only, so no install step: the suite proves that.
+      - name: Run unittest
+        run: python -m unittest discover -s tests -t tests -v
