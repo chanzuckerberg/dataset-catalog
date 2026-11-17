@@ -350,14 +350,15 @@ client = CatalogClient(
 ```
 
 **Startup compatibility check** — raises `CompatibilityError` when the server's
-`DatasetRequest.record_schema_version` is newer than the one this client writes:
+`DatasetRequest.record_schema_version` is a newer *major* version than the one
+this client writes; a newer minor or patch version only logs a warning:
 
 ```python
 from catalog_client import check_compatibility
 
 check_compatibility(client)
-# CompatibilityError: server expects record schema v1.8.0, installed
-# catalog-client supports v1.7.0 — upgrade catalog-client
+# CompatibilityError: server expects record schema v2.0.0, installed
+# catalog-client supports v1.8.0 — upgrade catalog-client
 ```
 
 `acheck_compatibility(async_client)` is the `AsyncCatalogClient` variant.
@@ -1194,7 +1195,7 @@ except LineageResolutionError as e:
 try:
     check_compatibility(client)
 except CompatibilityError as e:
-    raise SystemExit(str(e))  # server expects a newer record schema — upgrade catalog-client
+    raise SystemExit(str(e))  # server expects a newer major record schema — upgrade catalog-client
 ```
 
 `ValidationError` above is the catalog's `422` wrapper, raised when the API rejects a

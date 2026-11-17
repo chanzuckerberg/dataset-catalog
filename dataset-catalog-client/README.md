@@ -107,7 +107,7 @@ failure-isolated batches, and a startup compatibility check:
 from catalog_client import CatalogClient, RetryPolicy, check_compatibility, run_batch
 
 with CatalogClient(base_url="...", api_token="...", retry=RetryPolicy()) as client:
-    check_compatibility(client)  # raises CompatibilityError if the server's schema is newer
+    check_compatibility(client)  # raises CompatibilityError if the server's schema is a newer major version
     print(client.plan(request).action)  # "create" | "update" | "skip"; GET requests only
     report = run_batch(requests, lambda r: client.register(r, error_on_duplicate=False),
                        key=lambda r: r.canonical_id)

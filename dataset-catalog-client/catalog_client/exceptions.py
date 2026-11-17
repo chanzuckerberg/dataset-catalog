@@ -138,7 +138,7 @@ class DuplicateDatasetError(CatalogError):
 
 
 class CompatibilityError(CatalogError):
-    """The server expects a newer record schema than this client writes."""
+    """The server expects a newer major record schema version than this client writes."""
 
 
 def validation_error_lines(exc: pydantic.ValidationError) -> list[str]:

@@ -1,4 +1,4 @@
-"""Startup check that the server does not expect a newer record schema than this client writes."""
+"""Startup check that the server does not expect a newer major record schema than this client writes."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _compare(spec: Any) -> None:
     installed = DatasetRequest.model_fields["record_schema_version"].default
     server = _server_schema_version(spec)
     server_semver = _parse(server) if server else None
-    if server is None or server_semver is None:
+    if server_semver is None:
         _logger.warning(
             "server OpenAPI spec does not report a parseable "
             "DatasetRequest.record_schema_version (got %r); skipping compatibility check",
@@ -50,11 +50,19 @@ def _compare(spec: Any) -> None:
         )
         return
     installed_semver = _parse(installed)
-    if installed_semver is not None and server_semver > installed_semver:
+    if installed_semver is None or server_semver <= installed_semver:
+        return
+    if server_semver[0] > installed_semver[0]:
         raise CompatibilityError(
             f"server expects record schema {server}, installed catalog-client "
             f"supports {installed} — upgrade catalog-client"
         )
+    _logger.warning(
+        "server record schema %s is newer than installed catalog-client's %s; "
+        "consider upgrading catalog-client",
+        server,
+        installed,
+    )
 
 
 def check_compatibility(client: CatalogClient) -> None:
