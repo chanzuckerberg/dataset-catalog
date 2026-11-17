@@ -2,9 +2,29 @@
 
 ## Computed fields
 
-- **Size.** `size_bytes` is the asset's total bytes: the file size, or the sum over every file in a
-  folder. Take it from storage metadata (`ChecksumResult.total_size`), not by reading the bytes.
-  Unknown is unset, never `0`.
+- **Size.** Recommended: set `size_bytes` on every asset. It is the asset's total bytes: the file
+  size, or the sum over every file in a folder. Take it from storage metadata, not by reading the
+  bytes: `ChecksumResult.total_size` when you compute a checksum, otherwise `os.stat` sizes summed
+  while walking, or object sizes from an S3 listing. Skipping the checksum is no reason to skip the
+  size. Leave it unset (never `0`) only when the script cannot reach the data (not mounted where it
+  runs, no read permission), and tell the user why.
+- **File format.** Set `file_format` on every asset; the search filter on it is an exact match, so
+  reuse the spelling the catalog already has.
+  1. **Match production first.** List existing values with
+     `catalog facets --fields file_format --all-versions` against the production catalog (a
+     read). If the session's `CATALOG_API_URL` is not prod, don't switch credentials: ask the user
+     to run that command with their prod credentials and paste the output. Compare loosely
+     (ignore case, `-`, `_`, `.`, spaces and any version suffix, so `OME.Zarr` matches
+     `ome-zarr v0.4`) and reuse the stored name. If several spellings match, take the lowercase one.
+  2. **Otherwise lowercase** the extension's format name: `TIFF` → `tiff`.
+  3. **Zarr stores carry their format version**: `zarr`, `ome-zarr`, `spatialdata-zarr` and
+     `anndata-zarr` become `<format> v0.x`, e.g. `ome-zarr v0.4`. Read the version from the store's
+     metadata (`.zattrs` / `zarr.json`: `multiscales[].version` or `ome.version` for OME-NGFF,
+     `spatialdata_attrs.version`, `encoding-version` for AnnData). If no version is stored, ask the
+     user; never guess one.
+  4. **Compression goes in `encoding`, not the format**: drop the compression suffix from
+     `file_format` and record the codec in `encoding`. `fastq.gz` → `file_format="fastq"`,
+     `encoding="gzip"`. Likewise `.bz2` → `bzip2`, `.xz` → `xz`, `.zst` → `zstd`.
 - **Checksums.** Prefer the client: `catalog checksum <path|s3://...>` from a shell, or
   `catalog_client.utils.checksum.compute_checksum(path, algorithm=...)` in code. Both stream in
   chunks and never load a file whole. Record the algorithm with the digest (`result.content_digest`,

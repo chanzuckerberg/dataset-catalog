@@ -347,6 +347,7 @@ def build_assets(src: Source, config: dict) -> list[DataAssetRequest]:
             asset_type=AssetType.folder,
             storage_platform=StoragePlatform(assets["storage_platform"]),
             file_format=assets.get("file_format"),
+            encoding=assets.get("encoding"),
             size_bytes=result.total_size,
             checksum=result.content_digest,
             checksum_alg=result.algorithm.value,

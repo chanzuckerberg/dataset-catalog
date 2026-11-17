@@ -32,7 +32,7 @@ This page is the human-facing guide. The instructions Claude follows live in the
    `mapping.json`, lints the script, and dry-runs it against your dev or staging catalog: `--limit 1` first, then
    everything.
 4. **The `metadata-reviewer` agent** checks one dry-run payload for problems a validator can't see
-   (granularity, implausible values, guessed governance, duplicates).
+   (granularity, implausible values, guessed governance, missing file formats or sizes, duplicates).
 5. **You run it**: a real run against dev or staging, then, with `CATALOG_API_URL` and
    `CATALOG_API_TOKEN` pointed at prod (a production credential, usually from your pipeline),
    `--dry-run` and then the real run.
@@ -45,6 +45,11 @@ This page is the human-facing guide. The instructions Claude follows live in the
 | Storage platform for `/hpc/...` or `https://` paths | Three HPC sites mount the same paths; internal platforms sit behind URLs. |
 | What one dataset is | Your modelling decision (e.g. screen, plate, well, or field of view for an OME-Zarr store). |
 | Ontology ids | Set only on an exact label match from an ontology lookup; otherwise the label is kept and the gap is listed for you. |
+| Zarr format version | Read from the store's metadata (e.g. `ome-zarr v0.4`); asked for when the store doesn't record it. |
+
+File formats reuse the spelling already in the production catalog (you may be asked to paste
+`catalog facets --fields file_format --all-versions` run against prod), are lowercase otherwise,
+and keep compression out of the format: `fastq.gz` is `file_format=fastq`, `encoding=gzip`.
 
 ## The script
 

@@ -24,6 +24,13 @@ review the values it would send; a dry run of a generated script writes them to 
      checks these with the installed client; report its `failed:` lines as Blocking.
    - Granularity: the docs' "Is this a dataset?" guide.
    - Plausibility: size 0, future dates, a description repeating the name.
+   - Asset `file_format` unset: Warning, since the model allows `null` and nothing else catches it.
+     Suggest the format the asset's file extensions show, for the user to confirm. Also warn when a
+     set value breaks the File format rules in `fields.md` (production spelling, lowercase, zarr
+     version, compression suffix left in `file_format` instead of `encoding`).
+   - Asset `size_bytes` unset: Warning; it is recommended and computable from storage metadata
+     (`registration-script` reference `fields.md`, Size). Acceptable only when the data cannot be
+     reached from where the script runs.
    - Governance: flag any value that looks defaulted or guessed; never propose a value.
    - Additional metadata that has a proper field in the schema.
    - Duplicates: `catalog resolve <location_uri>` per asset (`registration-script`, search patterns).

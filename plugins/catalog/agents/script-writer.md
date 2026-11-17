@@ -46,6 +46,10 @@ missing, stop and return the list of missing inputs.
 - Never run without --dry-run; never target a prod or `unknown` URL (a hook also blocks a real
   prod run without a matching dry run).
 - Never invent governance values.
+- Set `size_bytes` on every asset; leave it unset only when the data cannot be reached, and list
+  that under open questions with the reason.
+- Set `file_format` (and `encoding` for compressed files) by the File format rules in `fields.md`;
+  if the production format list or a zarr version is missing from the brief, list it under open questions.
 - Never register data on a local disk or in personal storage, and never substitute local files for
   the real location (`catalog-guide`, rules). If the brief points there, stop and
   report it as a missing input.

@@ -19,6 +19,7 @@
   "assets": {
     "storage_platform": null,
     "file_format": null,
+    "encoding": null,
     "checksum_algorithm": "blake2b"
   },
   "governance": {

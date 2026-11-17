@@ -10,6 +10,9 @@ the user has already answered or that `$ARGUMENTS` settles.
    (confirm which HPC site), data type and file formats. If the data is on a local disk or in
    personal storage, stop: explain the shared-storage rule (`catalog-guide`, rules) and continue only
    once it is on shared storage. Look at the location read-only (names, counts, sizes) to ground later questions.
+   Settle each file format by the File format rules (`registration-script` reference `fields.md`):
+   if the session is not pointed at prod, ask the user to paste
+   `catalog facets --fields file_format --all-versions` run against prod.
 2. **Granularity**: propose what one dataset is, using the docs' "Is this a dataset?" guide, and get
    the user's confirmation.
 3. **Governance**: ask for `is_pii`, `is_phi`, `license`, `data_steward`, and `data_owner`. Never infer
