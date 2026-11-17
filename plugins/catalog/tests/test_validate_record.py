@@ -1,10 +1,12 @@
-import copy
 import json
+import os
+import shutil
+import stat
 import tempfile
 import unittest
 from pathlib import Path
 
-from _support import SCRIPTS, run_script
+from _support import SCRIPTS, clean_env, run_script
 
 VALIDATE = SCRIPTS / "validate_record.py"
 
@@ -14,19 +16,6 @@ RECORD = {
     "project": "CellXGene",
     "modality": "sequencing",
     "dataset_type": "processed",
-    "governance": {
-        "is_pii": False,
-        "is_phi": False,
-        "data_steward": "atlas-team",
-        "access_scope": "internal",
-    },
-    "metadata": {
-        "sample": {
-            "organism": [{"label": "Mus musculus", "ontology_id": "NCBITaxon:10090"}],
-            "donor_id": "D2",
-        },
-        "additional_metadata": {"run": 7},
-    },
     "locations": [
         {
             "location_uri": "s3://b/k.h5ad",
@@ -39,82 +28,57 @@ RECORD = {
 
 
 class ValidateRecordTest(unittest.TestCase):
-    def validate(self, record, *args: str):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-            handle.write(record if isinstance(record, str) else json.dumps(record))
-        self.addCleanup(Path(handle.name).unlink)
-        return run_script(VALIDATE, args=[handle.name, "--no-cli", *args])
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
 
-    def test_valid_record(self):
+    def fake_cli(self, stdout: str, code: int) -> None:
+        cli = self.bin / "catalog"
+        cli.write_text(
+            f"#!/bin/sh\ncat >/dev/null\nprintf '%s' '{stdout}'\nexit {code}\n"
+        )
+        cli.chmod(cli.stat().st_mode | stat.S_IEXEC)
+
+    def validate(self, record, *args: str):
+        path = self.tmp / "record.json"
+        path.write_text(record if isinstance(record, str) else json.dumps(record))
+        env = clean_env(PATH=f"{self.bin}{os.pathsep}/usr/bin:/bin")
+        return run_script(VALIDATE, args=[str(path), *args], env=env)
+
+    def test_cli_valid(self):
+        self.fake_cli("valid\n", 0)
         result = self.validate(RECORD)
         self.assertEqual((result.returncode, result.stdout.strip()), (0, "valid"))
 
-    def test_errors_use_dotted_paths_with_numeric_indices(self):
-        bad = copy.deepcopy(RECORD)
-        del bad["locations"][0]["location_uri"]
-        bad["modality"] = "mass_spec"
-        bad["governance"]["is_pii"] = None
-        bad["locations"].append(
-            {
-                "location_uri": "x",
-                "asset_type": "file",
-                "storage_platform": "s3",
-                "size_bytes": "big",
-            }
-        )
-        lines = self.validate(bad).stdout.splitlines()
-        self.assertIn("locations.0.location_uri: Field required", lines)
-        self.assertIn(
-            "modality: Input should be 'imaging', 'sequencing', 'mass spec', 'text' or 'unknown'",
-            lines,
-        )
-        self.assertIn("governance.is_pii: Input should be a valid boolean", lines)
-        self.assertIn("locations.1.size_bytes: Input should be a valid integer", lines)
-
-    def test_unknown_keys_on_closed_models_are_blocking(self):
-        bad = copy.deepcopy(RECORD)
-        bad["descripton"] = "typo"
-        bad["locations"][0]["checksum_algo"] = "md5"
-        result = self.validate(bad)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("descripton: Extra inputs are not permitted", result.stdout)
-        self.assertIn(
-            "locations.0.checksum_algo: Extra inputs are not permitted", result.stdout
-        )
-
-    def test_extra_keys_allowed_in_open_blocks(self):
-        self.assertEqual(
-            self.validate(RECORD).returncode, 0
-        )  # sample.donor_id, metadata.additional_metadata
-
-    def test_required_list_minimum_and_nested_required(self):
-        bad = copy.deepcopy(RECORD)
-        bad["locations"] = []
-        del bad["governance"]["data_steward"]
-        out = self.validate(bad).stdout
-        self.assertIn(
-            "locations: List should have at least 1 item after validation, not 0", out
-        )
-        self.assertIn("governance.data_steward: Field required", out)
-
-    def test_non_object_payload_reports_root(self):
-        result = self.validate([1, 2])
+    def test_cli_errors_are_reported(self):
+        self.fake_cli("modality: Input should be sequencing or imaging\n", 1)
+        result = self.validate(RECORD)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(
-            result.stdout.strip(), "<root>: Input should be a valid dictionary"
+            result.stdout.strip(), "modality: Input should be sequencing or imaging"
         )
 
-    def test_other_models(self):
-        edge = {
-            "source_dataset_id": "a",
-            "destination_dataset_id": "b",
-            "lineage_type": "derived_from",
-        }
-        out = self.validate(edge, "--model", "lineage").stdout
+    def test_without_cli_says_only_shared_storage_was_checked(self):
+        result = self.validate(RECORD)
+        self.assertEqual(result.returncode, 0)
         self.assertIn(
-            "lineage_type: Input should be 'version_of', 'transformed_from' or 'copy_of'",
-            out,
+            "valid (shared-storage rule only: the `catalog` CLI is not installed",
+            result.stdout,
         )
+        result = self.validate(RECORD, "--no-cli")
+        self.assertIn("--no-cli was passed", result.stdout)
+
+    def test_other_models_check_shared_storage_only(self):
+        self.fake_cli("should not run\n", 1)
+        asset = {"location_uri": "/Users/me/run/", "storage_platform": "other"}
+        result = self.validate(asset, "--model", "asset")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stdout.startswith("location_uri: not registrable"))
+        edge = {"source_dataset_id": "a", "destination_dataset_id": "b"}
+        result = self.validate(edge, "--model", "lineage")
+        self.assertIn("lineage records have no CLI check", result.stdout)
 
     def test_unreadable_input_exits_2(self):
         self.assertEqual(self.validate("{nope").returncode, 2)

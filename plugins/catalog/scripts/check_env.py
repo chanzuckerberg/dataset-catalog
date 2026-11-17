@@ -3,14 +3,12 @@
 
 Without any network call: names the catalog environment the session points at
 (from CATALOG_API_URL), then checks that a token is set, catalog-client is
-installed and new enough for the registration template, and the field
-reference is not older than the installed client. Prints one environment line,
+installed and new enough for the registration template. Prints one environment line,
 plus one line per problem for Claude to relay when relevant. Always exits 0.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -26,7 +24,6 @@ from _env import (  # noqa: E402
     version_tuple,
 )
 
-FIELDS_JSON = PLUGIN_ROOT / "skills" / "registration-script" / "fields.json"
 MIN_CLIENT = "1.3.0"
 
 
@@ -64,16 +61,6 @@ def problems() -> list[str]:
             f"catalog-client {installed} is older than {MIN_CLIENT}, which the registration template requires; "
             "upgrade before running a generated script (registration-script skill)."
         )
-    if installed:
-        try:
-            stamp = json.loads(FIELDS_JSON.read_text())["stamp"].get("client_version")
-        except (OSError, ValueError, KeyError, AttributeError):
-            stamp = None
-        if stamp and version_tuple(installed) > version_tuple(stamp):
-            found.append(
-                f"fields.json was generated from catalog-client {stamp} but {installed} is installed; "
-                "fields may be missing — see the registration-script skill on staleness."
-            )
     return found
 
 

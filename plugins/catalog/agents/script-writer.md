@@ -21,9 +21,9 @@ missing, stop and return the list of missing inputs.
    `mapping.json` to the output path. Edit only the AGENT-EDITABLE functions and `mapping.json`.
    Existing script: make the requested change in those same places only.
 3. Read `${CLAUDE_PLUGIN_ROOT}/skills/registration-script/reference/fields.md` before filling any
-   field (the preloaded skill does not include it). Field shapes come from `fields.json`; look up
-   meanings and examples in the docs (`catalog-docs` MCP). Use the client for every field it
-   supports; for fields marked API-only in `fields.json`, report them instead of writing raw HTTP.
+   field (the preloaded skill does not include it). Field shapes come from the installed client's
+   models (`registration-script`, Fields); look up meanings and examples in the docs
+   (`catalog-docs` MCP). Send every field through the client; never write raw HTTP.
 4. Run the linter, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint_registration_script.py" <script>`
    (the PostToolUse hook also runs it on every write), and fix what it reports.
 5. Check the target with `"${CLAUDE_PLUGIN_ROOT}/scripts/check_auth.sh"`; if the environment

@@ -32,7 +32,7 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 | --- | --- | --- |
 | `catalog-docs` | MCP server | The [catalog docs](https://docs.biohub.ai) (Mintlify), installed with the plugin: concepts, field meanings, troubleshooting, auth how-to. Claude looks facts up here. |
 | `catalog-guide` | skill | First-run guide (asks what you want to do, checks your setup, explains the catalog in your terms, gets you to one success in a dev or staging catalog; offered automatically on your first session), the rules that apply to every catalog task, and how to use the docs. |
-| `registration-script` | skill | How to produce correct records from code: order of operations, search patterns for duplicates and lineage parents, checksums, governance decisions, the pipeline-safety rules, the script template, and `fields.json` (field types and allowed values, generated from the client models and the API spec). |
+| `registration-script` | skill | How to produce correct records from code: order of operations, search patterns for duplicates and lineage parents, checksums, governance decisions, the pipeline-safety rules, the script template, and how to read field types and allowed values from the installed client's models. |
 | `script-writer` | agent | Writes or changes a registration script from the template and dry-runs it against a dev or staging catalog. |
 | `metadata-reviewer` | agent | Read-only review of a draft record; returns blocking issues and warnings. |
 | `registration-debugger` | agent | Diagnoses a failed registration and proposes a fix. |
@@ -116,12 +116,6 @@ A deny rule cannot tell a production URL from a staging one, so production prote
 ```bash
 cd plugins/catalog
 python3 -m unittest discover -s tests -t tests      # stdlib only; CI runs the same
-```
-
-At each plugin release, regenerate `skills/registration-script/fields.json` with the Python that has the released `catalog-client` installed, and commit the result. It reads the API spec from `CATALOG_API_URL` with `CATALOG_API_TOKEN` (or pass `--url`, or `--spec FILE` to work offline). The file is generated; do not edit it by hand. Field meanings and examples live in the catalog docs.
-
-```bash
-python plugins/catalog/scripts/generate_fields.py
 ```
 
 ## Quick Start

@@ -21,7 +21,7 @@
 **Never invent a value.** Empty is honest; a fabricated value is a data-quality bug. If the source
 lacks something optional (checksum, owner), leave it unset.
 
-**Governance: ask a human; default to asking.** Allowed values are in `fields.json`; meanings in the docs.
+**Governance: ask a human; default to asking.** Allowed values are in the client's models (`registration-script`, Fields); meanings in the docs.
 
 1. Does the user know the consent terms, data-use agreement, or source license for this data?
    No → stop and ask who does (the data owner or steward). Do not register.

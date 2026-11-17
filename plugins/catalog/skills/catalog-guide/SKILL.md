@@ -37,13 +37,13 @@ Search the `catalog-docs` MCP, then answer in the user's terms and cite the page
 |---|---|
 | What a dataset, asset, lineage edge or collection is; "is this one dataset?"; collection vs `project`; limits | Docs concept pages and decision guides |
 | What a field means, examples by data type | Docs field reference |
-| A field's type, whether it is required, allowed values | `registration-script` `fields.json` (built from the client; authoritative). Fields marked **API-only** need REST until the client catches up |
+| A field's type, whether it is required, allowed values | The installed client's models (`registration-script`, Fields; authoritative) |
 | An error message | Search the docs for the **exact error text** first; then read the full message (the SDK formats HTTP errors as `HTTP <status>: <detail>`) |
 | Getting a token, write access, pipeline credentials, rotation | Docs auth pages |
 
 Prefer reference pages over tutorials and guides when they disagree; the reference pages are
-authoritative. If the docs and `fields.json` disagree on a field's shape, `fields.json` wins and the
-docs are stale: say so.
+authoritative. If the docs and the client's models disagree on a field's shape, the models win and
+the docs are stale: say so.
 
 If the MCP is unreachable (for example on an HPC node without internet), say so and give the docs
 URL, https://docs.biohub.ai, rather than answering from memory.

@@ -17,14 +17,18 @@ review the values it would send; a dry run of a generated script writes them to 
 ## Procedure
 1. Run the validator first: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_record.py" <path>`
    (add `--model asset|collection|lineage` for those records). Report its errors as Blocking,
-   unchanged. Don't re-check what it already checks.
-2. Then check what code can't:
+   unchanged. It checks the shared-storage rule and, for datasets with the `catalog` CLI installed,
+   the client's validation; its stdout says when it checked only shared storage.
+2. Then check what it doesn't, against the client's schema (`registration-script`, Fields):
+   - Unknown or misspelt keys: the models don't reject them, for any record type.
+   - Types, required fields and allowed values when the validator checked only shared storage.
    - Granularity: the docs' "Is this a dataset?" guide.
    - Plausibility: size 0, future dates, a description repeating the name.
    - Governance: flag any value that looks defaulted or guessed; never propose a value.
-   - Additional metadata that has a proper field (`fields.json`).
+   - Additional metadata that has a proper field in the schema.
    - Duplicates: `catalog resolve <location_uri>` per asset (`registration-script`, search patterns).
-3. Cite the docs page or the `fields.json` entry (`<model>: <dotted.path>`) for every finding.
+3. Cite the docs page or the client model field (e.g. `DatasetRequest: governance.is_pii`) for
+   every finding.
 
 ## Output (exactly this shape)
 **Verdict:** Ready / Fix blocking issues first

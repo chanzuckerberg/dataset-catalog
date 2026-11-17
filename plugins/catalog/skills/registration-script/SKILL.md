@@ -1,13 +1,13 @@
 ---
 name: registration-script
-description: Procedure and judgment for producing correct catalog records from code — order of operations, installing catalog-client, the registration template and its pipeline-safety rules, fields.json (field types, required, allowed values), search patterns for duplicates and lineage parents, computing sizes and checksums, deciding governance and data-quality values, ontology terms, lineage and collections, and updating or versioning records on later runs. Use when writing, reviewing, or changing a script that registers datasets, when finding data or checking "is this already registered?", or when asked how registration from a pipeline, notebook, or cron job should work.
+description: Procedure and judgment for producing correct catalog records from code — order of operations, installing catalog-client, the registration template and its pipeline-safety rules, field types, required, allowed values from the installed client's models, search patterns for duplicates and lineage parents, computing sizes and checksums, deciding governance and data-quality values, ontology terms, lineage and collections, and updating or versioning records on later runs. Use when writing, reviewing, or changing a script that registers datasets, when finding data or checking "is this already registered?", or when asked how registration from a pipeline, notebook, or cron job should work.
 ---
 
 # Producing correct records from code
 
 The deliverable is a script the user owns and runs: a copy of the template in `template/`, with
 only its AGENT-EDITABLE functions and `mapping.json` changed. Field meanings are in the catalog docs
-and field shapes in `fields.json` (below); this skill never restates them. Scripts are written by the `script-writer` agent
+and field shapes in the installed client's models (below); this skill never restates them. Scripts are written by the `script-writer` agent
 (`/catalog:register` gathers its inputs).
 
 ## Order of operations
@@ -73,28 +73,23 @@ Agent code may add imports at the top of its region. Every data-specific value (
 governance answers, collection ids) goes in `mapping.json`; `null` there means "not answered yet"
 and fails validation, which is intended.
 
-Use the client for every field it supports. A field marked **API-only** in `fields.json` cannot
-go through `DatasetRequest`; flag it to the user rather than
-writing raw HTTP, which would bypass the dry run and the upsert.
+Send every field through the client; never write raw HTTP, which would bypass the dry run and the
+upsert.
 
-## Fields: `fields.json`
+## Fields
 
-`${CLAUDE_PLUGIN_ROOT}/skills/registration-script/fields.json` is the machine-readable field list for
-dataset, asset, collection and lineage records: type, required, allowed values, defaults, and
-whether extra keys are kept. The validator, generated scripts and `metadata-reviewer` all read it,
-so checks and explanations agree. Look a field up with
-`python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['models']['dataset']['fields']['governance.is_pii'], indent=1))" "${CLAUDE_PLUGIN_ROOT}/skills/registration-script/fields.json"`.
-A field not in it does not exist: a misspelt key in a block that accepts extra keys is stored
-silently, and at the top level of a record it is dropped. Meanings and examples are in the docs.
+Field shapes (type, required, allowed values, defaults) come from the installed `catalog-client`'s
+pydantic models: `DatasetRequest` (`catalog_client.models.dataset`), `DataAssetRequest`
+(`.asset`), `CollectionRequest` (`.collection`), `LineageEdgeRequest` (`.lineage`). Look one up
+with the Python that has the client installed (the one the script runs with):
+`python -c "import json; from catalog_client.models.dataset import DatasetRequest; print(json.dumps(DatasetRequest.model_json_schema(), indent=1))"`.
+Meanings and examples are in the docs.
 
-- **Client first, API second.** It is generated from the client's models, compared with the API
-  spec. `source` says how to send a field: `both` through the client; `api-only` over REST until the
-  client catches up; `client-only` means the API drops it.
-- **Staleness.** `stamp.client_version` names the client it was built from. When the installed client
-  is newer (the session-start check warns), fields added since are missing: regenerate with the
-  Python that has the client installed, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/generate_fields.py"`
-  (reads the spec with `CATALOG_API_TOKEN`), or read the installed models directly
-  (`DatasetRequest.model_json_schema()`) and say `fields.json` is behind.
+- **Unknown keys are not rejected.** A misspelt key at the top level of a dataset record is dropped
+  silently; in governance, metadata and quality blocks it is stored. Validation does not catch it:
+  read one dry-run payload in `catalog-dry-run/` and compare its keys with the schema.
+- **Client-only fields.** On assets, `includes_pattern` and `excludes_pattern` are accepted by the
+  client but dropped by the API.
 
 ## Pipeline-safety rules
 
@@ -108,7 +103,7 @@ silently, and at the top level of a record it is dropped. Meanings and examples 
 | Memory | Stream records and bytes; never load everything | `discover_records` yields; checksums stream |
 | No interactive steps | Credentials from the environment or a secrets manager; no prompts | `catalog_connection()`; linter rejects `input()` |
 | Fail fast | Validate locally before any API call | `to_dataset_request()` per record |
-| Shared storage only | Every asset location is on shared organization storage (`catalog-guide`, rules) | `location_problem()` per asset; `validate_record.py` |
+| Shared storage only | Every asset location is on shared organization storage (`catalog-guide`, rules) | `location_problem()` per asset; `validate_record.py` (datasets and assets) |
 | Safe to try | Dry run; dev or staging before production | `--dry-run`, environment logged from the URL, prod guard hook |
 
 The linter (`scripts/lint_registration_script.py`, run by the PostToolUse hook and runnable by
