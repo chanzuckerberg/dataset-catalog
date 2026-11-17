@@ -1,5 +1,5 @@
 {
-  "_comment": "Data-specific values for register.py. null = not yet answered: governance values come from the data owner, never inferred. Field meanings: the catalog docs; types and allowed values: registration-script fields.json.",
+  "_comment": "Data-specific values for register.py. null = not yet answered: governance values come from the data owner, never inferred. Field meanings: the catalog docs; types and allowed values: the installed catalog-client's models (registration-script skill, Fields).",
   "data": {
     "root": "/hpc/projects/my-project/my-experiment",
     "dataset_glob": "*"
