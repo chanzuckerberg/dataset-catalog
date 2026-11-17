@@ -10,6 +10,8 @@ from typing import TypeVar
 
 import pydantic
 
+from catalog_client.exceptions import validation_error_lines
+
 T = TypeVar("T")
 
 _logger = logging.getLogger(__name__)
@@ -33,11 +35,7 @@ class BatchReport:
 
 def _describe(exc: Exception) -> str:
     if isinstance(exc, pydantic.ValidationError):
-        # str() of a pydantic error repeats the model name and a docs URL per field; keep path + message.
-        fields = "; ".join(
-            f"{'.'.join(map(str, e['loc'])) or '<root>'}: {e['msg']}"
-            for e in exc.errors()
-        )
+        fields = "; ".join(validation_error_lines(exc))
         return f"ValidationError ({exc.title}): {fields}"
     # Collapse other multi-line messages so each failure stays one log line.
     return f"{type(exc).__name__}: {' '.join(str(exc).split())}"
@@ -62,7 +60,8 @@ def run_batch(
         report.failed.append((item_key, message))
         log.error("%s failed: %s", item_key, message)
 
-    def record(done: set[Future[str]]) -> None:
+    def record_next() -> None:
+        done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
         for future in done:
             item_key = in_flight.pop(future)
             exc = future.exception()
@@ -83,11 +82,9 @@ def run_batch(
                 continue
             in_flight[pool.submit(handle, item)] = item_key
             if len(in_flight) >= window:
-                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
-                record(done)
+                record_next()
         while in_flight:
-            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
-            record(done)
+            record_next()
     except BaseException:
         pool.shutdown(wait=False, cancel_futures=True)
         raise

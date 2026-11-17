@@ -47,6 +47,7 @@ from catalog_client.exceptions import (
     CatalogServerError,
     CatalogUsageError,
     NotFoundError,
+    validation_error_lines,
 )
 from catalog_client.models.asset import AssetType, LocationScope, StoragePlatform
 from catalog_client.models.dataset import (
@@ -675,9 +676,8 @@ def cmd_validate(args: argparse.Namespace) -> None:
     try:
         DatasetRequest.model_validate(payload)
     except pydantic.ValidationError as exc:
-        for error in exc.errors():
-            field = ".".join(str(part) for part in error["loc"]) or "<root>"
-            print(f"{field}: {error['msg']}")
+        for line in validation_error_lines(exc):
+            print(line)
         raise SystemExit(EXIT_ERROR)
     print("valid")
 
@@ -721,7 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         choices=["table", "json"],
-        default=None,
+        default="table" if sys.stdout.isatty() else "json",
         help="output format (default: table on a terminal, json when piped)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -931,8 +931,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "collections" and args.action != "list" and not args.id:
         parser.error(f"collections {args.action} requires a collection id")
-    if "output" in args and args.output is None:
-        args.output = "table" if sys.stdout.isatty() else "json"
     try:
         args.func(args)
     except AuthenticationError as exc:

@@ -67,9 +67,23 @@ def _retry_after(response: httpx.Response, policy: RetryPolicy) -> float | None:
     return min(policy.max_delay, max(0.0, seconds))
 
 
-def _delay_for(response: httpx.Response, policy: RetryPolicy, retry: int) -> float:
+def _next_delay(
+    policy: RetryPolicy,
+    method: str,
+    attempt: int,
+    response: httpx.Response | None = None,
+    exc: httpx.TransportError | None = None,
+) -> float | None:
+    """Seconds to wait before the next attempt, or None to stop retrying."""
+    if attempt >= policy.max_attempts:
+        return None
+    if exc is not None:
+        return _backoff(policy, attempt) if _should_retry_error(method, exc) else None
+    assert response is not None
+    if not _should_retry_status(method, response.status_code):
+        return None
     server_delay = _retry_after(response, policy)
-    return _backoff(policy, retry) if server_delay is None else server_delay
+    return _backoff(policy, attempt) if server_delay is None else server_delay
 
 
 class RetryTransport(httpx.BaseTransport):
@@ -78,23 +92,20 @@ class RetryTransport(httpx.BaseTransport):
         self._policy = policy
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        method = request.method
         attempt = 1
         while True:
             try:
                 response = self._transport.handle_request(request)
             except httpx.TransportError as exc:
-                if attempt >= self._policy.max_attempts or not _should_retry_error(
-                    method, exc
-                ):
+                delay = _next_delay(self._policy, request.method, attempt, exc=exc)
+                if delay is None:
                     raise
-                delay = _backoff(self._policy, attempt)
             else:
-                if attempt >= self._policy.max_attempts or not _should_retry_status(
-                    method, response.status_code
-                ):
+                delay = _next_delay(
+                    self._policy, request.method, attempt, response=response
+                )
+                if delay is None:
                     return response
-                delay = _delay_for(response, self._policy, attempt)
                 response.close()
             _sleep(delay)
             attempt += 1
@@ -111,23 +122,20 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
         self._policy = policy
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        method = request.method
         attempt = 1
         while True:
             try:
                 response = await self._transport.handle_async_request(request)
             except httpx.TransportError as exc:
-                if attempt >= self._policy.max_attempts or not _should_retry_error(
-                    method, exc
-                ):
+                delay = _next_delay(self._policy, request.method, attempt, exc=exc)
+                if delay is None:
                     raise
-                delay = _backoff(self._policy, attempt)
             else:
-                if attempt >= self._policy.max_attempts or not _should_retry_status(
-                    method, response.status_code
-                ):
+                delay = _next_delay(
+                    self._policy, request.method, attempt, response=response
+                )
+                if delay is None:
                     return response
-                delay = _delay_for(response, self._policy, attempt)
                 await response.aclose()
             await _asleep(delay)
             attempt += 1

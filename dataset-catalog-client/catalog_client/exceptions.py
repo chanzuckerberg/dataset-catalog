@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import pydantic
 
 from catalog_client.models.copy import CopyErrorCode
 
@@ -138,6 +139,13 @@ class DuplicateDatasetError(CatalogError):
 
 class CompatibilityError(CatalogError):
     """The server expects a newer record schema than this client writes."""
+
+
+def validation_error_lines(exc: pydantic.ValidationError) -> list[str]:
+    """One `<field.path>: <message>` line per error, without pydantic's model name and docs URLs."""
+    return [
+        f"{'.'.join(map(str, e['loc'])) or '<root>'}: {e['msg']}" for e in exc.errors()
+    ]
 
 
 def _structured_detail(response: httpx.Response) -> dict | None:
