@@ -13,7 +13,9 @@ GUARD_SECRETS = SCRIPTS / "guard_secrets.py"
 GUARD_PROD = SCRIPTS / "guard_prod_registration.py"
 RECORD = SCRIPTS / "record_dry_run.py"
 LINT = SCRIPTS / "lint_registration_script.py"
-FAKE_TOKEN = "cat9f2b7c41d0e8a6b3f5d2c1e9a7b4"
+# Built from short patterns so no token-shaped literal sits in the repo for scanners to flag.
+FAKE_TOKEN = "Ab1" * 12  # mixed case + digits: the shape of an issued token
+HEX_ONLY = "ab12" * 9  # no uppercase: not an issued token
 DEV = "https://diverse-oarfish.dev-sci-data.dev.czi.team"
 STAGING = "https://datacatalog.staging-sci-data.staging.czi.team"
 PROD = "https://datacatalog.prod-sci-data.prod.czi.team"
@@ -101,16 +103,15 @@ class GuardSecretsTest(unittest.TestCase):
             self.assertNotIn(FAKE_TOKEN, result.stdout)
 
     def test_blocks_bare_token_key_with_issued_token_shape(self):
-        issued = "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"
-        for content in (f'token = "{issued}"', f'{{"token": "{issued}"}}'):
+        for content in (f'token = "{FAKE_TOKEN}"', f'{{"token": "{FAKE_TOKEN}"}}'):
             result = self.check({"file_path": "/tmp/x.py", "content": content})
             self.assertEqual(decision(result), "deny", content)
 
     def test_allows_bare_token_key_without_issued_token_shape(self):
         for content in (
-            'token = "abcdef0123456789abcdef0123456789abcd"',
-            'next_token = "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"',
-            'csrf-token: "Q3vR8kLm2NpX7sTb9WcY4dZf6Hj1Ka5Ue0Gi"',
+            f'token = "{HEX_ONLY}"',
+            f'next_token = "{FAKE_TOKEN}"',
+            f'csrf-token: "{FAKE_TOKEN}"',
         ):
             self.assertIsNone(
                 decision(self.check({"file_path": "/tmp/x", "content": content})),
