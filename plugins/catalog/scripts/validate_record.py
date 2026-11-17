@@ -3,13 +3,11 @@
 
     validate_record.py PATH|-  [--model dataset|asset|collection|lineage]
 
-Checks asset locations against the shared-storage rule, and for dataset records
-runs `catalog validate` (the installed client's pydantic validation) and merges
-its findings. Without the `catalog` CLI, or for other models, only the
-shared-storage rule is checked, and the `valid` line says so. Misspelt keys are
-not caught: the client's models ignore or keep unknown keys.
+Checks asset locations against the shared-storage rule only. Field types,
+required fields and allowed values are checked by the registration script's
+`--dry-run`, which validates with the installed client before any API call.
 
-Output matches `catalog validate`: `valid`, or one `<dotted.path>: <message>`
+Output: `valid (shared-storage rule only ...)`, or one `<dotted.path>: <message>`
 line per problem. Exit 0 = valid, 1 = invalid, 2 = unreadable input.
 """
 
@@ -17,8 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -77,30 +73,6 @@ def location_errors(record: object, model: str) -> list[str]:
     return errors
 
 
-def cli_errors(text: str) -> list[str] | None:
-    """Run `catalog validate -` when available; None when it can't (absent or too old)."""
-    cli = shutil.which("catalog")
-    if not cli:
-        return None
-    try:
-        result = subprocess.run(
-            [cli, "validate", "-"],
-            input=text,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode not in (0, 1):
-        return None
-    return [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and line.strip() != "valid"
-    ]
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate a draft catalog record.")
     parser.add_argument("path", help="JSON record file, or - for stdin")
@@ -108,11 +80,6 @@ def main(argv: list[str] | None = None) -> int:
         "--model",
         default="dataset",
         choices=["dataset", "asset", "collection", "lineage"],
-    )
-    parser.add_argument(
-        "--no-cli",
-        action="store_true",
-        help="skip `catalog validate` even if installed",
     )
     args = parser.parse_args(argv)
 
@@ -131,26 +98,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     errors = location_errors(record, args.model)
-    schema_errors = None
-    if args.model == "dataset" and not args.no_cli:
-        schema_errors = cli_errors(text)
-    errors = list(dict.fromkeys(errors + (schema_errors or [])))
     if errors:
         print("\n".join(errors))
         return 1
-    if schema_errors is None:
-        if args.model != "dataset":
-            reason = f"{args.model} records have no CLI check"
-        elif args.no_cli:
-            reason = "--no-cli was passed"
-        else:
-            reason = "the `catalog` CLI is not installed or too old"
-        print(
-            f"valid (shared-storage rule only: {reason}; read field shapes from the "
-            "installed client's model_json_schema(), registration-script skill)"
-        )
-        return 0
-    print("valid")
+    print(
+        "valid (shared-storage rule only; run the registration script with "
+        "--dry-run to check fields against the installed client)"
+    )
     return 0
 
 

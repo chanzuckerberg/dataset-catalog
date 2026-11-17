@@ -4,7 +4,7 @@
 Enabled with the `catalog` plugin. Emits an "allow" decision only for
 unambiguous catalog GET/read commands (the bundled `check_auth.py`,
 `check_env.py`, and `validate_record.py`, the `catalog` CLI reads including
-`catalog validate` and `catalog checksum`, and the stdlib `urllib` REST GETs
+`catalog checksum`, and the stdlib `urllib` REST GETs
 that send the token as the `X-catalog-api-token` header to a catalog host). For
 everything else — including registration scripts, any HTTP mutation, and any
 request to a non-catalog host — it stays silent and defers to Claude's normal
@@ -65,9 +65,7 @@ foreign_url = any(
 )
 
 reads = (
-    re.search(
-        r"\bcatalog\s+(search|get|list|facets|lineage|resolve|validate|checksum)\b", cmd
-    )
+    re.search(r"\bcatalog\s+(search|get|list|facets|lineage|resolve|checksum)\b", cmd)
     # collections is a resource with mutating subcommands; allow only its reads.
     or re.search(r"\bcatalog\s+collections\s+(list|get|entries|parents)\b", cmd)
     or re.search(r"\bcatalog\s+--version\b", cmd)

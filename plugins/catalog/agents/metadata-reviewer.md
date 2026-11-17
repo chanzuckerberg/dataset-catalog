@@ -17,11 +17,11 @@ review the values it would send; a dry run of a generated script writes them to 
 ## Procedure
 1. Run the validator first: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_record.py" <path>`
    (add `--model asset|collection|lineage` for those records). Report its errors as Blocking,
-   unchanged. It checks the shared-storage rule and, for datasets with the `catalog` CLI installed,
-   the client's validation; its stdout says when it checked only shared storage.
+   unchanged. It checks only the shared-storage rule.
 2. Then check what it doesn't, against the client's schema (`registration-script`, Fields):
    - Unknown or misspelt keys: the models don't reject them, for any record type.
-   - Types, required fields and allowed values when the validator checked only shared storage.
+   - Types, required fields and allowed values. For a generated script, `<script> --dry-run --limit 1`
+     checks these with the installed client; report its `failed:` lines as Blocking.
    - Granularity: the docs' "Is this a dataset?" guide.
    - Plausibility: size 0, future dates, a description repeating the name.
    - Governance: flag any value that looks defaulted or guessed; never propose a value.

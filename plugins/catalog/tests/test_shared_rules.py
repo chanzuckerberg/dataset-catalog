@@ -68,7 +68,7 @@ class LocationRuleTest(unittest.TestCase):
                 {"location_uri": "/Users/me/run/", "storage_platform": "other"},
             ]
         }
-        result = run_script(VALIDATOR, json.dumps(record), args=["-", "--no-cli"])
+        result = run_script(VALIDATOR, json.dumps(record), args=["-"])
         self.assertEqual(result.returncode, 1)
         lines = [
             line for line in result.stdout.splitlines() if "not registrable" in line

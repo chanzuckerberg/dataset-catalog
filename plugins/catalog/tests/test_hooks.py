@@ -55,7 +55,6 @@ class AllowCatalogReadsTest(unittest.TestCase):
         for command in (
             "catalog search --q liver",
             "catalog resolve s3://bucket/x/",
-            "catalog validate payload.json",
             "catalog collections entries abc",
             'python3 "/p/scripts/check_auth.py" --report',
             "python3 /p/scripts/validate_record.py rec.json",
