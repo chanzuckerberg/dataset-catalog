@@ -18,8 +18,7 @@ and field shapes in `fields.json` (below); this skill never restates them. Scrip
 2. **Search for existing records** (search patterns, below): `catalog resolve <uri>` per data location, and
    parents for lineage. An existing record means this run is an update.
 3. **Build** each record: the AGENT-EDITABLE functions.
-4. **Validate locally**: the template calls `to_dataset_request()` per record before any API call;
-   for a standalone payload use `/catalog:validate`.
+4. **Validate locally**: the template calls `to_dataset_request()` per record before any API call.
 5. **Dry run**: `--dry-run` calls `client.plan()`, which is read-only and reports `create`,
    `update`, or `skip` plus the lineage edges it would add. It writes each payload to
    `catalog-dry-run/` for review (`metadata-reviewer` agent).

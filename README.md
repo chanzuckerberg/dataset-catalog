@@ -44,7 +44,6 @@ This repo ships a Claude Code plugin, `catalog`, distributed through the `datase
 | --- | --- |
 | `/catalog:onboard` | Starts the onboarding steps in `catalog-guide`. |
 | `/catalog:register [path]` | Asks about your data one question at a time, then has `script-writer` produce a script and dry-run it against a dev or staging catalog. |
-| `/catalog:validate <file>` | Validates a draft record (JSON) or lints a registration script. |
 | `/catalog:debug [error]` | Hands a failure to `registration-debugger`. |
 | `/catalog:whoami` | Checks `CATALOG_API_URL`/`CATALOG_API_TOKEN` are set, creates `./.venv` with uv if there is no Python environment, then shows environment (from `CATALOG_API_URL`), identity, read/write permission, and token expiry. Never prints the token. |
 

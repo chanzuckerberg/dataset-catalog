@@ -102,7 +102,7 @@ would be a collection." Use their data type and paths.
 ### 6. Finish
 
 Summarize what they did, the one next step for their goal, and where help lives: `/catalog:debug`
-for failures, `/catalog:whoami` for access, `/catalog:validate` for a draft record, the docs for
+for failures, `/catalog:whoami` for access, the `metadata-reviewer` agent for a draft record, the docs for
 everything else. Then write the marker so the onboarding offer stops:
 
 ```bash
