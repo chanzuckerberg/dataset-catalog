@@ -47,12 +47,12 @@ class AuditLogEventType(str, enum.Enum):
 class RecordStatus(str, enum.Enum):
     """Lifecycle state of a dataset record, set by the catalog."""
 
-    draft = "draft"
+    prelim = "prelim"
     active = "active"
     tombstoned = "tombstoned"
 
 
-WritableRecordStatus = Literal[RecordStatus.draft, RecordStatus.active]
+WritableRecordStatus = Literal[RecordStatus.prelim, RecordStatus.active]
 
 
 class DatasetSortOption(str, enum.Enum):
@@ -152,7 +152,7 @@ class DatasetRequest(_DatasetBase):
     )
     record_status: WritableRecordStatus | None = Field(
         default=None,
-        description="draft or active. A draft dataset is listed and searchable, but the catalog hides its locations until the draft is promoted to active. If this param is omitted, we default to active. Use delete() to tombstone.",
+        description="prelim or active. A prelim dataset is listed and searchable, but the catalog hides its locations until it is promoted to active. If this param is omitted, we default to active. Use delete() to tombstone.",
     )
 
     @field_validator("cross_db_references", mode="before")
@@ -192,7 +192,7 @@ class DatasetResponse(_DatasetBase):
     tombstoned: bool = Field(description="Whether the dataset has been soft-deleted")
     record_status: RecordStatus | None = Field(
         default=None,
-        description="Lifecycle state (draft, active or tombstoned), or None when the deployment did not report one",
+        description="Lifecycle state (prelim, active or tombstoned), or None when the deployment did not report one",
     )
     created_at: datetime.datetime = Field(
         description="Timestamp when the dataset was first created"

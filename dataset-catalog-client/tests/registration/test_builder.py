@@ -268,11 +268,11 @@ def test_builder_without_governance_fails_at_request_conversion():
 
 
 @pytest.mark.parametrize(
-    ("as_draft", "expected"),
-    [((), None), ((True,), "draft"), ((False,), "active")],
-    ids=["unset", "draft", "active"],
+    ("as_prelim", "expected"),
+    [((), None), ((True,), "prelim"), ((False,), "active")],
+    ids=["unset", "prelim", "active"],
 )
-def test_builder_as_draft_sets_record_status(as_draft, expected):
+def test_builder_as_prelim_sets_record_status(as_prelim, expected):
     builder = (
         _builder()
         .with_location(
@@ -280,7 +280,7 @@ def test_builder_as_draft_sets_record_status(as_draft, expected):
         )
         .with_governance(data_steward="team-data", is_pii=False, is_phi=False)
     )
-    if as_draft:
-        builder = builder.as_draft(*as_draft)
+    if as_prelim:
+        builder = builder.as_prelim(*as_prelim)
     request = builder.build().to_dataset_request()
     assert request.model_dump(mode="json")["record_status"] == expected

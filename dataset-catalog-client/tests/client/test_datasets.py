@@ -848,17 +848,17 @@ def test_copy_entry_is_a_data_asset_without_the_glob_fields():
 @pytest.mark.parametrize(
     ("method", "record_status", "sent"),
     [
-        ("create", RecordStatus.draft, "draft"),
+        ("create", RecordStatus.prelim, "prelim"),
         ("update", RecordStatus.active, "active"),
         ("update", None, "absent"),
     ],
-    ids=["create-draft", "promote", "update-omitted"],
+    ids=["create-prelim", "promote", "update-omitted"],
 )
 def test_record_status_reaches_the_wire_only_when_set(
     httpx_mock: HTTPXMock, method: str, record_status: RecordStatus | None, sent: str
 ):
-    """An omitted status must not be sent on update, so a client edit never publishes a draft."""
-    httpx_mock.add_response(json={**DATASET_RESPONSE, "record_status": "draft"})
+    """An omitted status must not be sent on update, so a client edit never publishes a prelim dataset."""
+    httpx_mock.add_response(json={**DATASET_RESPONSE, "record_status": "prelim"})
     request = (
         _minimal_create()
         if record_status is None
@@ -873,19 +873,19 @@ def test_record_status_reaches_the_wire_only_when_set(
     assert body.get("record_status", "absent") == sent
 
 
-def test_copy_of_a_draft_is_a_typed_copy_error(httpx_mock: HTTPXMock):
+def test_copy_of_a_prelim_is_a_typed_copy_error(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         url=COPY_URL,
         status_code=409,
         json={
             "detail": {
-                "code": "SOURCE_IS_DRAFT",
-                "message": "is a draft, so it cannot be copied",
+                "code": "SOURCE_IS_PRELIM",
+                "message": "is a prelim dataset, so it cannot be copied",
                 "retryable": False,
             }
         },
     )
     with pytest.raises(CopyError) as excinfo:
         _sync_client().copy("uuid-1", COPY_REQUEST, copy_type=CopyType.fork)
-    assert excinfo.value.code is CopyErrorCode.SOURCE_IS_DRAFT
+    assert excinfo.value.code is CopyErrorCode.SOURCE_IS_PRELIM
     assert excinfo.value.retryable is False

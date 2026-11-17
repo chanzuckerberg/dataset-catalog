@@ -252,7 +252,7 @@ The builder exposes further optional methods:
 |--------|-------------|
 | `.described(text)` | Set a free-text description |
 | `.as_latest(bool)` | Mark as the latest version (default `True`) |
-| `.as_draft(bool)` | Register as a draft (`True`, the default) or explicitly `active` (`False`) |
+| `.as_prelim(bool)` | Register as a prelim dataset (`True`, the default) or explicitly `active` (`False`) |
 | `.of_type(DatasetType)` | Set `dataset_type` to `raw`, `processed` or `analysis` |
 | `.with_sample(**kwargs)` | Populate `SampleMetadata` (organism, tissue, disease, …) |
 | `.with_experiment(**kwargs)` | Populate `ExperimentMetadata` (sub_modality, assay, …) |
@@ -691,28 +691,28 @@ updated = client.datasets.update(
 print(updated.id)  # may differ if signature fields changed
 ```
 
-Responses carry `record_status` — `active`, `tombstoned` or `draft` — alongside the
+Responses carry `record_status` — `active`, `tombstoned` or `prelim` — alongside the
 boolean `tombstoned`. It is `None` when talking to a deployment that predates it.
 
-### Drafts
+### Prelim datasets
 
-Set `record_status=RecordStatus.draft` on a `DatasetRequest` (or call `.as_draft()` on the
-builder) to register a dataset before its data is ready to hand out. A draft is listed,
+Set `record_status=RecordStatus.prelim` on a `DatasetRequest` (or call `.as_prelim()` on the
+builder) to register a dataset before its data is ready to hand out. A prelim dataset is listed,
 searchable and resolvable like any record, but the catalog returns its `locations` empty on
-every read, and copying it fails with `CopyError` code `SOURCE_IS_DRAFT`. To publish it,
+every read, and copying it fails with `CopyError` code `SOURCE_IS_PRELIM`. To publish it,
 update it with `record_status=RecordStatus.active`: same id, `record_version` + 1.
 
 `update()` only sends the fields you set, so an update that leaves `record_status` out keeps
-the record's current status. Only `draft` and `active` can be written; use `delete()` to
+the record's current status. Only `prelim` and `active` can be written; use `delete()` to
 tombstone.
 
 ```python
 from catalog_client import RecordStatus
 
-draft = client.datasets.create(request.model_copy(update={"record_status": RecordStatus.draft}))
-assert draft.locations == []
+prelim = client.datasets.create(request.model_copy(update={"record_status": RecordStatus.prelim}))
+assert prelim.locations == []
 
-live = client.datasets.update(draft.id, request.model_copy(update={"record_status": RecordStatus.active}))
+live = client.datasets.update(prelim.id, request.model_copy(update={"record_status": RecordStatus.active}))
 assert live.locations
 ```
 
@@ -1232,7 +1232,7 @@ sensitivity unknown.
 | `DatasetType` | `raw`, `processed`, `analysis` |
 | `AssetType` | `file`, `folder` |
 | `StoragePlatform` | `s3`, `sf_hpc`, `chi_hpc`, `ny_hpc`, `reef`, `kelp`, `atoll`, `reef_nonprod`, `orca`, `shoal`, `external`, `other` |
-| `RecordStatus` | `draft`, `active`, `tombstoned` — `DatasetResponse.record_status`; `DatasetRequest.record_status` takes `draft` or `active` |
+| `RecordStatus` | `prelim`, `active`, `tombstoned` — `DatasetResponse.record_status`; `DatasetRequest.record_status` takes `prelim` or `active` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
 | `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |

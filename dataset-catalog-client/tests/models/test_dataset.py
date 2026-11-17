@@ -262,8 +262,8 @@ def test_data_asset_response_carries_instance_fields():
     assert asset.relative_path == "cells.parquet"
 
 
-@pytest.mark.parametrize("status", ["draft", RecordStatus.active])
-def test_request_record_status_accepts_draft_and_active(status):
+@pytest.mark.parametrize("status", ["prelim", RecordStatus.active])
+def test_request_record_status_accepts_prelim_and_active(status):
     assert (
         _minimal_create(record_status=status).model_dump(mode="json")["record_status"]
         == RecordStatus(status).value

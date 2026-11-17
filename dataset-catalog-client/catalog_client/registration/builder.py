@@ -71,10 +71,10 @@ class RegistrationBuilder:
         self._request.is_latest = value
         return self
 
-    def as_draft(self, value: bool = True) -> RegistrationBuilder:
-        """Register as a draft, whose locations stay hidden until it is set to active."""
+    def as_prelim(self, value: bool = True) -> RegistrationBuilder:
+        """Register as a prelim dataset, whose locations stay hidden until it is set to active."""
         self._request.record_status = (
-            RecordStatus.draft if value else RecordStatus.active
+            RecordStatus.prelim if value else RecordStatus.active
         )
         return self
 
