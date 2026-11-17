@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v1.2.0...catalog-plugin-v1.3.0) (2026-11-17)
+
+
+### Features
+
+* **plugin:** rebuild catalog plugin around onboarding design ([#106](https://github.com/chanzuckerberg/dataset-catalog/issues/106)) ([34fbe5b](https://github.com/chanzuckerberg/dataset-catalog/commit/34fbe5b0826538d36236bd4cd40b6a172a152764))
+
 ## [1.2.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-plugin-v1.1.0...catalog-plugin-v1.2.0) (2026-11-02)
 
 

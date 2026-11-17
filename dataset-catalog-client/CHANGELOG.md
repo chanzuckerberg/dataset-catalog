@@ -28,6 +28,14 @@
   algorithm labels, file hashes, and existing checksummed assets remain unchanged.
   Recompute older nested-folder checksums before comparing them with new values.
 
+## [1.5.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.4.0...catalog-client-v1.5.0) (2026-11-17)
+
+
+### Features
+
+* **client:** add registration runtime for pipelines ([#105](https://github.com/chanzuckerberg/dataset-catalog/issues/105)) ([60dccca](https://github.com/chanzuckerberg/dataset-catalog/commit/60dccca41dfc810abba95a3c7602f5e8f6cad7aa))
+* **plugin:** rebuild catalog plugin around onboarding design ([#106](https://github.com/chanzuckerberg/dataset-catalog/issues/106)) ([34fbe5b](https://github.com/chanzuckerberg/dataset-catalog/commit/34fbe5b0826538d36236bd4cd40b6a172a152764))
+
 ## [1.4.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.3.0...catalog-client-v1.4.0) (2026-11-16)
 
 
