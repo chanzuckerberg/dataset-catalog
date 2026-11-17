@@ -38,9 +38,9 @@ An async variant is also available — see [Async usage](#async-usage).
 
 Installing the package also installs a read-only `catalog` command for querying
 the catalog from the shell. It only issues GET requests — creating, updating,
-and deleting always go through the Python API. Two subcommands do not talk to
-the catalog at all: `checksum` (see [Checksums from the command
-line](#checksums-from-the-command-line)) and `validate`.
+and deleting always go through the Python API. One subcommand, `checksum`, does
+not talk to the catalog at all; see [Checksums from the command
+line](#checksums-from-the-command-line).
 
 Configure the query subcommands via the environment:
 
@@ -82,23 +82,7 @@ catalog collections parents <collection-uuid>
 
 # Hash a local path or S3 URI — no catalog credentials involved
 catalog checksum data/sample.h5ad
-
-# Validate a DatasetRequest JSON payload locally — no network, no credentials
-catalog validate dataset.json
-cat dataset.json | catalog validate -
 ```
-
-`catalog validate` prints `valid` (exit `0`), or one `<dotted.field.path>:
-<message>` line per problem on stdout (exit `1`):
-
-```
-modality: Input should be 'imaging', 'sequencing', 'mass spec', 'text' or 'unknown'
-locations.0.location_uri: Field required
-```
-
-A file that is not JSON exits `1` with `error: <path>: not valid JSON: ...` on
-stderr; a missing file exits `4`. Unknown keys are ignored, as they are by the
-Python model.
 
 Useful flags:
 

@@ -139,13 +139,6 @@ catalog checksum data/run-01/ --children
 catalog checksum s3://my-bucket/prefix/object.tif --algorithm crc32
 ```
 
-The `validate` subcommand checks a `DatasetRequest` JSON payload locally — no network, no token. It prints `valid` (exit 0) or one `<dotted.field.path>: <message>` line per error (exit 1):
-
-```bash
-catalog validate dataset.json
-cat dataset.json | catalog validate -
-```
-
 Output is a human-readable table on a terminal and JSON when piped (override with `-o table|json`). See the [CLI section of USAGE.md](USAGE.md#command-line-interface) for all subcommands, flags, and exit codes.
 
 ## Documentation
@@ -156,7 +149,7 @@ Output is a human-readable table on a terminal and JSON when piped (override wit
 | [schema/v1.8.0/schema.md](../schema/v1.8.0/schema.md) | Authoritative field-level reference for the catalog schema (Data Asset, Dataset, Collection, Lineage) — the version this client writes |
 | [schema/CHANGELOG.md](../schema/CHANGELOG.md) | Schema version history and migration notes |
 | [catalog_client/utils/manifest/README.md](catalog_client/utils/manifest/README.md) | Manifest generation — user guide and developer reference |
-| [catalog_client/registration/README.md](catalog_client/registration/README.md) | Registration runtime — `plan()` dry run, `RetryPolicy`, `run_batch()`, `check_compatibility()`, `catalog validate` |
+| [catalog_client/registration/README.md](catalog_client/registration/README.md) | Registration runtime — `plan()` dry run, `RetryPolicy`, `run_batch()`, `check_compatibility()` |
 
 An interactive walkthrough is available in [examples/quickstart.ipynb](examples/quickstart.ipynb). Start it with:
 

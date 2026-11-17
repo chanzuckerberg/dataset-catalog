@@ -19,9 +19,6 @@ Subcommands:
     collections  browse collections and their entries
     checksum     hash a local path or S3 URI (no catalog credentials needed;
                  s3:// URIs use the ambient AWS credentials)
-    validate     check a DatasetRequest JSON payload locally (no network, no
-                 credentials); prints `valid` or one `<field.path>: <message>`
-                 line per error
 
 Exit codes:
     0  success            3  authentication error (401)
@@ -37,8 +34,6 @@ import os
 import sys
 from typing import Any, NoReturn
 
-import pydantic
-
 from catalog_client.client.catalog import CatalogClient
 from catalog_client.exceptions import (
     AuthenticationError,
@@ -47,14 +42,12 @@ from catalog_client.exceptions import (
     CatalogServerError,
     CatalogUsageError,
     NotFoundError,
-    validation_error_lines,
 )
 from catalog_client.models.asset import AssetType, LocationScope, StoragePlatform
 from catalog_client.models.dataset import (
     DatasetListSortOption,
     DatasetModality,
     DatasetRef,
-    DatasetRequest,
     DatasetSortOption,
 )
 from catalog_client.models.lineage import LineageType
@@ -654,34 +647,6 @@ def cmd_checksum(args: argparse.Namespace) -> None:
     )
 
 
-def _read_payload(path: str) -> Any:
-    try:
-        if path == "-":
-            text = sys.stdin.read()
-        else:
-            with open(path, encoding="utf-8") as fh:
-                text = fh.read()
-    except (FileNotFoundError, IsADirectoryError) as exc:
-        _fail_message(f"{path}: {exc.strerror or exc}", EXIT_NOT_FOUND)
-    except (OSError, UnicodeDecodeError) as exc:
-        _fail_message(f"{path}: {exc}", EXIT_ERROR)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        _fail_message(f"{path}: not valid JSON: {exc}", EXIT_ERROR)
-
-
-def cmd_validate(args: argparse.Namespace) -> None:
-    payload = _read_payload(args.path)
-    try:
-        DatasetRequest.model_validate(payload)
-    except pydantic.ValidationError as exc:
-        for line in validation_error_lines(exc):
-            print(line)
-        raise SystemExit(EXIT_ERROR)
-    print("valid")
-
-
 # ------------------------------------------------------------------------ main
 
 
@@ -721,7 +686,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         choices=["table", "json"],
-        default="table" if sys.stdout.isatty() else "json",
+        default=None,
         help="output format (default: table on a terminal, json when piped)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -916,13 +881,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_checksum)
 
-    p = sub.add_parser(
-        "validate",
-        help="check a DatasetRequest JSON payload locally (no network or credentials)",
-    )
-    p.add_argument("path", help="JSON file holding a DatasetRequest, or - for stdin")
-    p.set_defaults(func=cmd_validate)
-
     return parser
 
 
@@ -931,6 +889,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "collections" and args.action != "list" and not args.id:
         parser.error(f"collections {args.action} requires a collection id")
+    if args.output is None:
+        args.output = "table" if sys.stdout.isatty() else "json"
     try:
         args.func(args)
     except AuthenticationError as exc:

@@ -2,8 +2,7 @@
 
 Building blocks for registration scripts that run unattended in a pipeline:
 re-runnable `register()`, a read-only dry run, retries with backoff, a batch
-runner that isolates failures, a startup compatibility check, and local
-validation from the shell.
+runner that isolates failures, and a startup compatibility check.
 
 Everything here is importable from `catalog_client.registration` and from the
 top-level `catalog_client` package.
@@ -180,35 +179,6 @@ one this client writes, as semver (a leading `v` is ignored).
 
 HTTP failures surface as the usual `CatalogError` subclasses
 (`AuthenticationError`, `CatalogConnectionError`, ...).
-
-### Local validation: `catalog validate`
-
-Checks a `DatasetRequest` JSON payload against the client's model. No network,
-no credentials.
-
-```bash
-catalog validate dataset.json
-cat dataset.json | catalog validate -
-```
-
-Valid — exit `0`, stdout:
-
-```
-valid
-```
-
-Invalid — exit `1`, one `<dotted.field.path>: <message>` line per error on
-stdout (list indices appear as numbers; a non-object payload reports `<root>`):
-
-```
-modality: Input should be 'imaging', 'sequencing', 'mass spec', 'text' or 'unknown'
-governance: Field required
-locations.0.location_uri: Field required
-```
-
-A file that is not JSON exits `1` and a missing file exits `4`, both with
-`error: <path>: <reason>` on stderr; a missing argument exits `2`. Unknown keys
-are ignored by the model, so a misspelt optional field passes validation.
 
 ---
 

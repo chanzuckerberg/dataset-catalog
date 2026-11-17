@@ -10,8 +10,6 @@ from typing import TypeVar
 
 import pydantic
 
-from catalog_client.exceptions import validation_error_lines
-
 T = TypeVar("T")
 
 _logger = logging.getLogger(__name__)
@@ -35,7 +33,11 @@ class BatchReport:
 
 def _describe(exc: Exception) -> str:
     if isinstance(exc, pydantic.ValidationError):
-        fields = "; ".join(validation_error_lines(exc))
+        # str() of a pydantic error repeats the model name and a docs URL per field; keep path + message.
+        fields = "; ".join(
+            f"{'.'.join(map(str, e['loc'])) or '<root>'}: {e['msg']}"
+            for e in exc.errors()
+        )
         return f"ValidationError ({exc.title}): {fields}"
     # Collapse other multi-line messages so each failure stays one log line.
     return f"{type(exc).__name__}: {' '.join(str(exc).split())}"
