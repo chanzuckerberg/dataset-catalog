@@ -15,6 +15,7 @@ class ObservationUnit(str, enum.Enum):
     """
 
     single_cell = "single_cell"
+    single_nucleus = "single_nucleus"
     pseudobulk = "pseudobulk"
     bulk = "bulk"
 

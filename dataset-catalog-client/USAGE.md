@@ -342,7 +342,7 @@ from catalog_client import check_compatibility
 
 check_compatibility(client)
 # CompatibilityError: server expects record schema v2.0.0, installed
-# catalog-client supports v1.8.0 — upgrade catalog-client
+# catalog-client supports v1.8.1 — upgrade catalog-client
 ```
 
 `acheck_compatibility(async_client)` is the `AsyncCatalogClient` variant.
@@ -1235,7 +1235,7 @@ sensitivity unknown.
 | `RecordStatus` | `draft`, `active`, `tombstoned` — `DatasetResponse.record_status`; `DatasetRequest.record_status` takes `draft` or `active` |
 | `LineageType` | `version_of`, `transformed_from`, `copy_of` |
 | `CollectionType` | `publication`, `training`, `study`, `experiment` |
-| `ObservationUnit` | `single_cell`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |
+| `ObservationUnit` | `single_cell`, `single_nucleus`, `pseudobulk`, `bulk` — `metadata.data_summary.observation_unit` |
 | `LocationScope` | `exact`, `ancestor`, `descendant` — `datasets.resolve()` |
 | `CopyType` | `fork`, `mirror` — `datasets.copy()`; `mirror` is not enabled yet |
 | `CopyErrorCode` | the nine refusal codes on `CopyError.code` |

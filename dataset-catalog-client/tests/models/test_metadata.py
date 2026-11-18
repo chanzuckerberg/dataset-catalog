@@ -139,6 +139,12 @@ def test_data_summary_observation_unit_is_separate_from_sub_modality():
     assert summary.observation_unit is ObservationUnit.pseudobulk
 
 
+def test_data_summary_observation_unit_accepts_single_nucleus():
+    """Added in v1.8.1, for snRNA-seq and snATAC-seq."""
+    summary = DataSummaryMetadata(observation_unit="single_nucleus")
+    assert summary.observation_unit is ObservationUnit.single_nucleus
+
+
 def test_data_summary_is_combined_distinguishes_unset_from_false():
     """Unset means unknown, so a search for False excludes it."""
     assert DataSummaryMetadata().is_combined is None

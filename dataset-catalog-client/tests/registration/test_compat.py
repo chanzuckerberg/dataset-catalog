@@ -46,7 +46,7 @@ def test_server_newer_raises(httpx_mock: HTTPXMock, server: str) -> None:
     assert "upgrade catalog-client" in message
 
 
-@pytest.mark.parametrize("server", ["v1.9.0", "1.8.1"])
+@pytest.mark.parametrize("server", ["v1.9.0", "1.8.2"])
 def test_server_newer_minor_or_patch_warns_and_passes(
     httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture, server: str
 ) -> None:
@@ -58,7 +58,7 @@ def test_server_newer_minor_or_patch_warns_and_passes(
 def test_compares_numerically_not_lexically(
     httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # v1.10.0 > v1.8.0 even though "1" < "8" as text.
+    # v1.10.0 > v1.8.1 even though "1" < "8" as text.
     with caplog.at_level(logging.WARNING):
         _check(httpx_mock, _spec({"type": "string", "default": "v1.10.0"}))
     assert "is newer" in caplog.text
