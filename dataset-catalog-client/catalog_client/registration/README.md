@@ -172,7 +172,7 @@ one this client writes, as semver (a leading `v` is ignored).
 
 | Server reports | Result |
 |---|---|
-| newer major version | raises `CompatibilityError`: `server expects record schema v2.0.0, installed catalog-client supports v1.8.0 — upgrade catalog-client` |
+| newer major version | raises `CompatibilityError`: `server expects record schema v2.0.0, installed catalog-client supports v1.8.1 — upgrade catalog-client` |
 | newer minor or patch version | logs a warning and returns `None` |
 | same or older | returns `None` |
 | no parseable default | logs a warning and returns `None` |

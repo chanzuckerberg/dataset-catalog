@@ -139,7 +139,7 @@ def test_dataset_create_is_latest_defaults_false():
 
 
 def test_dataset_defaults_to_current_schema_version():
-    assert _minimal_create().record_schema_version == "v1.8.0"
+    assert _minimal_create().record_schema_version == "v1.8.1"
 
 
 def test_dataset_modality_enum():

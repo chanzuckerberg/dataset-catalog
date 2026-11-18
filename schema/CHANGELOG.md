@@ -9,7 +9,8 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 | Version | Status |
 |---------|--------|
-| [v1.8.0](#v180--current) | **Current** — active, default for new registrations |
+| [v1.8.1](#v181--current) | **Current** — active, default for new registrations |
+| [v1.8.0](#v180) | Supported for read |
 | [v1.7.0](#v170) | Supported for read |
 | [v1.6.0](#v160) | Supported for read |
 | [v1.5.0](#v150) | Supported for read |
@@ -21,10 +22,25 @@ The active schema version is recorded on each dataset record as `record_schema_v
 
 ---
 
-## v1.8.0 — Current
+## v1.8.1 — Current
 
 **Status:** Active. All new registrations default to this version. See
-[`v1.8.0/schema.md`](v1.8.0/schema.md).
+[`v1.8.1/schema.md`](v1.8.1/schema.md).
+
+### Added
+
+- **Dataset:** `metadata.data_summary.observation_unit` accepts `single_nucleus` — one
+  observation is a single nucleus, as in snRNA-seq or snATAC-seq.
+
+### Changed
+
+- **Dataset:** `record_schema_version` now defaults to `v1.8.1`.
+
+---
+
+## v1.8.0
+
+**Status:** Supported for read. See [`v1.8.0/schema.md`](v1.8.0/schema.md).
 
 ### Added
 
