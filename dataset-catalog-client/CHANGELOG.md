@@ -28,6 +28,13 @@
   algorithm labels, file hashes, and existing checksummed assets remain unchanged.
   Recompute older nested-folder checksums before comparing them with new values.
 
+## [1.6.1](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.6.0...catalog-client-v1.6.1) (2026-11-23)
+
+
+### Miscellaneous
+
+* **deps:** bump certifi in /dataset-catalog-client ([#91](https://github.com/chanzuckerberg/dataset-catalog/issues/91)) ([ccd1d3c](https://github.com/chanzuckerberg/dataset-catalog/commit/ccd1d3ca0f080d983d8aaa95e480b9a9b2422e94))
+
 ## [1.6.0](https://github.com/chanzuckerberg/dataset-catalog/compare/catalog-client-v1.5.0...catalog-client-v1.6.0) (2026-11-18)
 
 
